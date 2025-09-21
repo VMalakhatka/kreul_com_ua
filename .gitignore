@@ -33,3 +33,11 @@ build/
 .vscode/
 .DS_Store
 vpn-config/
+
+# 🔒 Secrets
+src/main/resources/application.properties
+src/main/resources/application-local.properties
+.env
+*.jks
+*.keystore
+*.p12
