@@ -1,11 +1,13 @@
 package org.example.proect.lavka.controller;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.example.proect.lavka.service.category.WooCategoryService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+@Slf4j
 @RestController
 @RequiredArgsConstructor
 public class WooCategoryAdminController {
@@ -22,6 +24,11 @@ public class WooCategoryAdminController {
             @RequestParam(required = false) String l5,
             @RequestParam(required = false) String l6
     ) {
-        return service.ensureCategoryPath(l1,l2,l3,l4,l5,l6);
+        try {
+            return service.ensureCategoryPath(l1,l2,l3,l4,l5,l6);
+        } catch (Exception e) {
+            log.error("ensureCategoryPath failed for path: [{}, {}, {}, {}, {}, {}]", l1, l2, l3, l4, l5, l6, e);
+            throw e; // пусть поднимется в GlobalExceptionHandler
+        }
     }
 }

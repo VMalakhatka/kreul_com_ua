@@ -36,7 +36,6 @@ public class WooApiClient {
         while (true) {
             String url = props.getBaseUrl() + "/products/categories";
             UriComponentsBuilder b = UriComponentsBuilder.fromHttpUrl(url)
-                    .queryParam("search", name)       // сузим на стороне Woo
                         .queryParam("parent", parent)     // фильтр по родителю
                     .queryParam("per_page", perPage)
                     .queryParam("page", page);
