@@ -39,3 +39,4 @@ vpn-config/
 *.jks
 *.keystore
 *.p12
+env-local.sh

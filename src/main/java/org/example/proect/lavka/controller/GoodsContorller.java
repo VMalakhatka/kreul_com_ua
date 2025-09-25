@@ -7,7 +7,6 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
 import org.example.proect.lavka.entity.SclArtc;
 import org.example.proect.lavka.entity.SclMove;
-import org.example.proect.lavka.rabbitMQ.publisher.GoodsClient;
 import org.example.proect.lavka.service.GoodsService;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -20,11 +19,9 @@ import java.util.List;
 @RestController
 public class GoodsContorller {
 
-    GoodsClient goodsClient;
     GoodsService goodsService;
 
-    public GoodsContorller(GoodsClient goodsClient, GoodsService goodsService) {
-        this.goodsClient = goodsClient;
+    public GoodsContorller(GoodsService goodsService) {
         this.goodsService = goodsService;
     }
 
