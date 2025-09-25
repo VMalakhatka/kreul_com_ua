@@ -1,6 +1,7 @@
 package org.example.proect.lavka.exception;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,6 +17,13 @@ public class GlobalExceptionHandler {
         log.error("InvocationTargetException root cause:", root);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body("Error: " + (root != null ? root.getMessage() : e.getMessage()));
+    }
+
+    @ExceptionHandler(DataAccessException.class)
+    public ResponseEntity<String> handleDatabase(DataAccessException e) {
+        log.error("Database error:", e);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body("MSSQL unavailable or query failed: " + e.getMostSpecificCause().getMessage());
     }
 
     @ExceptionHandler(Exception.class)
