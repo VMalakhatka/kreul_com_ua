@@ -25,7 +25,7 @@ import java.util.List;
 @Configuration
 public class WooCommerceConfig {
 
-    @Bean
+    @Bean(name = "wooRestTemplate")
     public RestTemplate wooRestTemplate(
             @Value("${woocommerce.timeoutMs:15000}") int timeoutMs,
             @Value("${woocommerce.key}") String key,

@@ -1,10 +1,9 @@
 package org.example.proect.lavka.client;
 
 import jakarta.annotation.Nullable;
-import lombok.RequiredArgsConstructor;
 import org.example.proect.lavka.dto.category.WooCategory;
 import org.example.proect.lavka.property.WooProperties;
-import org.example.proect.lavka.utils.category.CatPathUtil;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
@@ -14,10 +13,16 @@ import java.util.Arrays;
 import java.util.Objects;
 
 @Component
-@RequiredArgsConstructor
 public class WooApiClient {
     private final RestTemplate restTemplate;
     private final WooProperties props;
+
+    public WooApiClient(@Qualifier("wooRestTemplate") RestTemplate restTemplate,
+                        WooProperties props) {
+        this.restTemplate = restTemplate;
+        this.props = props;
+    }
+
 
     private static boolean eqName(String a, String b) {
         return a != null && b != null && a.trim().equalsIgnoreCase(b.trim());
