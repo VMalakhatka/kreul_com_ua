@@ -1,11 +1,13 @@
 package org.example.proect.lavka.dto.stock;
 
-import java.util.List;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 // Woo-склад (терм таксономии product_cat, или кастомный “location” — не важно для клиента)
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record WooLocation(
-        long id,            // term_id
-        String name,        // “Киев Олимпийский”
-        String slug,        // “kiev1”
-        String extCodes     // CSV из term meta: "D01,D02" (может быть пустым)
+        long id,
+        String name,
+        String slug,
+        Long parent,     // из ответа WP
+        Integer count    // из ответа WP
 ) {}

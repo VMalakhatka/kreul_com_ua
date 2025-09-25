@@ -23,16 +23,29 @@ public class LavkaLocationsClient {
     }
 
     public List<WooLocation> listLocations() {
-        var url = base + "/locations";
-        var resp = rt.getForEntity(url, LocationsResponse.class);
-        var body = resp.getBody();
-        return (body == null || body.items() == null) ? List.of() : body.items();
+        String url = base + "/locations";
+        try {
+            var resp = rt.getForEntity(url, LocationsResponse.class);
+            var body = resp.getBody();
+            return (body == null || body.items() == null) ? List.of() : body.items();
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            // 4xx/5xx от Woo (покажет статус и тело ошибки)
+            throw new IllegalStateException("Lavka /locations failed: " + e.getRawStatusCode() + " " + e.getResponseBodyAsString(), e);
+        } catch (Exception e) {
+            throw new IllegalStateException("Lavka /locations failed: " + e.getMessage(), e);
+        }
     }
 
     public LocMap getMap() {
-        var url = base + "/locations/map";
-        var resp = rt.getForEntity(url, LocMap.class);
-        return resp.getBody() != null ? resp.getBody() : new LocMap(List.of());
+        String url = base + "/locations/map";
+        try {
+            var resp = rt.getForEntity(url, LocMap.class);
+            return resp.getBody() != null ? resp.getBody() : new LocMap(List.of());
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            throw new IllegalStateException("Lavka /locations/map failed: " + e.getRawStatusCode() + " " + e.getResponseBodyAsString(), e);
+        } catch (Exception e) {
+            throw new IllegalStateException("Lavka /locations/map failed: " + e.getMessage(), e);
+        }
     }
 
     public void saveMap(LocMap map) {
