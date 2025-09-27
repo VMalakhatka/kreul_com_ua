@@ -40,3 +40,6 @@ vpn-config/
 *.keystore
 *.p12
 env-local.sh
+# local-only artifacts
+.env*
+*.tar.gz
