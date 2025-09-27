@@ -5,23 +5,78 @@ import org.example.proect.lavka.dao.mapper.SclRestMapper;
 import org.example.proect.lavka.dao.mapper.StockParamMapper;
 import org.example.proect.lavka.dto.RestDtoOut;
 import org.example.proect.lavka.dto.StockParamDtoOut;
+import org.example.proect.lavka.dto.stock.StockRow;
 import org.example.proect.lavka.entity.SclArtc;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Component;
+import java.sql.ResultSet;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import com.google.common.collect.Lists;
 
 @Component
 public class SclArtcDaoImpl implements SclArtcDao {
 
     private final JdbcTemplate jdbcTemplate;
+    private final NamedParameterJdbcTemplate namedJdbc;
 
     @Autowired
-    public SclArtcDaoImpl(@Qualifier("folioJdbcTemplate")JdbcTemplate jdbcTemplate) {
+    public SclArtcDaoImpl(@Qualifier("folioJdbcTemplate")JdbcTemplate jdbcTemplate
+            ,@Qualifier("folioNamedJdbc") NamedParameterJdbcTemplate namedJdbc) {
         this.jdbcTemplate = jdbcTemplate;
+        this.namedJdbc = namedJdbc;
+    }
+
+    // org.example.proect.lavka.dao.SclArtcDaoImpl
+    @Override
+    public List<StockRow> findFreeAll(Set<Integer> scladIds) {
+        String in = scladIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+        String sql = """
+        SELECT a.COD_ARTIC AS sku,
+               SUM(ISNULL(a.REZ_KOLCH,0)) AS free_qty
+        FROM dbo.SCL_ARTC a
+        WHERE a.ID_SCLAD IN ('"' + in + '"')
+        GROUP BY a.COD_ARTIC
+        ORDER BY a.COD_ARTIC
+        """;
+        return jdbcTemplate.query(sql, (rs, i) ->
+                new StockRow(rs.getString("sku"), rs.getInt("free_qty")));
+    }
+
+    @Override
+    public List<StockRow> findFreeBySkus(Set<Integer> scladIds, List<String> skus) {
+        String sql = """
+        SELECT a.COD_ARTIC AS sku,
+               SUM(ISNULL(a.REZ_KOLCH,0)) AS free_qty
+        FROM dbo.SCL_ARTC a
+        WHERE a.ID_SCLAD IN (:sclads)
+          AND a.COD_ARTIC IN (:skus)
+        GROUP BY a.COD_ARTIC
+        ORDER BY a.COD_ARTIC
+        """;
+
+        List<StockRow> out = new ArrayList<>();
+        for (List<String> chunk : com.google.common.collect.Lists.partition(skus, 500)) {
+            MapSqlParameterSource p = new MapSqlParameterSource()
+                    .addValue("sclads", scladIds)
+                    .addValue("skus", chunk);
+
+            out.addAll(namedJdbc.query(sql, p,
+                    (rs, i) -> new StockRow(
+                            rs.getString("sku"),
+                            rs.getInt("free_qty")
+                    )));
+        }
+        return out;
     }
 
     @Override

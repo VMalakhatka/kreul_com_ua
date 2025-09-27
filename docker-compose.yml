@@ -1,0 +1,11 @@
+# docker-compose.local.yml
+services:
+  kreul-api:
+    build: .
+    image: kreul-api:latest
+    container_name: kreul-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
