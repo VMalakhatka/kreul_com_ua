@@ -11,4 +11,6 @@ public class LavkaApiProperties {
     private String appPass;
     private String token;
     private int timeoutMs = 15000;
+    private int skuChunkSize = 1000;
+    private int mssqlMaxParams = 2100;
 }

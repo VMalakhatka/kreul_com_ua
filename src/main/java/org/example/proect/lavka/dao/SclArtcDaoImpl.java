@@ -7,6 +7,7 @@ import org.example.proect.lavka.dto.RestDtoOut;
 import org.example.proect.lavka.dto.StockParamDtoOut;
 import org.example.proect.lavka.dto.stock.StockRow;
 import org.example.proect.lavka.entity.SclArtc;
+import org.example.proect.lavka.property.LavkaApiProperties;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
@@ -14,12 +15,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Component;
-import java.sql.ResultSet;
+
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
+
 
 import com.google.common.collect.Lists;
 
@@ -28,33 +29,40 @@ public class SclArtcDaoImpl implements SclArtcDao {
 
     private final JdbcTemplate jdbcTemplate;
     private final NamedParameterJdbcTemplate namedJdbc;
+    private final LavkaApiProperties props;
+
 
     @Autowired
     public SclArtcDaoImpl(@Qualifier("folioJdbcTemplate")JdbcTemplate jdbcTemplate
-            ,@Qualifier("folioNamedJdbc") NamedParameterJdbcTemplate namedJdbc) {
+            ,@Qualifier("folioNamedJdbc") NamedParameterJdbcTemplate namedJdbc
+            ,LavkaApiProperties props) {
         this.jdbcTemplate = jdbcTemplate;
         this.namedJdbc = namedJdbc;
+        this.props = props;
     }
 
     // org.example.proect.lavka.dao.SclArtcDaoImpl
     @Override
-    public List<StockRow> findFreeAll(Set<Integer> scladIds) {
-        String in = scladIds.stream().map(String::valueOf).collect(Collectors.joining(","));
-        String sql = """
-        SELECT a.COD_ARTIC AS sku,
-               SUM(ISNULL(a.REZ_KOLCH,0)) AS free_qty
-        FROM dbo.SCL_ARTC a
-        WHERE a.ID_SCLAD IN ('"' + in + '"')
-        GROUP BY a.COD_ARTIC
-        ORDER BY a.COD_ARTIC
+        public List<StockRow> findFreeAll(Set<Integer> scladIds) {
+            final String sql = """
+            SELECT a.COD_ARTIC AS sku,
+                   SUM(ISNULL(a.REZ_KOLCH,0)) AS free_qty
+            FROM dbo.SCL_ARTC a
+            WHERE a.ID_SCLAD IN (:sclads)
+            GROUP BY a.COD_ARTIC
+            ORDER BY a.COD_ARTIC
         """;
-        return jdbcTemplate.query(sql, (rs, i) ->
-                new StockRow(rs.getString("sku"), rs.getInt("free_qty")));
-    }
 
-    @Override
-    public List<StockRow> findFreeBySkus(Set<Integer> scladIds, List<String> skus) {
-        String sql = """
+            MapSqlParameterSource params = new MapSqlParameterSource()
+                    .addValue("sclads", new ArrayList<>(scladIds));
+
+            return namedJdbc.query(sql, params, (rs, i) ->
+                    new StockRow(rs.getString("sku"), rs.getInt("free_qty")));
+        }
+
+        @Override
+        public List<StockRow> findFreeBySkus(Set<Integer> scladIds, List<String> skus) {
+            final String sql = """
         SELECT a.COD_ARTIC AS sku,
                SUM(ISNULL(a.REZ_KOLCH,0)) AS free_qty
         FROM dbo.SCL_ARTC a
@@ -62,22 +70,30 @@ public class SclArtcDaoImpl implements SclArtcDao {
           AND a.COD_ARTIC IN (:skus)
         GROUP BY a.COD_ARTIC
         ORDER BY a.COD_ARTIC
-        """;
+    """;
 
-        List<StockRow> out = new ArrayList<>();
-        for (List<String> chunk : com.google.common.collect.Lists.partition(skus, 500)) {
-            MapSqlParameterSource p = new MapSqlParameterSource()
-                    .addValue("sclads", scladIds)
-                    .addValue("skus", chunk);
+            List<StockRow> out = new ArrayList<>();
 
-            out.addAll(namedJdbc.query(sql, p,
-                    (rs, i) -> new StockRow(
-                            rs.getString("sku"),
-                            rs.getInt("free_qty")
-                    )));
+            // лимит параметров MSSQL: 2100 (конфигурируемый)
+            // фактическое число параметров в запросе = |sclads| + |skus| + небольшой запас
+            final int margin = 10;
+            final int allowedSkusPerQuery = Math.max(1,
+                    props.getMssqlMaxParams() - scladIds.size() - margin);
+
+            // берём минимальный размер чанка между твоей "делёжкой" и лимитом БД
+            final int chunkSize = Math.min(props.getSkuChunkSize(), allowedSkusPerQuery);
+
+            for (List<String> chunk : Lists.partition(skus, chunkSize)) {
+                MapSqlParameterSource params = new MapSqlParameterSource()
+                        .addValue("sclads", new ArrayList<>(scladIds))
+                        .addValue("skus", chunk);
+
+                out.addAll(namedJdbc.query(sql, params, (rs, i) ->
+                        new StockRow(rs.getString("sku"), rs.getInt("free_qty"))));
+            }
+            return out;
         }
-        return out;
-    }
+
 
     @Override
     public List<SclArtc> getAllBySupplierAndStockId(String supplier, long idStock) {
@@ -93,30 +109,57 @@ public class SclArtcDaoImpl implements SclArtcDao {
 
     @Override
     public List<RestDtoOut> getRestByGoodsListAndStockList(List<String> namePredmList, List<Long> idList) {
-        String idParams = String.join(",", idList.stream().map(String::valueOf).toList());
-        String namePredmParams = String.join("','", namePredmList);
+        final String sql = """
+        SELECT COD_ARTIC, ID_SCLAD, REZ_KOLCH, KON_KOLCH
+        FROM SCL_ARTC
+        WHERE COD_ARTIC IN (:skus)
+          AND ID_SCLAD  IN (:ids)
+    """;
 
-        String sqlQuery = "SELECT COD_ARTIC,ID_SCLAD,REZ_KOLCH,KON_KOLCH FROM SCL_ARTC WHERE COD_ARTIC IN ('" + namePredmParams + "') AND ID_SCLAD IN (" + idParams + ");";
-        //TODO maximum length of query?
-        try {
-            return jdbcTemplate.query(sqlQuery, new SclRestMapper());
-        } catch (DataAccessException e) {
-            return null;
+        List<RestDtoOut> out = new ArrayList<>();
+
+        // лимит по параметрам = ids + skus + запас
+        final int margin = 10;
+        final int allowedSkusPerQuery = Math.max(1,
+                props.getMssqlMaxParams() - idList.size() - margin);
+
+        final int chunkSize = Math.min(props.getSkuChunkSize(), allowedSkusPerQuery);
+
+        for (List<String> chunk : Lists.partition(namePredmList, chunkSize)) {
+            MapSqlParameterSource params = new MapSqlParameterSource()
+                    .addValue("skus", chunk)
+                    .addValue("ids", idList);
+
+            out.addAll(namedJdbc.query(sql, params, new SclRestMapper()));
         }
+        return out;
     }
 
     @Override
     public List<StockParamDtoOut> getStockParamByGoodsListAndStockList(List<String> namePredmList, List<Long> idList) {
+        final String sql = """
+        SELECT COD_ARTIC, ID_SCLAD, MIN_TVRZAP, MAX_TVRZAP, TIP_TOVR, BALL5
+        FROM SCL_ARTC
+        WHERE COD_ARTIC IN (:skus)
+          AND ID_SCLAD  IN (:ids)
+    """;
 
-        String idParams = String.join(",", idList.stream().map(String::valueOf).toList());
-        String namePredmParams = String.join("','", namePredmList);
-        String sqlQuery = "SELECT COD_ARTIC,ID_SCLAD,MIN_TVRZAP,MAX_TVRZAP,TIP_TOVR,BALL5 FROM SCL_ARTC WHERE COD_ARTIC IN ('" + namePredmParams + "') AND ID_SCLAD IN (" + idParams + ");";
-        //TODO maximum length of query?
-        try {
-            return jdbcTemplate.query(sqlQuery, new StockParamMapper());
-        } catch (DataAccessException e) {
-            return null;
+        List<StockParamDtoOut> out = new ArrayList<>();
+
+        final int margin = 10;
+        final int allowedSkusPerQuery = Math.max(1,
+                props.getMssqlMaxParams() - idList.size() - margin);
+
+        final int chunkSize = Math.min(props.getSkuChunkSize(), allowedSkusPerQuery);
+
+        for (List<String> chunk : Lists.partition(namePredmList, chunkSize)) {
+            MapSqlParameterSource params = new MapSqlParameterSource()
+                    .addValue("skus", chunk)
+                    .addValue("ids", idList);
+
+            out.addAll(namedJdbc.query(sql, params, new StockParamMapper()));
         }
+        return out;
     }
 
     @Override

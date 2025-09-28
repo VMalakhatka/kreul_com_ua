@@ -21,18 +21,14 @@ import java.util.*;
             // sku -> (locationId -> qty)
             Map<String, Map<Long, Integer>> acc = new HashMap<>();
 
-            for (StockQueryRequest.LocationCodes loc : req.locations()) {
+            for (StockQueryRequest.LocationCodes loc : (req.locations() == null ? List.<StockQueryRequest.LocationCodes>of() : req.locations())) {
                 Set<Integer> sclads = new HashSet<>(loc.codes()); // MSSQL ID_SCLAD
 
-                // бьём SKU на пачки по 500
-                for (int i = 0; i < req.skus().size(); i += 500) {
-                    List<String> chunk = req.skus().subList(i, Math.min(i + 500, req.skus().size()));
-
-                    var rows = sclArtcDao.findFreeBySkus(sclads, chunk);
-                    for (var r : rows) {
-                        acc.computeIfAbsent(r.sku(), k -> new HashMap<>())
-                                .merge(loc.id(), r.freeQty(), Integer::sum);
-                    }
+                // DAO сам порежет на чанки с учётом настроек
+                var rows = sclArtcDao.findFreeBySkus(sclads, req.skus());
+                for (var r : rows) {
+                    acc.computeIfAbsent(r.sku(), k -> new HashMap<>())
+                            .merge(loc.id(), r.freeQty(), Integer::sum);
                 }
             }
 
