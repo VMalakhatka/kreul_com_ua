@@ -20,4 +20,11 @@ public interface SclArtcDao {
   List<StockRow> findFreeAll(Set<Integer> scladIds);
 
   List<StockRow> findFreeBySkus(Set<Integer> scladIds, List<String> skus);
+
+  // SclArtcDao.java (интерфейс)
+  List<String> findSkusWithMovement(Set<Integer> scladIds,
+                                    java.time.Instant from,
+                                    java.time.Instant to,
+                                    int limit,
+                                    int offset);
 }

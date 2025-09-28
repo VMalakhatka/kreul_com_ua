@@ -17,6 +17,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Component;
 
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -39,6 +40,42 @@ public class SclArtcDaoImpl implements SclArtcDao {
         this.jdbcTemplate = jdbcTemplate;
         this.namedJdbc = namedJdbc;
         this.props = props;
+    }
+    @Override
+    public List<String> findSkusWithMovement(Set<Integer> scladIds,
+                                             Instant from,
+                                             Instant to,
+                                             int limit,
+                                             int offset) {
+        int lim = Math.max(0, limit);
+        int off = Math.max(0, offset);
+
+        // ВСТАВЛЯЕМ ЧИСЛА В SQL (TOP не параметризуем)
+        final String sql =
+                "SELECT TOP " + lim + " sku\n" +
+                        "FROM (\n" +
+                        "    SELECT DISTINCT m.NAME_PREDM AS sku\n" +
+                        "    FROM dbo.SCL_MOVE m\n" +
+                        "    WHERE m.ID_SCLAD IN (:sclads)\n" +
+                        "      AND m.DATE_PREDM >= :from\n" +
+                        "      AND m.DATE_PREDM <  :to\n" +
+                        "      AND m.NAME_PREDM NOT IN (\n" +
+                        "          SELECT DISTINCT TOP " + off + " m2.NAME_PREDM\n" +
+                        "          FROM dbo.SCL_MOVE m2\n" +
+                        "          WHERE m2.ID_SCLAD IN (:sclads)\n" +
+                        "            AND m2.DATE_PREDM >= :from\n" +
+                        "            AND m2.DATE_PREDM <  :to\n" +
+                        "          ORDER BY m2.NAME_PREDM\n" +
+                        "      )\n" +
+                        ") x\n" +
+                        "ORDER BY x.sku";
+
+        var params = new MapSqlParameterSource()
+                .addValue("sclads", new ArrayList<>(scladIds))
+                .addValue("from", java.sql.Timestamp.from(from))
+                .addValue("to",   java.sql.Timestamp.from(to));
+
+        return namedJdbc.query(sql, params, (rs, i) -> rs.getString("sku"));
     }
 
     // org.example.proect.lavka.dao.SclArtcDaoImpl

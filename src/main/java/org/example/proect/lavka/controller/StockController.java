@@ -1,10 +1,13 @@
 package org.example.proect.lavka.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.example.proect.lavka.dto.stock.StockMovementRequest;
 import org.example.proect.lavka.dto.stock.StockQueryRequest;
 import org.example.proect.lavka.dto.stock.StockQueryResponse;
+import org.example.proect.lavka.service.stock.StockMovementSyncService;
 import org.example.proect.lavka.service.stock.StockQueryQuantytiService;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,6 +18,7 @@ import org.springframework.web.bind.annotation.*;
 public class StockController {
 
     private final StockQueryQuantytiService stockService;
+    private final StockMovementSyncService stockMovementSyncService;
 
     // POST /admin/stock/stock/query
     @PostMapping(value = "/stock/query", consumes = MediaType.APPLICATION_JSON_VALUE,
@@ -22,4 +26,11 @@ public class StockController {
     public StockQueryResponse queryStocks(@RequestBody StockQueryRequest req) {
         return stockService.resolve(req);
     }
+    // StockController.java (фрагмент)
+    @PostMapping("/stock/movements")
+    public ResponseEntity<?> movements(@RequestBody StockMovementRequest req) {
+        var out = stockMovementSyncService.resolve(req);
+        return ResponseEntity.ok(out);
+    }
+
 }

@@ -13,4 +13,6 @@ public class LavkaApiProperties {
     private int timeoutMs = 15000;
     private int skuChunkSize = 1000;
     private int mssqlMaxParams = 2100;
+    private int movementPageSize = 500;
+    private int movementMaxDays = 365;
 }
