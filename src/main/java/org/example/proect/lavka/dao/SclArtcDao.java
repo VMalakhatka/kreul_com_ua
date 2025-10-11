@@ -1,10 +1,12 @@
 package org.example.proect.lavka.dao;
 
+import org.example.proect.lavka.dto.stock.NoMovementItem;
 import org.example.proect.lavka.dto.stock.StockRow;
 import org.example.proect.lavka.entity.SclArtc;
 import org.example.proect.lavka.dto.RestDtoOut;
 import org.example.proect.lavka.dto.StockParamDtoOut;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 
@@ -27,4 +29,12 @@ public interface SclArtcDao {
                                     java.time.Instant to,
                                     int limit,
                                     int offset);
+  List<NoMovementItem> findSkusWithoutMovement(
+          Set<Integer> scladIds,
+          List<String> opTypes,   // может быть пусто
+          Instant from,
+          Instant to,
+          int limit,
+          int offset
+  );
 }

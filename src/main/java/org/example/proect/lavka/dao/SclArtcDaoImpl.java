@@ -5,6 +5,7 @@ import org.example.proect.lavka.dao.mapper.SclRestMapper;
 import org.example.proect.lavka.dao.mapper.StockParamMapper;
 import org.example.proect.lavka.dto.RestDtoOut;
 import org.example.proect.lavka.dto.StockParamDtoOut;
+import org.example.proect.lavka.dto.stock.NoMovementItem;
 import org.example.proect.lavka.dto.stock.StockRow;
 import org.example.proect.lavka.entity.SclArtc;
 import org.example.proect.lavka.property.LavkaApiProperties;
@@ -17,6 +18,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Component;
 
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -76,6 +78,80 @@ public class SclArtcDaoImpl implements SclArtcDao {
                 .addValue("to",   java.sql.Timestamp.from(to));
 
         return namedJdbc.query(sql, params, (rs, i) -> rs.getString("sku"));
+    }
+
+    @Override
+    public List<NoMovementItem> findSkusWithoutMovement(
+            Set<Integer> scladIds,
+            List<String> opTypes,
+            Instant from, Instant to,
+            int limit, int offset
+    ) {
+        final int lim = Math.max(0, limit);
+        final int off = Math.max(0, offset);
+
+        final boolean hasOps = opTypes != null && !opTypes.isEmpty();
+        String movFilter1 = (opTypes != null && !opTypes.isEmpty())
+                ? "AND (m.VID_DOC IS NULL OR m.VID_DOC NOT IN (:ops))"
+                : ""; // пусто — любое движение учитывается
+
+        String movFilter2 = (opTypes != null && !opTypes.isEmpty())
+                ? "AND (m2.VID_DOC IS NULL OR m2.VID_DOC NOT IN (:ops))"
+                : "";
+
+        final String sql = String.format("""
+        SELECT TOP %d sku, title, total_qty
+        FROM (
+          SELECT a.COD_ARTIC AS sku,
+                 MIN(a.NAME_ARTIC) AS title,
+                 SUM(ISNULL(a.KON_KOLCH,0)) AS total_qty
+          FROM dbo.SCL_ARTC a
+          WHERE a.ID_SCLAD IN (:sclads)
+            AND a.KON_KOLCH > 0
+            AND NOT EXISTS (
+              SELECT 1
+              FROM dbo.SCL_MOVE m
+              WHERE m.NAME_PREDM = a.COD_ARTIC
+                AND m.ID_SCLAD   IN (:sclads)
+                AND m.DATE_PREDM >= :from AND m.DATE_PREDM < :to
+                %s
+            )
+          GROUP BY a.COD_ARTIC
+        ) x
+        WHERE x.sku NOT IN (
+          SELECT DISTINCT TOP %d a2.COD_ARTIC
+          FROM dbo.SCL_ARTC a2
+          WHERE a2.ID_SCLAD IN (:sclads)
+            AND a2.KON_KOLCH > 0
+            AND NOT EXISTS (
+              SELECT 1
+              FROM dbo.SCL_MOVE m2
+              WHERE m2.NAME_PREDM = a2.COD_ARTIC
+                AND m2.ID_SCLAD   IN (:sclads)
+                AND m2.DATE_PREDM >= :from AND m2.DATE_PREDM < :to
+                %s
+            )
+          ORDER BY a2.COD_ARTIC
+        )
+        ORDER BY x.sku
+        """, lim, movFilter1, off, movFilter2);
+
+        var params = new MapSqlParameterSource()
+                .addValue("sclads", new ArrayList<>(scladIds))
+                .addValue("from",  Timestamp.from(from))
+                .addValue("to",    Timestamp.from(to));
+
+        if (opTypes != null && !opTypes.isEmpty()) {
+            params.addValue("ops", opTypes);
+        }
+
+        return namedJdbc.query(sql, params, (rs, i) ->
+                new NoMovementItem(
+                        rs.getString("sku"),
+                        rs.getString("title"),
+                        rs.getDouble("total_qty")
+                )
+        );
     }
 
     // org.example.proect.lavka.dao.SclArtcDaoImpl
