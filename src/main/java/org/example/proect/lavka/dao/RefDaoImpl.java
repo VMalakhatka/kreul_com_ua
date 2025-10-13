@@ -1,5 +1,6 @@
 package org.example.proect.lavka.dao;
 
+import org.example.proect.lavka.dto.ref.ContractDto;
 import org.example.proect.lavka.dto.ref.OpTypeDto;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -28,6 +29,22 @@ public class RefDaoImpl implements RefDao {
         return jdbc.query(sql, (rs, i) -> new OpTypeDto(
                 rs.getString("SIGNIFIC"),
                 rs.getObject("PLANIR") == null ? null : rs.getDouble("PLANIR")
+        ));
+    }
+
+    @Override
+    public List<ContractDto> findContracts() {
+        final String sql = """
+        SELECT SIGNIFIC, NAME_KONTR, ORGANIZ_KT
+        FROM dbo._KONTRCT
+        WHERE SIGNIFIC IS NOT NULL AND LTRIM(RTRIM(SIGNIFIC)) <> ''
+        ORDER BY SIGNIFIC
+    """;
+
+        return jdbc.query(sql, (rs, i) -> new ContractDto(
+                rs.getString("SIGNIFIC"),
+                rs.getString("NAME_KONTR"),
+                rs.getString("ORGANIZ_KT")
         ));
     }
 }

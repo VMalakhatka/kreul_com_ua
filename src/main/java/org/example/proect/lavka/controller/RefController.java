@@ -4,6 +4,7 @@ package org.example.proect.lavka.controller;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.example.proect.lavka.dto.ref.ContractDto;
 import org.example.proect.lavka.dto.ref.OpTypeDto;
 import org.example.proect.lavka.service.RefService;
 import org.springframework.http.ResponseEntity;
@@ -24,5 +25,11 @@ public class RefController {
             description = "Возвращает массив объектов {SIGNIFIC, PLANIR} из dbo.VID_OPER")
     public ResponseEntity<List<OpTypeDto>> opTypes() {
         return ResponseEntity.ok(refService.getOpTypes());
+    }
+
+    @Operation(summary = "Contracts reference (_KONTRCT)", description = "Возвращает список контрактов (SIGNIFIC как code).")
+    @GetMapping("/ref/contracts")
+    public ResponseEntity<List<ContractDto>> contracts() {
+        return ResponseEntity.ok(refService.getContracts());
     }
 }

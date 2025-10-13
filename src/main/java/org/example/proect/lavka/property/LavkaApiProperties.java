@@ -15,4 +15,5 @@ public class LavkaApiProperties {
     private int mssqlMaxParams = 2100;
     private int movementPageSize = 500;
     private int movementMaxDays = 365;
+    private int priceStockId = 7;
 }

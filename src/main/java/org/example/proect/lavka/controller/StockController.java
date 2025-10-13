@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.example.proect.lavka.dto.stock.*;
 import org.example.proect.lavka.service.stock.NoMovementService;
+import org.example.proect.lavka.service.stock.PriceService;
 import org.example.proect.lavka.service.stock.StockMovementSyncService;
 import org.example.proect.lavka.service.stock.StockQueryQuantytiService;
 import org.springframework.http.MediaType;
@@ -20,6 +21,7 @@ public class StockController {
     private final StockQueryQuantytiService stockService;
     private final StockMovementSyncService stockMovementSyncService;
     private final NoMovementService noMovementService;
+    private final PriceService priceService;
 
     // POST /admin/stock/stock/query
     @PostMapping(value = "/stock/query", consumes = MediaType.APPLICATION_JSON_VALUE,
@@ -38,6 +40,11 @@ public class StockController {
     @PostMapping("/stock/no-movement")
     public StockNoMovementResponsePage noMovement(@RequestBody @Valid StockNoMovementRequest req) {
         return noMovementService.resolve(req);
+    }
+
+    @PostMapping("/prices")
+    public PriceQueryResponse prices(@RequestBody PriceQueryRequest req) {
+        return priceService.resolve(req);
     }
 
 }
