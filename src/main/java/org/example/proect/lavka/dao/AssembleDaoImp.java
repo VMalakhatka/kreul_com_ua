@@ -6,11 +6,23 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 @Component
+@Retryable(
+        include = {
+                org.springframework.dao.DeadlockLoserDataAccessException.class,
+                org.springframework.dao.CannotAcquireLockException.class,
+                org.springframework.dao.QueryTimeoutException.class,
+                org.springframework.dao.TransientDataAccessResourceException.class
+        },
+        maxAttempts = 4,
+        backoff = @Backoff(delay = 200, multiplier = 2.0, maxDelay = 5000, random = true)
+)
 public class AssembleDaoImp implements AssembleDao {
 
     private final JdbcTemplate jdbcTemplate;

@@ -70,6 +70,18 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+            <!-- Spring Retry -->
+            <dependency>
+                <groupId>org.springframework.retry</groupId>
+                <artifactId>spring-retry</artifactId>
+            </dependency>
+
+            <!-- AOP (нужен для работы аннотаций @Retryable / @Recover) -->
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-aop</artifactId>
+            </dependency>
+
         <!-- Swagger aka Open API --> <!-- !!! -->
         <dependency>
             <groupId>org.springdoc</groupId>

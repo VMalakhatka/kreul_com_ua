@@ -4,11 +4,23 @@ import org.example.proect.lavka.dto.ref.ContractDto;
 import org.example.proect.lavka.dto.ref.OpTypeDto;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
 @Repository
+@Retryable(
+        include = {
+                org.springframework.dao.DeadlockLoserDataAccessException.class,
+                org.springframework.dao.CannotAcquireLockException.class,
+                org.springframework.dao.QueryTimeoutException.class,
+                org.springframework.dao.TransientDataAccessResourceException.class
+        },
+        maxAttempts = 4,
+        backoff = @Backoff(delay = 200, multiplier = 2.0, maxDelay = 5000, random = true)
+)
 public class RefDaoImpl implements RefDao {
 
     private final JdbcTemplate jdbc;

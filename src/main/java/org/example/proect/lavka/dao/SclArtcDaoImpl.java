@@ -15,6 +15,8 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
 
 
@@ -28,6 +30,16 @@ import java.util.Set;
 import com.google.common.collect.Lists;
 
 @Component
+@Retryable(
+        include = {
+                org.springframework.dao.DeadlockLoserDataAccessException.class,
+                org.springframework.dao.CannotAcquireLockException.class,
+                org.springframework.dao.QueryTimeoutException.class,
+                org.springframework.dao.TransientDataAccessResourceException.class
+        },
+        maxAttempts = 4,
+        backoff = @Backoff(delay = 200, multiplier = 2.0, maxDelay = 5000, random = true)
+)
 public class SclArtcDaoImpl implements SclArtcDao {
 
     private final JdbcTemplate jdbcTemplate;
