@@ -2,8 +2,8 @@ package org.example.proect.lavka.dao.stock;
 
 import org.example.proect.lavka.dto.stock.PriceRow;
 import org.example.proect.lavka.property.LavkaApiProperties;
+import org.example.proect.lavka.utils.RetryLabel;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.retry.annotation.Backoff;
@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.*;
 
+@RetryLabel("PriceDaoImpl")
 @Repository
 @Retryable(
         include = {
@@ -35,7 +36,7 @@ public class PriceDaoImpl implements PriceDao {
         this.props = props;
     }
 
-
+    @RetryLabel("PriceDaoImpl.findLatestPrices")
     @Override
     public List<PriceRow> findLatestPrices(int stockId, List<String> skus, List<String> namePrices) {
         final String sql = """
@@ -73,6 +74,7 @@ public class PriceDaoImpl implements PriceDao {
     }
 
     // PriceDaoImpl.java (добавьте метод)
+    @RetryLabel("PriceDaoImpl.findRetailPrices")
     @Override
     public Map<String, Double> findRetailPrices(int stockId, List<String> skus) {
         if (skus == null || skus.isEmpty()) return Map.of();

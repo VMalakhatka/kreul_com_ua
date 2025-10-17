@@ -2,6 +2,7 @@ package org.example.proect.lavka.dao;
 
 import org.example.proect.lavka.dao.mapper.SclMoveMapper;
 import org.example.proect.lavka.entity.SclMove;
+import org.example.proect.lavka.utils.RetryLabel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 @Component
+@RetryLabel("SclMoveDaoImpl")
 @Retryable(
         include = {
                 org.springframework.dao.DeadlockLoserDataAccessException.class,
@@ -33,6 +35,7 @@ public class SclMoveDaoImpl implements SclMoveDao {
     }
 
     @Override
+    @RetryLabel("SclMoveDaoImpl.getMoveByGoodsAndData")
     public List<SclMove> getMoveByGoodsAndData(String NamePredm, int id, String start, String end) {
         try {
             return jdbcTemplate.query("SELECT * FROM SCL_MOVE WHERE NAME_PREDM=? AND ID_SCLAD=? AND DATE_PREDM>=? AND DATE_PREDM<=?;",
@@ -45,6 +48,7 @@ public class SclMoveDaoImpl implements SclMoveDao {
     }
 
     @Override
+    @RetryLabel("SclMoveDaoImpl.getMoveByListOfGoodsAndData")
     public List<SclMove> getMoveByListOfGoodsAndData(List<String> namePredmList, List<Long> idList, String start, String end) {
 
         String idParams = String.join(",", idList.stream().map(String::valueOf).toList());

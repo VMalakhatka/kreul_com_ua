@@ -1,6 +1,7 @@
 package org.example.proect.lavka.dao.stock;
 
 import org.example.proect.lavka.dto.stock.MsWarehouse;
+import org.example.proect.lavka.utils.RetryLabel;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.retry.annotation.Backoff;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
+@RetryLabel("MsWarehouseDao")
 @Repository
 @Retryable(
         include = {

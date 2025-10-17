@@ -2,6 +2,7 @@ package org.example.proect.lavka.dao;
 
 import org.example.proect.lavka.dto.ref.ContractDto;
 import org.example.proect.lavka.dto.ref.OpTypeDto;
+import org.example.proect.lavka.utils.RetryLabel;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.retry.annotation.Backoff;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 
 @Repository
+@RetryLabel("RefDaoImpl")
 @Retryable(
         include = {
                 org.springframework.dao.DeadlockLoserDataAccessException.class,

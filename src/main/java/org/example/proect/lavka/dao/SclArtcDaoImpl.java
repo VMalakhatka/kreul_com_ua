@@ -9,6 +9,7 @@ import org.example.proect.lavka.dto.stock.NoMovementItem;
 import org.example.proect.lavka.dto.stock.StockRow;
 import org.example.proect.lavka.entity.SclArtc;
 import org.example.proect.lavka.property.LavkaApiProperties;
+import org.example.proect.lavka.utils.RetryLabel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
@@ -30,6 +31,7 @@ import java.util.Set;
 import com.google.common.collect.Lists;
 
 @Component
+@RetryLabel("SclArtcDaoImpl")
 @Retryable(
         include = {
                 org.springframework.dao.DeadlockLoserDataAccessException.class,
@@ -56,6 +58,7 @@ public class SclArtcDaoImpl implements SclArtcDao {
         this.props = props;
     }
     @Override
+    @RetryLabel("SclArtcDaoImpl.findSkusWithMovement")
     public List<String> findSkusWithMovement(Set<Integer> scladIds,
                                              Instant from,
                                              Instant to,
@@ -93,6 +96,7 @@ public class SclArtcDaoImpl implements SclArtcDao {
     }
 
     @Override
+    @RetryLabel("SclArtcDaoImpl.findSkusWithoutMovement")
     public List<NoMovementItem> findSkusWithoutMovement(
             Set<Integer> scladIds,
             List<String> opTypes,
@@ -168,6 +172,7 @@ public class SclArtcDaoImpl implements SclArtcDao {
 
     // org.example.proect.lavka.dao.SclArtcDaoImpl
     @Override
+    @RetryLabel("SclArtcDaoImpl.findFreeAll ")
         public List<StockRow> findFreeAll(Set<Integer> scladIds) {
             final String sql = """
             SELECT a.COD_ARTIC AS sku,
