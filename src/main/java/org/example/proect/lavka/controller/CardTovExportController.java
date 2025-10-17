@@ -5,10 +5,7 @@ import org.example.proect.lavka.service.CardTovExportService;
 import org.example.proect.lavka.service.CardTovExportService.PageResult;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @Validated
@@ -18,10 +15,6 @@ public class CardTovExportController {
 
     private final CardTovExportService service;
 
-    /**
-     * Пейджинг по вьюхе card_tov (у тебя уже отсортировано по sku).
-     * Пример: GET /admin/export/card-tov?limit=500&after=ABC-001
-     */
     @GetMapping
     public ResponseEntity<PageResult> page(
             @RequestParam(name = "after", required = false) String after,

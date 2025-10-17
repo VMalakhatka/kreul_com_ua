@@ -8,6 +8,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Base64;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -124,4 +131,92 @@ public class WooApiClient {
         payload.setParent(parentId == null ? 0L : parentId);
         return restTemplate.postForObject(url, payload, WooCategory.class);
     }
+
+    public WooCategory findCategoryBySlug(String slug) {
+        String url = props.getBaseUrl() + "/products/categories";
+        UriComponentsBuilder b = UriComponentsBuilder.fromHttpUrl(url)
+                .queryParam("slug", slug)
+                .queryParam("per_page", 100)
+                .queryParam("page", 1);
+        ResponseEntity<WooCategory[]> resp =
+                restTemplate.getForEntity(b.toUriString(), WooCategory[].class);
+        WooCategory[] arr = resp.getBody();
+        if (arr == null || arr.length == 0) return null;
+        // slug в пределах taxonomy уникален — вернётся 1 шт (на всякий — берём первый)
+        return arr[0];
+    }
+
+    public boolean slugAvailable(String slug) {
+        return findCategoryBySlug(slug) == null;
+    }
+
+    public WooCategory createCategoryUnique(String name, String baseSlug, Long parentId, String pathForHash) {
+        // 1) Если slug свободен — создаём сразу
+        String candidate = baseSlug;
+        if (!slugAvailable(candidate)) {
+            // 2) Занят: добавим стабильный суффикс от родителя/пути (чтобы не плодить лишнего)
+            String suffix = shortHash((parentId == null ? 0L : parentId) + ":" + pathForHash);
+            candidate = baseSlug + "--" + suffix;
+            // если и он занят — докручиваем счётчик
+            int i = 2;
+            while (!slugAvailable(candidate)) {
+                candidate = baseSlug + "--" + suffix + "-" + i;
+                i++;
+                if (i > 20) throw new IllegalStateException("Can't find free slug for: " + baseSlug);
+            }
+        }
+
+        try {
+            return createCategory(name, candidate, parentId);
+        } catch (HttpClientErrorException e) {
+            // страховка от гонки: если между проверкой и POST кто-то занял slug
+            if (e.getStatusCode() == HttpStatus.BAD_REQUEST && isTermExists(e)) {
+                long id = extractResourceId(e);
+                WooCategory exists = getCategoryById(id);
+                long wantParent = parentId == null ? 0L : parentId;
+                long haveParent = exists.getParent() == null ? 0L : exists.getParent();
+                if (haveParent == wantParent) {
+                    return exists; // наш терм, всё ок
+                }
+                // slug заняли «чужим» parent — докручиваем ещё один суффикс и пробуем снова
+                String fallback = candidate + "--" + shortHash("race:" + System.nanoTime());
+                return createCategory(name, fallback, parentId);
+            }
+            throw e;
+        }
+    }
+
+    // ======== утилиты для обработки ошибок Woo ========
+
+    /** Проверяет, что ошибка WooCommerce — именно term_exists (категория уже есть). */
+    public static boolean isTermExists(HttpClientErrorException e) {
+        return e.getStatusCode() == HttpStatus.BAD_REQUEST &&
+                e.getResponseBodyAsString() != null &&
+                e.getResponseBodyAsString().contains("\"term_exists\"");
+    }
+
+    /** Извлекает resource_id из JSON-ответа Woo на term_exists. */
+    public static long extractResourceId(HttpClientErrorException e) {
+        if (e.getResponseBodyAsString() == null) return -1L;
+        // простой RegExp, без зависимостей от JSON-парсера
+        Matcher m = Pattern.compile("\"resource_id\"\\s*:\\s*(\\d+)").matcher(e.getResponseBodyAsString());
+        if (m.find()) {
+            return Long.parseLong(m.group(1));
+        }
+        return -1L;
+    }
+
+    /** Короткий стабильный хеш для добавления в slug. */
+    public static String shortHash(String input) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-1");
+            byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
+            // берём первые 5 байт SHA-1 → 8 Base32-символов, чтобы было читаемо
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest).substring(0, 8).toLowerCase();
+        } catch (Exception ex) {
+            // fallback на timestamp, если вдруг
+            return "x" + Long.toHexString(System.nanoTime());
+        }
+    }
+
 }

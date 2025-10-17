@@ -81,9 +81,19 @@ public class WooCategoryServiceImpl implements WooCategoryService {
             // сначала точный поиск по имени+родителю в Woo
             WooCategory found = woo.findCategoryByNameAndParent(name, parentId);
             if (found == null) {
-                // нет — создаём (slug детерминированный, но фактически берём из ответа)
-                String wantSlug = slugify.slug(name);
-                found = woo.createCategory(name, wantSlug, parentId);
+                // базовый slug: можешь взять по имени уровня,
+                // либо (ещё лучше) по полному пути до этого уровня
+                String baseSlug = slugify.slug(name);
+                // если у тебя здесь уже есть levels/i, используй путь:
+                // String baseSlug = slugify.slug(CatPathUtil.buildSlicePath(levels, i));
+
+                // создаём с гарантией уникальности slug + защита от гонок
+                found = woo.createCategoryUnique(
+                        name,
+                        baseSlug,
+                        parentId,
+                        CatPathUtil.buildSlicePath(levels, i) // pathForHash для стабильного суффикса
+                );
             }
 
             // upsert среза [0..i] в нашу БД (идемпотентно)
