@@ -1,5 +1,6 @@
 package org.example.proect.lavka.dao.category;
 
+import jakarta.annotation.PostConstruct;
 import org.example.proect.lavka.entity.category.LavkaCatmap;
 import org.example.proect.lavka.utils.RetryLabel;
 import org.slf4j.Logger;
@@ -52,24 +53,24 @@ public class LavkaCatmapRepository {
          WHERE path_hash = ?
         """;
 
-    // ВАЖНО: alias 'newv' вместо VALUES()
+    // MariaDB / MySQL < 8.0.20 — ОК
     private static final String SQL_UPSERT = """
         INSERT INTO wp_lavka_catmap
             (path_text, depth, parent_path_hash,
              l1,l2,l3,l4,l5,l6,
              wc_parent_id, wc_term_id, slug,
              l1_norm,l2_norm,l3_norm,l4_norm,l5_norm,l6_norm)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) AS newv
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON DUPLICATE KEY UPDATE
-             depth            = newv.depth,
-             parent_path_hash = newv.parent_path_hash,
-             l1 = newv.l1, l2 = newv.l2, l3 = newv.l3,
-             l4 = newv.l4, l5 = newv.l5, l6 = newv.l6,
-             wc_parent_id     = newv.wc_parent_id,
-             wc_term_id       = newv.wc_term_id,
-             slug             = newv.slug,
-             l1_norm = newv.l1_norm, l2_norm = newv.l2_norm, l3_norm = newv.l3_norm,
-             l4_norm = newv.l4_norm, l5_norm = newv.l5_norm, l6_norm = newv.l6_norm
+             depth            = VALUES(depth),
+             parent_path_hash = VALUES(parent_path_hash),
+             l1 = VALUES(l1), l2 = VALUES(l2), l3 = VALUES(l3),
+             l4 = VALUES(l4), l5 = VALUES(l5), l6 = VALUES(l6),
+             wc_parent_id     = VALUES(wc_parent_id),
+             wc_term_id       = VALUES(wc_term_id),
+             slug             = VALUES(slug),
+             l1_norm = VALUES(l1_norm), l2_norm = VALUES(l2_norm), l3_norm = VALUES(l3_norm),
+             l4_norm = VALUES(l4_norm), l5_norm = VALUES(l5_norm), l6_norm = VALUES(l6_norm)
         """;
 
     // ---------- mapper ----------
