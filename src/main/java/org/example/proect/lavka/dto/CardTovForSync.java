@@ -3,7 +3,7 @@ package org.example.proect.lavka.dto;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public record CardTovExportOutDto(
+public record CardTovForSync(
         String sku,
         String name,
         String img,
