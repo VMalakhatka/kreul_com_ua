@@ -96,9 +96,12 @@ public class CardTovExportService {
             }
 
             String lastAdd = toCreateFull.isEmpty() ? null : toCreateFull.get(toCreateFull.size() - 1).sku();
-            String nextAfter = maxSku(lastAdd, originalMaxWoo);
 
-            // last зависит ТОЛЬКО от наличия следующей страницы add
+// ► nextAfter по правилу:
+            String nextAfter = moreCreates
+                    ? lastAdd                                   // продолжаем листать ADD
+                    : maxSku(lastAdd, originalMaxWoo);          // ADD закончился — якоримся на максимум окна
+
             boolean last = !moreCreates;
             return new DiffResult(nextAfter, last, List.of(), toDelete, toCreateFull);
         }
@@ -128,32 +131,26 @@ public class CardTovExportService {
         if (afterSku == null || afterSku.isEmpty()) {
             // === CASE A (инициализация/первый дифф без курсора):
             // Ловим ВСЁ МЕНЬШЕ maxWoo, исключая seen → закрываем и prepend, и внутренние дыры.
-            List<CardTovExportOutDto> add = dao.findLessThanExcluding(originalMaxWoo, wooSkus, capPlus1)
+            toCreateFull = dao.findLessThanExcluding(originalMaxWoo, wooSkus, capPlus1)
                     .stream().map(this::mapWithGroup).map(this::withHash).toList();
-
-            if (add.size() > cap) {
-                moreCreates = true;
-                add = add.subList(0, cap);
-            }
-            toCreateFull = add;
         } else {
             // === CASE B (обычный дифф с курсором):
             // Ловим ТОЛЬКО GAP внутри окна: (afterSku, maxWoo) \ wooSkus.
 
-            List<CardTovExportOutDto> gap = dao.findBetweenExcluding(afterSku, originalMaxWoo, wooSkus, capPlus1)
+            toCreateFull = dao.findBetweenExcluding(afterSku, originalMaxWoo, wooSkus, capPlus1)
                     .stream().map(this::mapWithGroup).map(this::withHash).toList();
+        }
 
-            if (gap.size() > cap) {
-                moreCreates = true;
-                gap = gap.subList(0, cap);
-            }
-            toCreateFull = gap;
+        if (toCreateFull.size() > cap) {
+            moreCreates = true;
+            toCreateFull = toCreateFull.subList(0, cap);
         }
 
         String lastAdd = toCreateFull.isEmpty() ? null : toCreateFull.get(toCreateFull.size() - 1).sku();
-        String nextAfter = maxSku(lastAdd, originalMaxWoo);
 
-// last — ТОЛЬКО про наличие ещё одной страницы ADD в текущем кейсе
+// ► nextAfter:
+        String nextAfter = moreCreates ? lastAdd : maxSku(lastAdd, originalMaxWoo);
+
         boolean last = !moreCreates;
         return new DiffResult(nextAfter, last, toUpdateFull, toDelete, toCreateFull);
     }
