@@ -19,4 +19,12 @@ public interface CardTovExportDao {
      */
     List<CardTovExportDto> findBetweenExcluding(String minSku, String maxSku,
                                                 Collection<String> exclude, int cap);
+
+    List<CardTovExportDto> findLessThanExcluding(String maxExclusive, Collection<String> exclude, int limit);
+
+    List<CardTovExportDto> findGreaterThan(String minExclusive, int limit);
+
+    List<CardTovExportDto> findGreaterThanExcluding(String lowerExclusive,
+                                                    Collection<String> excludeSkus,
+                                                    int limit);
 }

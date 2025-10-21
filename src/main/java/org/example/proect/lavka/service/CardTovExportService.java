@@ -56,59 +56,107 @@ public class CardTovExportService {
         List<String> wooSkus = new ArrayList<>(wooBySku.keySet());
         Collections.sort(wooSkus);
 
+
+        // исходный максимум из входного окна Woo (до удаления toDelete)
+        final String originalMaxWoo = wooSkus.isEmpty() ? null : wooSkus.get(wooSkus.size() - 1);
+
+        // Если Woo ничего не прислал — вернём обычную страницу (инициализация до диффа)
         if (wooSkus.isEmpty()) {
             var page = page(afterSku, limit); // тут уже withHash() считает с groupId
             return new DiffResult(page.nextAfter(), page.last(), List.of(), List.of(), page.items());
         }
 
-        // 2) По присланным SKU получаем данные из MSSQL
+        // 2) По присланным SKU получаем данные из MSSQL (ровно по списку)
         List<CardTovExportDto> fromMsByIn = dao.findBySkus(wooSkus);
         Set<String> foundInMs = fromMsByIn.stream().map(CardTovExportDto::getSku).collect(Collectors.toSet());
 
-        // Кандидаты на удаление: есть в Woo, нет в MSSQL
+        // toDelete: есть в Woo, нет в MSSQL
         List<String> toDelete = wooSkus.stream()
                 .filter(sku -> !foundInMs.contains(sku))
                 .toList();
 
-        // Убираем их из рабочих множеств, чтобы не попали в update/create
+        // Вычистим кандидатов на удаление из рабочих множеств, чтобы не попасть в update/add
         wooSkus.removeAll(toDelete);
         wooBySku.keySet().removeAll(toDelete);
 
-        // 3) Делаем "снимок" MS с учётом groupId (ensureCategoryPath) → считаем hash по снимку
-        // Это ключевой момент: hash включает groupId
+        // ⚠️ Если всё, что прислал Woo, оказалось к удалению — апдейтов нет
+        if (wooSkus.isEmpty()) {
+            int cap = Math.min(1000, Math.max(1, limit));
+            int capPlus1 = cap + 1;
+            boolean moreCreates = false;
+
+            List<CardTovExportOutDto> toCreateFull =
+                    (afterSku == null || afterSku.isEmpty())
+                            ? dao.findPage(null, capPlus1).stream().map(this::mapWithGroup).map(this::withHash).toList()
+                            : dao.findGreaterThan(afterSku, capPlus1).stream().map(this::mapWithGroup).map(this::withHash).toList();
+
+            if (toCreateFull.size() > cap) {
+                moreCreates = true;
+                toCreateFull = toCreateFull.subList(0, cap);
+            }
+
+            String lastAdd = toCreateFull.isEmpty() ? null : toCreateFull.get(toCreateFull.size() - 1).sku();
+            String nextAfter = maxSku(lastAdd, originalMaxWoo);
+
+            // last зависит ТОЛЬКО от наличия следующей страницы add
+            boolean last = !moreCreates;
+            return new DiffResult(nextAfter, last, List.of(), toDelete, toCreateFull);
+        }
+
+        // 3) Снимок из MSSQL по присланным SKU → groupId → hash (включая groupId)
         List<CardTovExportOutDto> msSnapshot = fromMsByIn.stream()
-                .map(this::mapWithGroup)   // проставляем groupId
-                .map(this::withHash)       // считаем hash с учётом groupId
+                .map(this::mapWithGroup)   // проставим groupId
+                .map(this::withHash)       // посчитаем hash (включает groupId)
                 .toList();
 
         Map<String, CardTovExportOutDto> msBySku = msSnapshot.stream()
                 .collect(Collectors.toMap(CardTovExportOutDto::sku, x -> x, (a,b)->a));
 
-        // 4) Обновления: есть в MSSQL, но hash отличается от присланного из Woo
+        // 4) toUpdateFull: есть в MSSQL, но hash отличается от Woo
         List<CardTovExportOutDto> toUpdateFull = wooSkus.stream()
                 .map(msBySku::get)
                 .filter(Objects::nonNull)
                 .filter(o -> !Objects.equals(o.hash(), wooBySku.get(o.sku())))
                 .toList();
 
-        // 5) Новые: (min..max) \ присланные SKU
-        String minSku = wooSkus.isEmpty() ? afterSku : wooSkus.get(0);
-        String maxSku = wooSkus.isEmpty() ? afterSku : wooSkus.get(wooSkus.size() - 1);
+        // 5) ADD (toCreateFull)
+        int cap      = Math.min(1000, Math.max(1, limit));
+        int capPlus1 = cap + 1;
+        boolean moreCreates = false;
+        List<CardTovExportOutDto> toCreateFull = List.of();
 
-        int cap = Math.max(1, Math.min(limit, 1000));
-        List<CardTovExportOutDto> toCreateFull = (minSku != null && maxSku != null && !minSku.equals(maxSku))
-                ? dao.findBetweenExcluding(minSku, maxSku, wooSkus, cap).stream()
-                .map(this::mapWithGroup)  // groupId
-                .map(this::withHash)      // hash c groupId
-                .toList()
-                : List.of();
+        if (afterSku == null || afterSku.isEmpty()) {
+            // === CASE A (инициализация/первый дифф без курсора):
+            // Ловим ВСЁ МЕНЬШЕ maxWoo, исключая seen → закрываем и prepend, и внутренние дыры.
+            List<CardTovExportOutDto> add = dao.findLessThanExcluding(originalMaxWoo, wooSkus, capPlus1)
+                    .stream().map(this::mapWithGroup).map(this::withHash).toList();
 
-        String nextAfter = maxSku;
-        boolean last = toUpdateFull.isEmpty() && toCreateFull.isEmpty() && toDelete.isEmpty();
+            if (add.size() > cap) {
+                moreCreates = true;
+                add = add.subList(0, cap);
+            }
+            toCreateFull = add;
+        } else {
+            // === CASE B (обычный дифф с курсором):
+            // Ловим ТОЛЬКО GAP внутри окна: (afterSku, maxWoo) \ wooSkus.
 
+            List<CardTovExportOutDto> gap = dao.findBetweenExcluding(afterSku, originalMaxWoo, wooSkus, capPlus1)
+                    .stream().map(this::mapWithGroup).map(this::withHash).toList();
+
+            if (gap.size() > cap) {
+                moreCreates = true;
+                gap = gap.subList(0, cap);
+            }
+            toCreateFull = gap;
+        }
+
+        String lastAdd = toCreateFull.isEmpty() ? null : toCreateFull.get(toCreateFull.size() - 1).sku();
+        String nextAfter = maxSku(lastAdd, originalMaxWoo);
+
+// last — ТОЛЬКО про наличие ещё одной страницы ADD в текущем кейсе
+        boolean last = !moreCreates;
         return new DiffResult(nextAfter, last, toUpdateFull, toDelete, toCreateFull);
     }
-
     // ====== приватные вспомогалки ======
 
     /** Ваш существующий маппер + получение groupId */
@@ -210,4 +258,10 @@ public class CardTovExportService {
 
     // старая страничная выдача
     public record PageResult(List<CardTovExportOutDto> items, String nextAfter, boolean last) {}
+
+    private static String maxSku(String a, String b) {
+        if (a == null) return b;
+        if (b == null) return a;
+        return (a.compareTo(b) >= 0) ? a : b;
+    }
 }
