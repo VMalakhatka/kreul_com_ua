@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Repository;
@@ -16,7 +17,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
-import java.util.Optional;
+import java.util.*;
 
 @RetryLabel("LavkaCatmapRepository")
 @Repository
@@ -35,11 +36,13 @@ public class LavkaCatmapRepository {
     private static final Logger log = LoggerFactory.getLogger(LavkaCatmapRepository.class);
 
     private final JdbcTemplate jdbc;
+    private final NamedParameterJdbcTemplate namedJdbc;
 
-    public LavkaCatmapRepository(@Qualifier("wpJdbcTemplate") JdbcTemplate jdbc) {
+    public LavkaCatmapRepository(@Qualifier("wpJdbcTemplate") JdbcTemplate jdbc,
+                                 @Qualifier("wpNamedJdbc") NamedParameterJdbcTemplate namedJdbc) {
         this.jdbc = jdbc;
+        this.namedJdbc = namedJdbc;
     }
-
     // ---------- SQL ----------
     private static final String SQL_SELECT_BY_HASH = """
         SELECT *
@@ -158,6 +161,55 @@ public class LavkaCatmapRepository {
             var rootMsg = (e.getMostSpecificCause() != null ? e.getMostSpecificCause().getMessage() : e.getMessage());
             log.error("Catmap UPSERT failed: path='{}', depth={}, wcTermId={}, error={}",
                     x.getPathText(), x.getDepth(), x.getWcTermId(), rootMsg, e);
+            throw e;
+        }
+    }
+
+    public List<LavkaCatmap> findAllByPathHashIn(Collection<String> hashes) {
+        if (hashes == null || hashes.isEmpty()) return List.of();
+
+        String sql = """
+        SELECT *
+          FROM wp_lavka_catmap
+         WHERE path_hash IN (:hashes)
+        """;
+
+        var params = Map.of("hashes", hashes);
+
+        try {
+            return namedJdbc.query(sql, params, M);
+        } catch (DataAccessException e) {
+            String msg = (e.getMostSpecificCause() != null ? e.getMostSpecificCause().getMessage() : e.getMessage());
+            log.error("findAllByPathHashIn failed: size={}, error={}", hashes.size(), msg, e);
+            throw e;
+        }
+    }
+
+    public Map<String, Long> findWooIdsByPathHashIn(Collection<String> hashes) {
+        if (hashes == null || hashes.isEmpty()) return Map.of();
+
+        String sql = """
+        SELECT path_hash, wc_term_id
+          FROM wp_lavka_catmap
+         WHERE path_hash IN (:hashes)
+           AND wc_term_id IS NOT NULL
+        """;
+
+        var params = Map.of("hashes", hashes);
+
+        try {
+            return namedJdbc.query(sql, params, rs -> {
+                Map<String, Long> out = new HashMap<>();
+                while (rs.next()) {
+                    String h = rs.getString("path_hash");
+                    Long tid = getNullableLong(rs, "wc_term_id");
+                    if (h != null && tid != null) out.put(h, tid);
+                }
+                return out;
+            });
+        } catch (DataAccessException e) {
+            String msg = (e.getMostSpecificCause() != null ? e.getMostSpecificCause().getMessage() : e.getMessage());
+            log.error("findWooIdsByPathHashIn failed: size={}, error={}", hashes.size(), msg, e);
             throw e;
         }
     }

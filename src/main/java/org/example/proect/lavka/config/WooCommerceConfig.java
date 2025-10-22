@@ -12,6 +12,7 @@ import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.http.client.support.HttpRequestWrapper;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.lang.NonNull;
 import com.zaxxer.hikari.HikariDataSource;
@@ -77,5 +78,10 @@ public class WooCommerceConfig {
     @Bean(name = "wpJdbcTemplate")
     public JdbcTemplate wpJdbcTemplate(@Qualifier("wpDataSource") DataSource ds) {
         return new JdbcTemplate(ds);
+    }
+
+    @Bean(name = "wpNamedJdbc")
+    public NamedParameterJdbcTemplate wpNamedJdbcTemplate(@Qualifier("wpDataSource") DataSource dataSource) {
+        return new NamedParameterJdbcTemplate(dataSource);
     }
 }

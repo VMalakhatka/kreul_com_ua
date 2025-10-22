@@ -47,6 +47,15 @@ public final class CatPathUtil {
         return lv;
     }
 
+    public static List<String> levelsArrayList(List<String> rawLevels) {
+        if (rawLevels == null || rawLevels.isEmpty()) return List.of();
+        List<String> lv = new ArrayList<>(rawLevels.size());
+        for (String s : rawLevels) {
+            if (s != null && !s.isBlank()) lv.add(s.trim());
+        }
+        return lv;
+    }
+
     // ---------------------- Сборка путей (единый конструктор) ----------------------
 
     /** Срез пути: уровни [0 .. endInclusive]. Возвращает null, если нечего собирать. */

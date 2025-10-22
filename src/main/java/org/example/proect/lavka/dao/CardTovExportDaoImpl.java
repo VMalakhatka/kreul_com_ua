@@ -3,20 +3,31 @@ package org.example.proect.lavka.dao;
 import lombok.RequiredArgsConstructor;
 import org.example.proect.lavka.dao.mapper.CardTovExportRowMapper;
 import org.example.proect.lavka.dto.CardTovExportDto;
+import org.example.proect.lavka.utils.RetryLabel;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Types;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
+@RetryLabel("CardTovExportDaoImpl")
 @Repository
-@RequiredArgsConstructor
+@Retryable(
+        include = {
+                org.springframework.dao.DeadlockLoserDataAccessException.class,
+                org.springframework.dao.CannotAcquireLockException.class,
+                org.springframework.dao.QueryTimeoutException.class,
+                org.springframework.dao.TransientDataAccessResourceException.class
+        },
+        maxAttempts = 4,
+        backoff = @Backoff(delay = 200, multiplier = 2.0, maxDelay = 5000, random = true)
+)
 public class CardTovExportDaoImpl implements CardTovExportDao {
 
     private static final String BASE_SELECT = """
@@ -45,7 +56,13 @@ public class CardTovExportDaoImpl implements CardTovExportDao {
         """;
 
 
-    private final @Qualifier("folioNamedJdbc") NamedParameterJdbcTemplate namedJdbc;
+    private final NamedParameterJdbcTemplate namedJdbc;
+
+    public CardTovExportDaoImpl(
+            @Qualifier("folioNamedJdbc") NamedParameterJdbcTemplate namedJdbc
+    ) {
+        this.namedJdbc = namedJdbc;
+    }
 
     @Override
     public List<CardTovExportDto> findPage(String after, int limit) {

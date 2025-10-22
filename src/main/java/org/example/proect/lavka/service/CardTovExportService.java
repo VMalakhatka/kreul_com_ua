@@ -37,9 +37,13 @@ public class CardTovExportService {
     /** Старая страничная выдача — без изменений (только добавьте hash в out DTO) */
     public PageResult page(String afterSku, int limit) {
         List<CardTovExportDto> items = dao.findPage(afterSku, limit);
+
+        // батч-обеспечение категорий для всех элементов страницы
+        Map<String, Long> idsByHash = ensureCategoriesForDtos(items);
+
         List<CardTovExportOutDto> mapped = items.stream()
-                .map(this::mapWithGroup)
-                .map(this::withHash) // ← добавили hash
+                .map(d -> mapWithGroupCached(d, idsByHash))
+                .map(this::withHash)
                 .toList();
 
         String nextAfter = mapped.isEmpty() ? null : mapped.get(mapped.size() - 1).sku();
@@ -81,15 +85,26 @@ public class CardTovExportService {
 
         // ⚠️ Если всё, что прислал Woo, оказалось к удалению — апдейтов нет
         if (wooSkus.isEmpty()) {
-            int cap = Math.min(1000, Math.max(1, limit));
+            int cap      = Math.min(1000, Math.max(1, limit));
             int capPlus1 = cap + 1;
             boolean moreCreates = false;
 
-            List<CardTovExportOutDto> toCreateFull =
+            // 1) берём «сырой» список кандидатов на ADD (без вызова категорий в стриме)
+            List<CardTovExportDto> addRaw =
                     (afterSku == null || afterSku.isEmpty())
-                            ? dao.findPage(null, capPlus1).stream().map(this::mapWithGroup).map(this::withHash).toList()
-                            : dao.findGreaterThan(afterSku, capPlus1).stream().map(this::mapWithGroup).map(this::withHash).toList();
+                            ? dao.findPage(null, capPlus1)
+                            : dao.findGreaterThan(afterSku, capPlus1);
 
+            // 2) одним батчем обеспечиваем категории
+            Map<String, Long> idsByHashAdd = ensureCategoriesForDtos(addRaw);
+
+            // 3) маппим с использованием кэша категорий и считаем hash
+            List<CardTovExportOutDto> toCreateFull = addRaw.stream()
+                    .map(d -> mapWithGroupCached(d, idsByHashAdd))
+                    .map(this::withHash)
+                    .toList();
+
+            // 4) пагинация
             if (toCreateFull.size() > cap) {
                 moreCreates = true;
                 toCreateFull = toCreateFull.subList(0, cap);
@@ -97,48 +112,56 @@ public class CardTovExportService {
 
             String lastAdd = toCreateFull.isEmpty() ? null : toCreateFull.get(toCreateFull.size() - 1).sku();
 
-// ► nextAfter по правилу:
+            // ► nextAfter по правилу:
             String nextAfter = moreCreates
-                    ? lastAdd                                   // продолжаем листать ADD
-                    : maxSku(lastAdd, originalMaxWoo);          // ADD закончился — якоримся на максимум окна
+                    ? lastAdd                          // продолжаем листать ADD
+                    : maxSku(lastAdd, originalMaxWoo); // ADD закончился — якоримся на максимум окна
 
             boolean last = !moreCreates;
             return new DiffResult(nextAfter, last, List.of(), toDelete, toCreateFull);
         }
 
-        // 3) Снимок из MSSQL по присланным SKU → groupId → hash (включая groupId)
+// 3) Снимок для UPDATE: сначала обеспечим категории батчем, затем мапим + hash
+        Map<String, Long> idsByHashForSeen = ensureCategoriesForDtos(fromMsByIn);
+
         List<CardTovExportOutDto> msSnapshot = fromMsByIn.stream()
-                .map(this::mapWithGroup)   // проставим groupId
-                .map(this::withHash)       // посчитаем hash (включает groupId)
+                .map(d -> mapWithGroupCached(d, idsByHashForSeen))
+                .map(this::withHash)
                 .toList();
 
         Map<String, CardTovExportOutDto> msBySku = msSnapshot.stream()
-                .collect(Collectors.toMap(CardTovExportOutDto::sku, x -> x, (a,b)->a));
+                .collect(Collectors.toMap(CardTovExportOutDto::sku, x -> x, (a, b) -> a));
 
-        // 4) toUpdateFull: есть в MSSQL, но hash отличается от Woo
         List<CardTovExportOutDto> toUpdateFull = wooSkus.stream()
                 .map(msBySku::get)
                 .filter(Objects::nonNull)
                 .filter(o -> !Objects.equals(o.hash(), wooBySku.get(o.sku())))
                 .toList();
 
-        // 5) ADD (toCreateFull)
+        // 5) ADD (toCreateFull) — работаем через сырой список DTO → батч категорий → маппинг + hash
         int cap      = Math.min(1000, Math.max(1, limit));
         int capPlus1 = cap + 1;
         boolean moreCreates = false;
-        List<CardTovExportOutDto> toCreateFull = List.of();
+        List<CardTovExportOutDto> toCreateFull;
 
         if (afterSku == null || afterSku.isEmpty()) {
-            // === CASE A (инициализация/первый дифф без курсора):
-            // Ловим ВСЁ МЕНЬШЕ maxWoo, исключая seen → закрываем и prepend, и внутренние дыры.
-            toCreateFull = dao.findLessThanExcluding(originalMaxWoo, wooSkus, capPlus1)
-                    .stream().map(this::mapWithGroup).map(this::withHash).toList();
+            // CASE A: забираем сырьё
+            List<CardTovExportDto> addRaw = dao.findLessThanExcluding(originalMaxWoo, wooSkus, capPlus1);
+            // батч категорий
+            Map<String, Long> idsByHashAdd = ensureCategoriesForDtos(addRaw);
+            // маппинг + hash
+            toCreateFull = addRaw.stream()
+                    .map(d -> mapWithGroupCached(d, idsByHashAdd))
+                    .map(this::withHash)
+                    .toList();
         } else {
-            // === CASE B (обычный дифф с курсором):
-            // Ловим ТОЛЬКО GAP внутри окна: (afterSku, maxWoo) \ wooSkus.
-
-            toCreateFull = dao.findBetweenExcluding(afterSku, originalMaxWoo, wooSkus, capPlus1)
-                    .stream().map(this::mapWithGroup).map(this::withHash).toList();
+            // CASE B: забираем сырьё
+            List<CardTovExportDto> addRaw = dao.findBetweenExcluding(afterSku, originalMaxWoo, wooSkus, capPlus1);
+            Map<String, Long> idsByHashAdd = ensureCategoriesForDtos(addRaw);
+            toCreateFull = addRaw.stream()
+                    .map(d -> mapWithGroupCached(d, idsByHashAdd))
+                    .map(this::withHash)
+                    .toList();
         }
 
         if (toCreateFull.size() > cap) {
@@ -147,11 +170,9 @@ public class CardTovExportService {
         }
 
         String lastAdd = toCreateFull.isEmpty() ? null : toCreateFull.get(toCreateFull.size() - 1).sku();
-
-// ► nextAfter:
         String nextAfter = moreCreates ? lastAdd : maxSku(lastAdd, originalMaxWoo);
-
         boolean last = !moreCreates;
+
         return new DiffResult(nextAfter, last, toUpdateFull, toDelete, toCreateFull);
     }
     // ====== приватные вспомогалки ======
@@ -260,5 +281,72 @@ public class CardTovExportService {
         if (a == null) return b;
         if (b == null) return a;
         return (a.compareTo(b) >= 0) ? a : b;
+    }
+
+    // ====== приватные вспомогалки для категорий ======
+
+    /** Собирает нормализованный список уровней категории из DTO. Пустые игнорятся. */
+    private static List<String> levelsOf(CardTovExportDto d) {
+        List<String> lv = new ArrayList<>(6);
+        if (notBlank(d.getNGROUP_TVR())) lv.add(d.getNGROUP_TVR().trim());
+        if (notBlank(d.getNGROUP_TV2())) lv.add(d.getNGROUP_TV2().trim());
+        if (notBlank(d.getNGROUP_TV3())) lv.add(d.getNGROUP_TV3().trim());
+        if (notBlank(d.getNGROUP_TV4())) lv.add(d.getNGROUP_TV4().trim());
+        if (notBlank(d.getNGROUP_TV5())) lv.add(d.getNGROUP_TV5().trim());
+        if (notBlank(d.getNGROUP_TV6())) lv.add(d.getNGROUP_TV6().trim());
+        return lv;
+    }
+
+    /** Полный путь категории для DTO (на основе уровней). Может быть null, если уровней нет. */
+    private static String fullPathOf(CardTovExportDto d) {
+        List<String> lv = levelsOf(d);
+        if (lv.isEmpty()) return null;
+        return org.example.proect.lavka.utils.category.CatPathUtil.buildSlicePath(lv, lv.size() - 1);
+    }
+
+    /** Полный хеш пути для DTO (или null, если пути нет). */
+    private static String fullHashOf(CardTovExportDto d) {
+        String p = fullPathOf(d);
+        if (p == null) return null;
+        return org.example.proect.lavka.utils.category.CatPathUtil.sha1(p);
+    }
+
+    /** Батч-обеспечение categoryId для набора DTO: возвращает Map<fullHash, termId>. */
+    private Map<String, Long> ensureCategoriesForDtos(Collection<CardTovExportDto> dtos) {
+        // собираем уникальные пути (List<String> уровней)
+        Set<List<String>> uniqPaths = new HashSet<>();
+        for (CardTovExportDto d : dtos) {
+            List<String> lv = levelsOf(d);
+            if (!lv.isEmpty()) uniqPaths.add(lv);
+        }
+        if (uniqPaths.isEmpty()) return Map.of();
+
+        // батч в сервис категорий
+        return wooCategoryService.ensureCategoryPathsBulk(new ArrayList<>(uniqPaths));
+    }
+
+    /** Маппер DTO -> OutDTO, но groupId берём из idsByHash (без вызовов внешнего сервиса). */
+    private CardTovExportOutDto mapWithGroupCached(CardTovExportDto d, Map<String, Long> idsByHash) {
+        String h = fullHashOf(d);
+        Long groupId = (h == null) ? null : idsByHash.get(h);
+
+        return new CardTovExportOutDto(
+                d.getSku(),
+                d.getName(),
+                d.getImg(),
+                d.getEDIN_IZMER(),
+                d.getGlobal_unique_id(),
+                d.getWeight(),
+                d.getLength(),
+                d.getWidth(),
+                d.getHeight(),
+                d.getStatus(),
+                d.getVES_EDINIC(),
+                d.getDESCRIPTION(),
+                d.getRAZM_IZMER(),
+                d.getGr_descr(),
+                groupId,
+                null // hash добавим позже через withHash()
+        );
     }
 }
