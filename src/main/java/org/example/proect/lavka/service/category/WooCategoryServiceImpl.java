@@ -163,11 +163,26 @@ public class WooCategoryServiceImpl implements WooCategoryService {
 
     /** Ищем самый длинный уже привязанный префикс в БД. Если ничего нет — index = -1, parentTermId = null. */
     private BoundPrefix findLongestBoundPrefix(List<String> levels) {
+        if (levels == null || levels.size() <= 1) {
+            return new BoundPrefix(-1, null);
+        }
+        // идём от самого длинного префикса к короткому
         for (int i = levels.size() - 2; i >= 0; i--) {
-            String slice = CatPathUtil.buildSlicePath(levels, i);
-            var opt = repo.findByPathHash(CatPathUtil.sha1(slice));
-            if (opt.isPresent() && opt.get().getWcTermId() != null) {
-                return new BoundPrefix(i, opt.get().getWcTermId());
+            String slice     = CatPathUtil.buildSlicePath(levels, i);
+            String sliceHash = CatPathUtil.sha1(slice);
+
+            // 1) пробуем кэш
+            Long cachedTid = termByHash.get(sliceHash);
+            if (cachedTid != null) {
+                return new BoundPrefix(i, cachedTid);
+            }
+            var opt = repo.findByPathHash(sliceHash);
+            if (opt.isPresent()) {
+                Long tid = opt.get().getWcTermId();
+                if (tid != null) {
+                    cachePut(sliceHash, tid);
+                    return new BoundPrefix(i, tid);
+                }
             }
         }
         return new BoundPrefix(-1, null);
@@ -244,15 +259,13 @@ public class WooCategoryServiceImpl implements WooCategoryService {
 
             repo.upsert(rec);
         }
+        cachePut(sliceHash, found.getId());
     }
-
-    private void safeCachePut(String fullHash, long termId) {
-        Long prev = termByHash.put(fullHash, termId);
-        if (prev != null && !prev.equals(termId)) {
-            // необязательно, но полезно для диагностики
-            // log.warn("TermId changed for hash {}: {} -> {}", fullHash, prev, termId);
-        }
-        hashByTerm.put(termId, fullHash);
+    public Optional<Long> getCachedTermIdByLevels(List<String> levelsRaw) {
+        List<String> lv = CatPathUtil.levelsArrayList(levelsRaw);
+        if (lv.isEmpty()) return Optional.empty();
+        String fullPath = CatPathUtil.buildSlicePath(lv, lv.size() - 1);
+        String fullHash = CatPathUtil.sha1(fullPath);
+        return getCachedTermIdByHash(fullHash);
     }
-
 }

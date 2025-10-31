@@ -5,6 +5,7 @@ import org.example.proect.lavka.dao.CardTovExportDao;
 import org.example.proect.lavka.dto.CardTovExportDto;
 import org.example.proect.lavka.dto.CardTovExportOutDto;
 import org.example.proect.lavka.service.category.WooCategoryService;
+import org.example.proect.lavka.utils.category.CatPathUtil;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
@@ -173,7 +174,7 @@ public class CardTovExportService {
         String nextAfter = moreCreates ? lastAdd : maxSku(lastAdd, originalMaxWoo);
         boolean last = !moreCreates;
 
-        return new DiffResult(nextAfter, last, toUpdateFull, toDelete, toCreateFull);
+            return new DiffResult(nextAfter, last, toUpdateFull, toDelete, toCreateFull);
     }
     // ====== приватные вспомогалки ======
 
@@ -301,20 +302,20 @@ public class CardTovExportService {
     private static String fullPathOf(CardTovExportDto d) {
         List<String> lv = levelsOf(d);
         if (lv.isEmpty()) return null;
-        return org.example.proect.lavka.utils.category.CatPathUtil.buildSlicePath(lv, lv.size() - 1);
+        return CatPathUtil.buildSlicePath(lv, lv.size() - 1);
     }
 
     /** Полный хеш пути для DTO (или null, если пути нет). */
     private static String fullHashOf(CardTovExportDto d) {
         String p = fullPathOf(d);
         if (p == null) return null;
-        return org.example.proect.lavka.utils.category.CatPathUtil.sha1(p);
+        return CatPathUtil.sha1(p);
     }
 
     /** Батч-обеспечение categoryId для набора DTO: возвращает Map<fullHash, termId>. */
     private Map<String, Long> ensureCategoriesForDtos(Collection<CardTovExportDto> dtos) {
         // собираем уникальные пути (List<String> уровней)
-        Set<List<String>> uniqPaths = new HashSet<>();
+        Set<List<String>> uniqPaths = new LinkedHashSet<>();
         for (CardTovExportDto d : dtos) {
             List<String> lv = levelsOf(d);
             if (!lv.isEmpty()) uniqPaths.add(lv);
