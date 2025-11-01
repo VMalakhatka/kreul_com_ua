@@ -267,34 +267,4 @@ public class WooApiClient {
         }
     }
 
-    public void pushCategoryDescriptionsBatch(Map<Long,String> catMap) {
-        // соберём payload
-        List<Map<String,Object>> items = new ArrayList<>();
-        for (Map.Entry<Long,String> e : catMap.entrySet()) {
-            Long termId = e.getKey();
-            String html = e.getValue();
-            if (termId == null || termId <= 0) continue;
-            if (html == null || html.isBlank()) continue;
-
-            Map<String,Object> one = new HashMap<>();
-            one.put("term_id", termId);
-            one.put("html", html);
-            items.add(one);
-        }
-
-        if (items.isEmpty()) {
-            return; // нечего постить
-        }
-
-        String url = props.getBaseUrl() + "/lavka/v1/catdesc/batch";
-        // props.getLavkaBaseUrl() — это типа https://site/wp-json
-        // (мы можем добавить это поле в WooProperties как baseRestUrl без /wc/v3)
-
-        Map<String,Object> payload = new HashMap<>();
-        payload.put("items", items);
-
-        // auth так же, как мы делаем для wc/v3 (Basic / Bearer)
-        restTemplate.postForObject(url, payload, Void.class);
-    }
-
 }

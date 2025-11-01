@@ -8,7 +8,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class LavkaLocationsClient {
@@ -51,5 +54,47 @@ public class LavkaLocationsClient {
     public void saveMap(LocMap map) {
         var url = base + "/locations/map";
         rt.put(url, map); // 2xx == OK
+    }
+
+    public void pushCategoryDescriptionsBatch(Map<Long,String> catMap) {
+        // собрать payload в формате:
+        // { "items": [ { "term_id": 1504, "html": "<p>...</p>" }, ... ] }
+
+        List<Map<String,Object>> items = new ArrayList<>();
+        for (var e : catMap.entrySet()) {
+            Long termId = e.getKey();
+            String html = e.getValue();
+            if (termId == null || termId <= 0) continue;
+            if (html == null || html.isBlank()) continue;
+
+            Map<String,Object> one = new HashMap<>();
+            one.put("term_id", termId);
+            one.put("html", html);
+            items.add(one);
+        }
+
+        if (items.isEmpty()) {
+            return; // нечего пушить — выходим тихо
+        }
+
+        Map<String,Object> payload = new HashMap<>();
+        payload.put("items", items);
+
+        String url = base + "/catdesc/batch";
+
+        try {
+            // lavkaRestTemplateBasic уже должен ставить Basic Auth заголовок
+            rt.postForEntity(url, payload, Void.class);
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            // сюда попадёт 401, 403, 500 с телом
+            throw new IllegalStateException(
+                    "Lavka /catdesc/batch failed: " +
+                            e.getRawStatusCode() + " " + e.getResponseBodyAsString(), e
+            );
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "Lavka /catdesc/batch failed: " + e.getMessage(), e
+            );
+        }
     }
 }

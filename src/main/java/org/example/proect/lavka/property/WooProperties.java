@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "woocommerce")
 public class WooProperties {
     private String baseUrl;
+    private String baseLavkaUrl;
     private String key;
     private String secret;
     private String lang;

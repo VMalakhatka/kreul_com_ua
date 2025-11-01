@@ -1,6 +1,7 @@
 package org.example.proect.lavka.service;
 
 import lombok.RequiredArgsConstructor;
+import org.example.proect.lavka.client.LavkaLocationsClient;
 import org.example.proect.lavka.client.WooApiClient;
 import org.example.proect.lavka.dao.wp.WpProductDao;
 import org.example.proect.lavka.dto.CardTovExportOutDto;
@@ -19,6 +20,7 @@ public class SyncServiceImpl implements SyncService {
     private final WpProductDao wpProductDao;
     private final CardTovExportService cardTovExportService;
     private final WooApiClient wooApiClient;
+    private final LavkaLocationsClient lavkaLocationsClient;
 
     @Override
     public SyncRunResponse runOneBatch(
@@ -43,6 +45,7 @@ public class SyncServiceImpl implements SyncService {
                 : Math.min(pageSizeWoo, 1000);
 
         final boolean isDry = (dryRun != null && dryRun);
+        Map<Long, String> categoryDescMap = new HashMap<>();
 
         // === 1. Счётчики результата ===
         int totalProcessed = 0;
@@ -125,7 +128,12 @@ public class SyncServiceImpl implements SyncService {
                         }
                         totalCreated += batchAdd;    // всегда (каждая порция create)
                     } else {
-
+                        for (CardTovExportOutDto dto : toUpdateFull) {
+                            collectCategoryDesc(categoryDescMap, dto.groupId(), dto.grDescr());
+                        }
+                        for (CardTovExportOutDto dto : toCreateFull) {
+                            collectCategoryDesc(categoryDescMap, dto.groupId(), dto.grDescr());
+                        }
                         Map<String, Object> batchPayload = buildWooBatchPayload(toUpdateFull, toCreateFull, toDelete, existingIdsBySku);
 
                         WooApiClient.WooBatchResult res = wooApiClient.upsertProductsBatch(batchPayload);
@@ -196,6 +204,13 @@ public class SyncServiceImpl implements SyncService {
             }
         } // конец внешнего цикла по окнам Woo
 
+        if (!isDry && !categoryDescMap.isEmpty()) {
+            try {
+                lavkaLocationsClient.pushCategoryDescriptionsBatch(categoryDescMap);
+            } catch (Exception e) {
+                allErrors.add("catdesc_sync_failed: " + e.getMessage());
+            }
+        }
         // === 3. Ответ
         return new SyncRunResponse(
                 true,
@@ -425,6 +440,16 @@ public class SyncServiceImpl implements SyncService {
         }
 
         return m;
+    }
+
+    private static void collectCategoryDesc(
+            Map<Long,String> acc,
+            Long groupId,
+            String grDescr
+    ) {
+        if (groupId == null || groupId <= 0) return;
+        if (grDescr == null || grDescr.isBlank()) return;
+        acc.put(groupId, grDescr);
     }
 
     private static String safe(String s) {
