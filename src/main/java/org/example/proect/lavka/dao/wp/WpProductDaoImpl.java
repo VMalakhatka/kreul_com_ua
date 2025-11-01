@@ -1,19 +1,23 @@
 package org.example.proect.lavka.dao.wp;
 
 import lombok.RequiredArgsConstructor;
+import org.example.proect.lavka.dto.SeenItem;
 import org.example.proect.lavka.service.CardTovExportService;
 import org.example.proect.lavka.service.CardTovExportService.ItemHash;
 import org.example.proect.lavka.utils.RetryLabel;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.lang.Nullable;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @RetryLabel("WpProductDaoImpl")
 @Repository
@@ -34,32 +38,41 @@ public class WpProductDaoImpl implements WpProductDao {
     private final @Qualifier("wpNamedJdbc") NamedParameterJdbcTemplate wpNamedJdbc;
 
     @Override
-    public List<CardTovExportService.ItemHash> collectSeenWindow(int limit, String cursorAfter) {
-        int lim = Math.max(1, Math.min(limit, 1000));
+    public List<SeenItem> collectSeenWindow(int limit, @Nullable String afterSku) {
+        // build SQL with optional afterSku
+        String baseSql = """
+        SELECT sku.post_id           AS post_id,
+               sku.meta_value        AS sku,
+               COALESCE(h.meta_value, '') AS hash
+        FROM wp_postmeta sku
+        JOIN wp_posts p
+          ON p.ID = sku.post_id
+         AND p.post_type = 'product'
+        LEFT JOIN wp_postmeta h
+          ON h.post_id = sku.post_id
+         AND h.meta_key = '_ms_hash'
+        WHERE sku.meta_key = '_sku'
+        /**AFTER_COND**/
+        ORDER BY sku.meta_value ASC
+        LIMIT :lim
+    """;
 
-        // ВАЖНО: если у тебя в WP нестандартный префикс (не wp_), поправь здесь имена таблиц!
-        String sql = """
-            SELECT sku.post_id            AS post_id,
-                   sku.meta_value         AS sku,
-                   COALESCE(h.meta_value, '') AS hash
-            FROM wp_postmeta sku
-            JOIN wp_posts p
-              ON p.ID = sku.post_id
-             AND p.post_type = 'product'
-            LEFT JOIN wp_postmeta h
-              ON h.post_id = sku.post_id
-             AND h.meta_key = '_ms_hash'
-            WHERE sku.meta_key = '_sku'
-              AND (:afterSku IS NULL OR sku.meta_value > :afterSku)
-            ORDER BY sku.meta_value ASC
-            LIMIT :lim
-        """;
+        Map<String,Object> params = new HashMap<>();
+        params.put("lim", Math.max(1, Math.min(limit, 1000)));
 
-        var params = new MapSqlParameterSource()
-                .addValue("afterSku", (cursorAfter == null || cursorAfter.isBlank()) ? null : cursorAfter)
-                .addValue("lim", lim);
+        String sql;
+        if (afterSku != null && !afterSku.isBlank()) {
+            sql = baseSql.replace("/**AFTER_COND**/", "AND sku.meta_value > :afterSku");
+            params.put("afterSku", afterSku.trim());
+        } else {
+            sql = baseSql.replace("/**AFTER_COND**/", "");
+        }
 
-        return wpNamedJdbc.query(sql, params, (rs, rowNum) -> mapRowToItemHash(rs));
+        return wpNamedJdbc.query(sql, params, (rs, rowNum) -> new SeenItem(
+                rs.getString("sku"),
+                rs.getString("hash"),
+                rs.getLong("post_id")
+        ));
     }
 
     private static ItemHash mapRowToItemHash(ResultSet rs) throws SQLException {

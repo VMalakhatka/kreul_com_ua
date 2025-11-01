@@ -1,5 +1,6 @@
 package org.example.proect.lavka.dao.wp;
 
+import org.example.proect.lavka.dto.SeenItem;
 import org.example.proect.lavka.service.CardTovExportService;
 
 import java.util.List;
@@ -12,5 +13,5 @@ public interface WpProductDao {
      *
      * Это аналог lts_collect_seen_window() из PHP.
      */
-    List<CardTovExportService.ItemHash> collectSeenWindow(int limit, String cursorAfter);
+    List<SeenItem> collectSeenWindow(int limit, String cursorAfter);
 }

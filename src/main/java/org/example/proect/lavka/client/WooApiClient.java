@@ -12,12 +12,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.Base64;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import java.util.Arrays;
-import java.util.Objects;
 
 @Component
 public class WooApiClient {
@@ -217,6 +214,87 @@ public class WooApiClient {
             // fallback на timestamp, если вдруг
             return "x" + Long.toHexString(System.nanoTime());
         }
+    }
+
+    public record WooBatchResult(
+            int createdCount,
+            int updatedCount
+            // можно добавить ещё детали, если надо
+    ) {}
+
+    public WooBatchResult upsertProductsBatch(Map<String,Object> payload) {
+        // если нет ни create ни update — просто ничего не делаем
+        if (payload == null || payload.isEmpty()) {
+            return new WooBatchResult(0,0);
+        }
+
+        String url = props.getBaseUrl() + "/products/batch";
+
+        @SuppressWarnings("unchecked")
+        ResponseEntity<Map> resp = restTemplate.postForEntity(url, payload, Map.class);
+
+        Map body = resp.getBody();
+        if (body == null) {
+            return new WooBatchResult(0,0);
+        }
+        if (resp.getStatusCode().is2xxSuccessful()) {
+            // Woo отвечает примерно:
+            // {
+            //   "create": [ {id:..., sku:"..."}, ... ],
+            //   "update": [ {id:..., sku:"..."}, ... ],
+            //   "delete": [...]
+            // }
+            int c = 0;
+            int u = 0;
+
+            Object createdArr = body.get("create");
+            if (createdArr instanceof List<?> listC) {
+                c = listC.size();
+                // при желании можно тут прочитать id/sku и обновить локальную карту knownPostId
+                // (завести Map<String,Long> sku->id и вернуть наружу)
+            }
+
+            Object updatedArr = body.get("update");
+            if (updatedArr instanceof List<?> listU) {
+                u = listU.size();
+            }
+
+            return new WooBatchResult(c, u);
+        }else{
+            // ошибка - считаем всё как 0, логируем
+            // log.error("Woo batch failed {}", code);
+            return new WooBatchResult(0,0);
+        }
+    }
+
+    public void pushCategoryDescriptionsBatch(Map<Long,String> catMap) {
+        // соберём payload
+        List<Map<String,Object>> items = new ArrayList<>();
+        for (Map.Entry<Long,String> e : catMap.entrySet()) {
+            Long termId = e.getKey();
+            String html = e.getValue();
+            if (termId == null || termId <= 0) continue;
+            if (html == null || html.isBlank()) continue;
+
+            Map<String,Object> one = new HashMap<>();
+            one.put("term_id", termId);
+            one.put("html", html);
+            items.add(one);
+        }
+
+        if (items.isEmpty()) {
+            return; // нечего постить
+        }
+
+        String url = props.getBaseUrl() + "/lavka/v1/catdesc/batch";
+        // props.getLavkaBaseUrl() — это типа https://site/wp-json
+        // (мы можем добавить это поле в WooProperties как baseRestUrl без /wc/v3)
+
+        Map<String,Object> payload = new HashMap<>();
+        payload.put("items", items);
+
+        // auth так же, как мы делаем для wc/v3 (Basic / Bearer)
+        restTemplate.postForObject(url, payload, Void.class);
     }
 
 }
