@@ -146,7 +146,7 @@ public class CardTovExportService {
         List<CardTovExportOutDto> toCreateFull;
 
         if (afterSku == null || afterSku.isEmpty()) {
-            // CASE A: забираем сырьё
+            // CASE A: забираем сырьё - if 0 - can break
             List<CardTovExportDto> addRaw = dao.findLessThanExcluding(originalMaxWoo, wooSkus, capPlus1);
             // батч категорий
             Map<String, Long> idsByHashAdd = ensureCategoriesForDtos(addRaw);

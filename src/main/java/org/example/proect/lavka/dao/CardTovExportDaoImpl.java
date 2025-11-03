@@ -133,46 +133,97 @@ public class CardTovExportDaoImpl implements CardTovExportDao {
         return namedJdbc.query(sql, params, CardTovExportRowMapper.M);
     }
 
-    @Override
-    public List<CardTovExportDto> findBetweenExcluding(String minSku, String maxSku,
-                                                       Collection<String> exclude, int cap) {
-        if (minSku == null || maxSku == null || minSku.equals(maxSku)) return List.of();
-        int lim = Math.max(1, Math.min(cap, 2000)); // предохранитель
-        // В T-SQL TOP нельзя параметризовать — подставляем безопасно отформатированное число.
-        String sql = (exclude == null || exclude.isEmpty())
-                ? """
-                   SELECT TOP %d
-                          sku, name,
-                          NGROUP_TVR, NGROUP_TV2, NGROUP_TV3, NGROUP_TV4, NGROUP_TV5, NGROUP_TV6,
-                          img, EDIN_IZMER, global_unique_id,
-                          weight, [length], [width], [height],
-                          status, VES_EDINIC, [DESCRIPTION], RAZM_IZMER, gr_descr
-                   FROM dbo.card_tov_export
-                   WHERE sku > :minSku AND sku < :maxSku
-                   ORDER BY sku
-                   """.formatted(lim)
-                : """
-                   SELECT TOP %d
-                          sku, name,
-                          NGROUP_TVR, NGROUP_TV2, NGROUP_TV3, NGROUP_TV4, NGROUP_TV5, NGROUP_TV6,
-                          img, EDIN_IZMER, global_unique_id,
-                          weight, [length], [width], [height],
-                          status, VES_EDINIC, [DESCRIPTION], RAZM_IZMER, gr_descr
-                   FROM dbo.card_tov_export
-                   WHERE sku > :minSku AND sku < :maxSku
-                     AND sku NOT IN (:exclude)
-                   ORDER BY sku
-                   """.formatted(lim);
+//    @Override
+//    public List<CardTovExportDto> findBetweenExcluding(String minSku, String maxSku,
+//                                                       Collection<String> exclude, int cap) {
+//        if (minSku == null || maxSku == null || minSku.equals(maxSku)) return List.of();
+//        int lim = Math.max(1, Math.min(cap, 2000)); // предохранитель
+//        // В T-SQL TOP нельзя параметризовать — подставляем безопасно отформатированное число.
+//        String sql = (exclude == null || exclude.isEmpty())
+//                ? """
+//                   SELECT TOP %d
+//                          sku, name,
+//                          NGROUP_TVR, NGROUP_TV2, NGROUP_TV3, NGROUP_TV4, NGROUP_TV5, NGROUP_TV6,
+//                          img, EDIN_IZMER, global_unique_id,
+//                          weight, [length], [width], [height],
+//                          status, VES_EDINIC, [DESCRIPTION], RAZM_IZMER, gr_descr
+//                   FROM dbo.card_tov_export
+//                   WHERE sku > :minSku AND sku < :maxSku
+//                   ORDER BY sku
+//                   """.formatted(lim)
+//                : """
+//                   SELECT TOP %d
+//                          sku, name,
+//                          NGROUP_TVR, NGROUP_TV2, NGROUP_TV3, NGROUP_TV4, NGROUP_TV5, NGROUP_TV6,
+//                          img, EDIN_IZMER, global_unique_id,
+//                          weight, [length], [width], [height],
+//                          status, VES_EDINIC, [DESCRIPTION], RAZM_IZMER, gr_descr
+//                   FROM dbo.card_tov_export
+//                   WHERE sku > :minSku AND sku < :maxSku
+//                     AND sku NOT IN (:exclude)
+//                   ORDER BY sku
+//                   """.formatted(lim);
+//
+//        var params = new MapSqlParameterSource()
+//                .addValue("minSku", minSku)
+//                .addValue("maxSku", maxSku);
+//
+//        if (exclude != null && !exclude.isEmpty()) {
+//            params.addValue("exclude", exclude);
+//        }
+//        return namedJdbc.query(sql, params, CardTovExportRowMapper.M);
+//    }
+@Override
+public List<CardTovExportDto> findBetweenExcluding(
+        String minSku, String maxSku,
+        Collection<String> exclude, int cap
+) {
+    if (minSku == null || maxSku == null || minSku.equals(maxSku)) return List.of();
+    int lim = Math.max(1, Math.min(cap, 2000));
+    boolean hasExclude = exclude != null && !exclude.isEmpty();
 
-        var params = new MapSqlParameterSource()
-                .addValue("minSku", minSku)
-                .addValue("maxSku", maxSku);
+    String sql = (hasExclude)
+            ? """
+           SELECT TOP %d
+                  a.COD_ARTIC AS sku, a.NAME_ARTIC AS name,
+                  a.NGROUP_TVR, a.NGROUP_TV2, a.NGROUP_TV3, a.NGROUP_TV4, a.NGROUP_TV5, a.NGROUP_TV6,
+                  b.S50 AS img, a.EDIN_IZMER, a.DOP3_ARTIC AS global_unique_id,
+                  a.BALL3 AS weight, a.DLINA_ART AS [length], a.SHIRIN_ART AS [width], a.VYSOTA_ART AS [height],
+                  a.DEPARTAM AS [status], a.VES_EDINIC, b.[DESCRIPTION], a.RAZM_IZMER, b.S255 AS gr_descr
+           FROM dbo.SCL_ARTC a
+           LEFT JOIN dbo.ALL_ARTC b ON b.COD_ARTIC = a.COD_ARTIC
+           WHERE a.ID_SCLAD = 7
+             AND CONVERT(VARBINARY(900), a.COD_ARTIC) > CONVERT(VARBINARY(900), CAST(:minSku AS VARCHAR(100)))
+             AND CONVERT(VARBINARY(900), a.COD_ARTIC) <= CONVERT(VARBINARY(900), CAST(:maxSku AS VARCHAR(100)))
+             AND a.COD_ARTIC NOT IN (:exclude)
+           ORDER BY CONVERT(VARBINARY(900), a.COD_ARTIC)
+           """.formatted(lim)
+            : """
+           SELECT TOP %d
+                  a.COD_ARTIC AS sku, a.NAME_ARTIC AS name,
+                  a.NGROUP_TVR, a.NGROUP_TV2, a.NGROUP_TV3, a.NGROUP_TV4, a.NGROUP_TV5, a.NGROUP_TV6,
+                  b.S50 AS img, a.EDIN_IZMER, a.DOP3_ARTIC AS global_unique_id,
+                  a.BALL3 AS weight, a.DLINA_ART AS [length], a.SHIRIN_ART AS [width], a.VYSOTA_ART AS [height],
+                  a.DEPARTAM AS [status], a.VES_EDINIC, b.[DESCRIPTION], a.RAZM_IZMER, b.S255 AS gr_descr
+           FROM dbo.SCL_ARTC a
+           LEFT JOIN dbo.ALL_ARTC b ON b.COD_ARTIC = a.COD_ARTIC
+           WHERE a.ID_SCLAD = 7
+             AND CONVERT(VARBINARY(900), a.COD_ARTIC) > CONVERT(VARBINARY(900), CAST(:minSku AS VARCHAR(100)))
+             AND CONVERT(VARBINARY(900), a.COD_ARTIC) <= CONVERT(VARBINARY(900), CAST(:maxSku AS VARCHAR(100)))
+           ORDER BY CONVERT(VARBINARY(900), a.COD_ARTIC)
+           """.formatted(lim);
 
-        if (exclude != null && !exclude.isEmpty()) {
-            params.addValue("exclude", exclude);
-        }
-        return namedJdbc.query(sql, params, CardTovExportRowMapper.M);
+    var params = new MapSqlParameterSource()
+            .addValue("minSku", minSku)
+            .addValue("maxSku", maxSku);
+
+    if (hasExclude) {
+        params.addValue("exclude", exclude);
     }
+
+    return namedJdbc.query(sql, params, CardTovExportRowMapper.M);
+}
+
 
     @Override
     public List<CardTovExportDto> findLessThanExcluding(String maxExclusive,

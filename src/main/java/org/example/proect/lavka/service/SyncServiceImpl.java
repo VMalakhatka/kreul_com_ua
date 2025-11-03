@@ -1,18 +1,19 @@
 package org.example.proect.lavka.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.example.proect.lavka.client.LavkaLocationsClient;
 import org.example.proect.lavka.client.WooApiClient;
 import org.example.proect.lavka.dao.wp.WpProductDao;
 import org.example.proect.lavka.dto.CardTovExportOutDto;
 import org.example.proect.lavka.dto.SeenItem;
 import org.example.proect.lavka.dto.sync.SyncRunResponse;
-import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SyncServiceImpl implements SyncService {
@@ -88,6 +89,8 @@ public class SyncServiceImpl implements SyncService {
                             it.hash() == null ? "" : it.hash()))
                     .toList();
 
+            totalProcessed += windowForDiff.size();
+
             Map<String, Long> existingIdsBySku = windowRaw.stream()
                     .collect(Collectors.toMap(SeenItem::sku, SeenItem::postId, (a, b)->a));
 
@@ -136,7 +139,14 @@ public class SyncServiceImpl implements SyncService {
                         }
                         Map<String, Object> batchPayload = buildWooBatchPayload(toUpdateFull, toCreateFull, toDelete, existingIdsBySku);
 
-                        WooApiClient.WooBatchResult res = wooApiClient.upsertProductsBatch(batchPayload);
+                        // разобрать batchPayload на чанки по 100 total
+                        List<Map<String,Object>> subPayloads = splitBatchPayload(batchPayload, 20);
+
+                        for (Map<String,Object> sub : subPayloads) {
+                            WooApiClient.WooBatchResult res = wooApiClient.upsertProductsBatch(sub);
+                            totalCreated += res.createdCount();
+                            totalUpdated += res.updatedCount();
+                        }
                         // апдейты/создания
                         // bulk upsert:
                         //  - toUpdateFull  (только в первую итерацию)
@@ -149,8 +159,6 @@ public class SyncServiceImpl implements SyncService {
                         totalUpdated += batchUpd;
                     }
                 }
-
-                totalProcessed += batchProcessed;
 
                 // 2.2.3 Двигаем локальный курсор и смотрим флаги
                 innerAfterSku = diff.nextAfter();   // может стать последний созданный SKU
@@ -458,5 +466,59 @@ public class SyncServiceImpl implements SyncService {
 
     private static boolean notBlank(String s) {
         return s != null && !s.trim().isEmpty();
+    }
+    /**
+     * Разбивает большой batch-пакет WooCommerce (/products/batch)
+     * на подсписки не более maxBatchSize элементов (create+update).
+     *
+     * Пример:
+     *   payload = { "create":[...120 шт...], "update":[...30 шт...] }
+     *   splitBatchPayload(payload, 100)
+     *   → вернёт список из 2 подпакаетов (100 и 50 элементов)
+     */
+    private List<Map<String, Object>> splitBatchPayload(Map<String, Object> payload, int maxBatchSize) {
+        if (payload == null || payload.isEmpty()) {
+            return List.of();
+        }
+        boolean big;
+        if(payload.size()>99)
+            big=true;
+        // исходные списки
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> createList = (List<Map<String, Object>>) payload.getOrDefault("create", List.of());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> updateList = (List<Map<String, Object>>) payload.getOrDefault("update", List.of());
+
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        // Объединяем create и update в одну "очередь", но помним тип
+        List<Map.Entry<String, Map<String, Object>>> all = new ArrayList<>();
+        createList.forEach(m -> all.add(Map.entry("create", m)));
+        updateList.forEach(m -> all.add(Map.entry("update", m)));
+
+        // Режем на чанки по maxBatchSize
+        for (int i = 0; i < all.size(); i += maxBatchSize) {
+            int end = Math.min(i + maxBatchSize, all.size());
+            List<Map.Entry<String, Map<String, Object>>> sub = all.subList(i, end);
+
+            // восстанавливаем структуру {create:[..], update:[..]}
+            Map<String, Object> subPayload = new HashMap<>();
+            List<Map<String, Object>> subCreate = new ArrayList<>();
+            List<Map<String, Object>> subUpdate = new ArrayList<>();
+
+            for (var e : sub) {
+                if (e.getKey().equals("create")) {
+                    subCreate.add(e.getValue());
+                } else {
+                    subUpdate.add(e.getValue());
+                }
+            }
+
+            if (!subCreate.isEmpty()) subPayload.put("create", subCreate);
+            if (!subUpdate.isEmpty()) subPayload.put("update", subUpdate);
+            result.add(subPayload);
+        }
+
+        return result;
     }
 }
