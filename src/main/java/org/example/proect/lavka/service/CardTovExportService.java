@@ -81,8 +81,8 @@ public class CardTovExportService {
                 .toList();
 
         // Вычистим кандидатов на удаление из рабочих множеств, чтобы не попасть в update/add
-        wooSkus.removeAll(toDelete);
-        wooBySku.keySet().removeAll(toDelete);
+//        wooSkus.removeAll(toDelete);
+//        wooBySku.keySet().removeAll(toDelete);
 
         // ⚠️ Если всё, что прислал Woo, оказалось к удалению — апдейтов нет
         if (wooSkus.isEmpty()) {
@@ -271,7 +271,11 @@ public class CardTovExportService {
         }
         return s;
     }
-    private static String nz(String s) { return s == null ? "" : s.trim(); }
+    private static String nz(String s) {
+        if (s == null) return "";
+        return s.replace('\u00A0', ' ').trim();
+    }
+
     private static boolean notBlank(String s) { return s != null && !s.trim().isEmpty(); }
     private static String emptyToNull(String s) { return (s == null || s.trim().isEmpty()) ? null : s.trim(); }
 

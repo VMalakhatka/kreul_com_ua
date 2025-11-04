@@ -142,21 +142,20 @@ public class SyncServiceImpl implements SyncService {
                         // разобрать batchPayload на чанки по 100 total
                         List<Map<String,Object>> subPayloads = splitBatchPayload(batchPayload, 20);
 
-                        for (Map<String,Object> sub : subPayloads) {
-                            WooApiClient.WooBatchResult res = wooApiClient.upsertProductsBatch(sub);
-                            totalCreated += res.createdCount();
-                            totalUpdated += res.updatedCount();
-                        }
                         // апдейты/создания
                         // bulk upsert:
                         //  - toUpdateFull  (только в первую итерацию)
                         //  - toCreateFull  (каждый раз)
-                        List<CardTovExportOutDto> updBatch =
-                                firstIterationForThisWindow ? toUpdateFull : List.of();
+                        if (firstIterationForThisWindow) {
+                            totalDrafted += batchDel;    // только в первой итерации окна
+                            totalUpdated += batchUpd;    // только в первой итерации окна
+                        }
+
+//                        List<CardTovExportOutDto> updBatch =
+//                                firstIterationForThisWindow ? toUpdateFull : List.of();
 
                         // BulkResult bulkRes = bulkUpsertWoo(updBatch, toCreateFull);
                         totalCreated += batchAdd;
-                        totalUpdated += batchUpd;
                     }
                 }
 
