@@ -116,46 +116,44 @@ public class SyncServiceImpl implements SyncService {
                 List<CardTovExportOutDto> toUpdateFull = firstIterationForThisWindow ? nzList(diff.toUpdateFull()):List.of();
                 List<CardTovExportOutDto> toCreateFull = nzList(diff.toCreateFull());
 
-                // считаем, сколько всего штук в этой конкретной порции
+                // считаем, сколько всего штук в этой порции
                 int batchDel = firstIterationForThisWindow ? toDelete.size() : 0;
                 int batchUpd = firstIterationForThisWindow ? toUpdateFull.size() : 0;
                 int batchAdd = toCreateFull.size();
                 int batchProcessed = batchDel + batchUpd + batchAdd;
-                if(batchProcessed!=0) {
-                    // 2.2.2 Применяем в Woo
-                    if (isDry) {
-                        // только считаем
-                        if (firstIterationForThisWindow) {
-                            totalDrafted += batchDel;    // только в первой итерации окна
-                            totalUpdated += batchUpd;    // только в первой итерации окна
-                        }
-                        totalCreated += batchAdd;    // всегда (каждая порция create)
-                    } else {
+
+                if (batchProcessed != 0) {
+                    if (!isDry) {
                         for (CardTovExportOutDto dto : toUpdateFull) {
                             collectCategoryDesc(categoryDescMap, dto.groupId(), dto.grDescr());
                         }
                         for (CardTovExportOutDto dto : toCreateFull) {
                             collectCategoryDesc(categoryDescMap, dto.groupId(), dto.grDescr());
                         }
-                        Map<String, Object> batchPayload = buildWooBatchPayload(toUpdateFull, toCreateFull, toDelete, existingIdsBySku);
+                    }
 
-                        // разобрать batchPayload на чанки по 100 total
-                        List<Map<String,Object>> subPayloads = splitBatchPayload(batchPayload, 20);
-
-                        // апдейты/создания
-                        // bulk upsert:
-                        //  - toUpdateFull  (только в первую итерацию)
-                        //  - toCreateFull  (каждый раз)
-                        if (firstIterationForThisWindow) {
-                            totalDrafted += batchDel;    // только в первой итерации окна
-                            totalUpdated += batchUpd;    // только в первой итерации окна
-                        }
-
-//                        List<CardTovExportOutDto> updBatch =
-//                                firstIterationForThisWindow ? toUpdateFull : List.of();
-
-                        // BulkResult bulkRes = bulkUpsertWoo(updBatch, toCreateFull);
+                    Map<String, Object> batchPayload = buildWooBatchPayload(
+                            toUpdateFull, toCreateFull, toDelete, existingIdsBySku
+                    );
+                    List<Map<String, Object>> subPayloads = splitBatchPayload(batchPayload, 50); // 50–100 ок
+                    if (firstIterationForThisWindow) {
+                        totalDrafted += batchDel;  // намерение заdraftить
+                        totalUpdated += batchUpd;
+                    }
+                    if (isDry) {
                         totalCreated += batchAdd;
+                    } else {
+                        int createdNow = 0, updatedNow = 0;
+                        for (Map<String, Object> sub : subPayloads) {
+                            var res = postWithBisect(sub, 1, allErrors); // делим до одиночек при 500
+                            createdNow += res.createdCount();
+                            updatedNow += res.updatedCount();
+                        }
+                        if (firstIterationForThisWindow) {
+                            totalUpdated += batchUpd;   // как и было (логика «за окно» ок)
+                            totalDrafted += batchDel;
+                        }
+                        totalCreated += createdNow;
                     }
                 }
 
@@ -520,4 +518,65 @@ public class SyncServiceImpl implements SyncService {
 
         return result;
     }
+
+    private WooApiClient.WooBatchResult postWithBisect(Map<String,Object> sub, int minSize,
+                                                       List<String> allErrors) {
+        try {
+            return wooApiClient.upsertProductsBatch(sub);
+        } catch (Exception e) {
+            // соберём список sku/id для лога
+            String skus = extractSkusFromBatch(sub);
+            // если уже слишком мелко — логируем и сдаёмся
+            int total = countItems(sub);
+            if (total <= minSize) {
+                allErrors.add("woo_batch_failed(final "+total+"): " + e.getMessage()
+                        + " skus=[" + skus + "]");
+                return new WooApiClient.WooBatchResult(0,0);
+            }
+            // делим пополам
+            var halves = splitInHalf(sub);
+            var r1 = postWithBisect(halves.get(0), minSize, allErrors);
+            var r2 = postWithBisect(halves.get(1), minSize, allErrors);
+            return new WooApiClient.WooBatchResult(r1.createdCount()+r2.createdCount(),
+                    r1.updatedCount()+r2.updatedCount());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private String extractSkusFromBatch(Map<String,Object> payload){
+        List<Map<String,Object>> c = (List<Map<String,Object>>) payload.getOrDefault("create", List.of());
+        List<Map<String,Object>> u = (List<Map<String,Object>>) payload.getOrDefault("update", List.of());
+        List<String> out = new ArrayList<>();
+        for (var m: c) out.add(String.valueOf(m.getOrDefault("sku", m.get("id"))));
+        for (var m: u) out.add(String.valueOf(m.getOrDefault("sku", m.get("id"))));
+        return String.join(",", out);
+    }
+
+    @SuppressWarnings("unchecked")
+    private int countItems(Map<String,Object> payload){
+        return ((List<?>)payload.getOrDefault("create", List.of())).size()
+                + ((List<?>)payload.getOrDefault("update", List.of())).size();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String,Object>> splitInHalf(Map<String,Object> payload){
+        List<Map.Entry<String, Map<String,Object>>> all = new ArrayList<>();
+        ((List<Map<String,Object>>)payload.getOrDefault("create", List.of()))
+                .forEach(m -> all.add(Map.entry("create", m)));
+        ((List<Map<String,Object>>)payload.getOrDefault("update", List.of()))
+                .forEach(m -> all.add(Map.entry("update", m)));
+        int mid = Math.max(1, all.size()/2);
+        return List.of(rebuildPayload(all.subList(0, mid)),
+                rebuildPayload(all.subList(mid, all.size())));
+    }
+
+    private Map<String,Object> rebuildPayload(List<Map.Entry<String, Map<String,Object>>> items){
+        Map<String,Object> p = new HashMap<>();
+        List<Map<String,Object>> c = new ArrayList<>(), u = new ArrayList<>();
+        for (var e: items) if ("create".equals(e.getKey())) c.add(e.getValue()); else u.add(e.getValue());
+        if (!c.isEmpty()) p.put("create", c);
+        if (!u.isEmpty()) p.put("update", u);
+        return p;
+    }
+
 }

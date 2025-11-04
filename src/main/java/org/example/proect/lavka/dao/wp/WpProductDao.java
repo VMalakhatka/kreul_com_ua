@@ -3,7 +3,9 @@ package org.example.proect.lavka.dao.wp;
 import org.example.proect.lavka.dto.SeenItem;
 import org.example.proect.lavka.service.CardTovExportService;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 public interface WpProductDao {
 
@@ -14,4 +16,6 @@ public interface WpProductDao {
      * Это аналог lts_collect_seen_window() из PHP.
      */
     List<SeenItem> collectSeenWindow(int limit, String cursorAfter);
+
+    Map<String, Long> findIdsBySkus(Collection<String> skus);
 }

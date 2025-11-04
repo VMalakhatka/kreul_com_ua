@@ -2,6 +2,7 @@ package org.example.proect.lavka.service;
 
 import lombok.RequiredArgsConstructor;
 import org.example.proect.lavka.dao.CardTovExportDao;
+import org.example.proect.lavka.dao.wp.WpProductDao;
 import org.example.proect.lavka.dto.CardTovExportDto;
 import org.example.proect.lavka.dto.CardTovExportOutDto;
 import org.example.proect.lavka.service.category.WooCategoryService;
@@ -20,6 +21,7 @@ public class CardTovExportService {
 
     private final CardTovExportDao dao;
     private final WooCategoryService wooCategoryService;
+    private final WpProductDao wpProductDao;
 
     // ====== вход от фронта (без изменений) ======
     public record ItemHash(String sku, @Nullable String hash) {}
@@ -53,129 +55,151 @@ public class CardTovExportService {
     }
 
     public DiffResult diffPage(String afterSku, int limit, List<ItemHash> seen) {
-        // 1) Woo → карта sku->hash
-        Map<String, String> wooBySku = (seen == null ? List.<ItemHash>of() : seen).stream()
+// 1) Собрали норм-представление Woo
+        List<String> wooSkusRaw = (seen == null ? List.<ItemHash>of() : seen).stream()
                 .filter(it -> it != null && notBlank(it.sku()))
-                .collect(Collectors.toMap(it -> it.sku().trim(), it -> nz(it.hash()), (a,b)->a));
+                .map(ItemHash::sku)
+                .toList();
 
-        List<String> wooSkus = new ArrayList<>(wooBySku.keySet());
-        Collections.sort(wooSkus);
+        Map<String, String> wooHashByNorm = (seen == null ? List.<ItemHash>of() : seen).stream()
+                .filter(it -> it != null && notBlank(it.sku()))
+                .collect(Collectors.toMap(
+                        it -> nz(it.sku()),  // КЛЮЧ = НОРМАЛИЗОВАННЫЙ SKU
+                        it -> nz(it.hash()),
+                        (a, b) -> a
+                ));
 
+        List<String> wooSkusNorm = new ArrayList<>(wooHashByNorm.keySet());
+        Collections.sort(wooSkusNorm);
 
-        // исходный максимум из входного окна Woo (до удаления toDelete)
-        final String originalMaxWoo = wooSkus.isEmpty() ? null : wooSkus.get(wooSkus.size() - 1);
+        final String originalMaxWooNorm = wooSkusNorm.isEmpty() ? null : wooSkusNorm.get(wooSkusNorm.size() - 1);
 
-        // Если Woo ничего не прислал — вернём обычную страницу (инициализация до диффа)
-        if (wooSkus.isEmpty()) {
-            var page = page(afterSku, limit); // тут уже withHash() считает с groupId
+// norm → raw (для возврата RAW в toDelete и для якоря nextAfter)
+        Map<String, String> normToRaw = new HashMap<>();
+        for (String raw : wooSkusRaw) normToRaw.putIfAbsent(nz(raw), raw);
+
+// Пустое окно Woo → обычная страница
+        if (wooSkusNorm.isEmpty()) {
+            var page = page(afterSku, limit);
             return new DiffResult(page.nextAfter(), page.last(), List.of(), List.of(), page.items());
         }
 
-        // 2) По присланным SKU получаем данные из MSSQL (ровно по списку)
-        List<CardTovExportDto> fromMsByIn = dao.findBySkus(wooSkus);
-        Set<String> foundInMs = fromMsByIn.stream().map(CardTovExportDto::getSku).collect(Collectors.toSet());
+// 2) MS снимок по RAW-списку
+        List<CardTovExportDto> fromMsByIn = dao.findBySkus(wooSkusRaw);
+        Set<String> foundInMsNorm = fromMsByIn.stream()
+                .map(CardTovExportDto::getSku)
+                .map(CardTovExportService::nz)
+                .collect(Collectors.toSet());
 
-        // toDelete: есть в Woo, нет в MSSQL
-        List<String> toDelete = wooSkus.stream()
-                .filter(sku -> !foundInMs.contains(sku))
+// toDelete: те норм-SKU, которых нет в MS
+        List<String> toDeleteRaw = wooSkusNorm.stream()
+                .filter(norm -> !foundInMsNorm.contains(norm))
+                .map(normToRaw::get)
+                .filter(Objects::nonNull)
                 .toList();
 
-        // Вычистим кандидатов на удаление из рабочих множеств, чтобы не попасть в update/add
-//        wooSkus.removeAll(toDelete);
-//        wooBySku.keySet().removeAll(toDelete);
+// ❗️Остаток окна Woo после удаления
+        Set<String> remainingNorm = new LinkedHashSet<>(wooSkusNorm);
+        remainingNorm.removeAll(toDeleteRaw.stream().map(CardTovExportService::nz).collect(Collectors.toSet()));
 
-        // ⚠️ Если всё, что прислал Woo, оказалось к удалению — апдейтов нет
-        if (wooSkus.isEmpty()) {
-            int cap      = Math.min(1000, Math.max(1, limit));
+// Если после удаления никого не осталось → нет UPDATE, только ADD
+        if (remainingNorm.isEmpty()) {
+            int cap = Math.min(1000, Math.max(1, limit));
             int capPlus1 = cap + 1;
             boolean moreCreates = false;
 
-            // 1) берём «сырой» список кандидатов на ADD (без вызова категорий в стриме)
-            List<CardTovExportDto> addRaw =
+            // Берём кандидатов на ADD без SQL-exclude, фильтруем в Java по норм-ключам
+            List<CardTovExportDto> addRawDtos =
                     (afterSku == null || afterSku.isEmpty())
                             ? dao.findPage(null, capPlus1)
                             : dao.findGreaterThan(afterSku, capPlus1);
+            if(!addRawDtos.isEmpty())
+                addRawDtos=filterCreatesThatAlreadyExistInWooDtos(addRawDtos);
 
-            // 2) одним батчем обеспечиваем категории
-            Map<String, Long> idsByHashAdd = ensureCategoriesForDtos(addRaw);
+            addRawDtos = addRawDtos.stream()
+                    .filter(d -> !wooSkusNorm.contains(nz(d.getSku())))
+                    .toList();
 
-            // 3) маппим с использованием кэша категорий и считаем hash
-            List<CardTovExportOutDto> toCreateFull = addRaw.stream()
+            Map<String, Long> idsByHashAdd = ensureCategoriesForDtos(addRawDtos);
+            List<CardTovExportOutDto> toCreateFull = addRawDtos.stream()
                     .map(d -> mapWithGroupCached(d, idsByHashAdd))
                     .map(this::withHash)
                     .toList();
 
-            // 4) пагинация
             if (toCreateFull.size() > cap) {
                 moreCreates = true;
                 toCreateFull = toCreateFull.subList(0, cap);
             }
 
-            String lastAdd = toCreateFull.isEmpty() ? null : toCreateFull.get(toCreateFull.size() - 1).sku();
+            String lastAddRaw = toCreateFull.isEmpty() ? null : toCreateFull.get(toCreateFull.size() - 1).sku();
+            String anchorRaw = (originalMaxWooNorm == null) ? null : normToRaw.get(originalMaxWooNorm);
 
-            // ► nextAfter по правилу:
-            String nextAfter = moreCreates
-                    ? lastAdd                          // продолжаем листать ADD
-                    : maxSku(lastAdd, originalMaxWoo); // ADD закончился — якоримся на максимум окна
-
+            String nextAfter = moreCreates ? lastAddRaw : maxSku(lastAddRaw, anchorRaw);
             boolean last = !moreCreates;
-            return new DiffResult(nextAfter, last, List.of(), toDelete, toCreateFull);
+
+            return new DiffResult(nextAfter, last, List.of(), toDeleteRaw, toCreateFull);
         }
 
-// 3) Снимок для UPDATE: сначала обеспечим категории батчем, затем мапим + hash
-        Map<String, Long> idsByHashForSeen = ensureCategoriesForDtos(fromMsByIn);
+       // ===UPDATE - путь:работаем по ОСТАТКУ == =
 
+// Снимок MS → out + hash
+                Map < String, Long > idsByHashForSeen = ensureCategoriesForDtos(fromMsByIn);
         List<CardTovExportOutDto> msSnapshot = fromMsByIn.stream()
                 .map(d -> mapWithGroupCached(d, idsByHashForSeen))
                 .map(this::withHash)
                 .toList();
 
-        Map<String, CardTovExportOutDto> msBySku = msSnapshot.stream()
-                .collect(Collectors.toMap(CardTovExportOutDto::sku, x -> x, (a, b) -> a));
+// Индексируем MS по НОРМу
+        Map<String, CardTovExportOutDto> msByNorm = msSnapshot.stream()
+                .collect(Collectors.toMap(o -> nz(o.sku()), x -> x, (a, b) -> a));
 
-        List<CardTovExportOutDto> toUpdateFull = wooSkus.stream()
-                .map(msBySku::get)
+// toUpdateFull: только по оставшимся элементам окна Woo
+        List<CardTovExportOutDto> toUpdateFull = remainingNorm.stream()
+                .map(msByNorm::get)
                 .filter(Objects::nonNull)
-                .filter(o -> !Objects.equals(o.hash(), wooBySku.get(o.sku())))
+                .filter(o -> !Objects.equals(o.hash(), wooHashByNorm.get(nz(o.sku()))))
                 .toList();
 
-        // 5) ADD (toCreateFull) — работаем через сырой список DTO → батч категорий → маппинг + hash
-        int cap      = Math.min(1000, Math.max(1, limit));
+// ADD: также без SQL-exclude, фильтр по norm в Java
+        int cap = Math.min(1000, Math.max(1, limit));
         int capPlus1 = cap + 1;
         boolean moreCreates = false;
         List<CardTovExportOutDto> toCreateFull;
+        {
+            String anchorRaw = (originalMaxWooNorm == null) ? null : normToRaw.get(originalMaxWooNorm);
+            Set<String> presentNorm = new HashSet<>(wooSkusNorm);
 
-        if (afterSku == null || afterSku.isEmpty()) {
-            // CASE A: забираем сырьё - if 0 - can break
-            List<CardTovExportDto> addRaw = dao.findLessThanExcluding(originalMaxWoo, wooSkus, capPlus1);
-            // батч категорий
-            Map<String, Long> idsByHashAdd = ensureCategoriesForDtos(addRaw);
-            // маппинг + hash
-            toCreateFull = addRaw.stream()
+            List<CardTovExportDto> addRawDtos =
+                    (afterSku == null || afterSku.isEmpty())
+                            ? dao.findLessThanExcluding(anchorRaw, presentNorm, capPlus1)
+                            : dao.findBetweenExcluding(afterSku, anchorRaw, presentNorm, capPlus1);
+            if(!addRawDtos.isEmpty())
+                addRawDtos=filterCreatesThatAlreadyExistInWooDtos(addRawDtos);
+
+            addRawDtos = addRawDtos.stream()
+                    .map(d -> d) // no-op
+                    .filter(d -> !presentNorm.contains(nz(d.getSku())))
+                    .toList();
+
+            Map<String, Long> idsByHashAdd = ensureCategoriesForDtos(addRawDtos);
+            toCreateFull = addRawDtos.stream()
                     .map(d -> mapWithGroupCached(d, idsByHashAdd))
                     .map(this::withHash)
                     .toList();
-        } else {
-            // CASE B: забираем сырьё
-            List<CardTovExportDto> addRaw = dao.findBetweenExcluding(afterSku, originalMaxWoo, wooSkus, capPlus1);
-            Map<String, Long> idsByHashAdd = ensureCategoriesForDtos(addRaw);
-            toCreateFull = addRaw.stream()
-                    .map(d -> mapWithGroupCached(d, idsByHashAdd))
-                    .map(this::withHash)
-                    .toList();
+
+            if (toCreateFull.size() > cap) {
+                moreCreates = true;
+                toCreateFull = toCreateFull.subList(0, cap);
+            }
+
+            String lastAddRaw = toCreateFull.isEmpty() ? null : toCreateFull.get(toCreateFull.size() - 1).sku();
+            String nextAfter = moreCreates ? lastAddRaw : maxSku(lastAddRaw, anchorRaw);
+            boolean last = !moreCreates;
+
+            return new DiffResult(nextAfter, last, toUpdateFull, toDeleteRaw, toCreateFull);
         }
-
-        if (toCreateFull.size() > cap) {
-            moreCreates = true;
-            toCreateFull = toCreateFull.subList(0, cap);
-        }
-
-        String lastAdd = toCreateFull.isEmpty() ? null : toCreateFull.get(toCreateFull.size() - 1).sku();
-        String nextAfter = moreCreates ? lastAdd : maxSku(lastAdd, originalMaxWoo);
-        boolean last = !moreCreates;
-
-            return new DiffResult(nextAfter, last, toUpdateFull, toDelete, toCreateFull);
     }
+
     // ====== приватные вспомогалки ======
 
     /** Ваш существующий маппер + получение groupId */
@@ -276,7 +300,7 @@ public class CardTovExportService {
         return s.replace('\u00A0', ' ').trim();
     }
 
-    private static boolean notBlank(String s) { return s != null && !s.trim().isEmpty(); }
+    private static boolean notBlank(String s) { return !nz(s).isEmpty(); }
     private static String emptyToNull(String s) { return (s == null || s.trim().isEmpty()) ? null : s.trim(); }
 
     // старая страничная выдача
@@ -353,5 +377,34 @@ public class CardTovExportService {
                 groupId,
                 null // hash добавим позже через withHash()
         );
+    }
+
+    // внутри CardTovExportService
+
+    /** Фильтрует кандидатов на CREATE (DTO) которые уже существуют в Woo (по нормализованному SKU). */
+    private List<CardTovExportDto> filterCreatesThatAlreadyExistInWooDtos(List<CardTovExportDto> creates) {
+        if (creates == null || creates.isEmpty()) return creates;
+
+        // Соберём raw-список SKU из MSSQL DTO
+        List<String> candSkusRaw = creates.stream()
+                .map(CardTovExportDto::getSku)
+                .filter(Objects::nonNull)
+                .toList();
+        if (candSkusRaw.isEmpty()) return creates;
+
+        // 1) Узнаём какие из этих SKU уже есть в Woo (sku -> postId)
+        //    Реализация: SELECT post_id, meta_value AS sku FROM wp_postmeta WHERE meta_key='_sku' AND meta_value IN (:candSkusRaw)
+        Map<String, Long> existsBySkuRaw = wpProductDao.findIdsBySkus(candSkusRaw);
+
+        // 2) Нормализуем ключи Woo для сравнения (NBSP→space + trim)
+        Set<String> existsNorm = existsBySkuRaw.keySet().stream()
+                .filter(Objects::nonNull)
+                .map(CardTovExportService::nz)
+                .collect(Collectors.toSet());
+
+        // 3) Выкидываем из creates те, чей нормализованный SKU уже найден в Woo
+        return creates.stream()
+                .filter(d -> d != null && !existsNorm.contains(nz(d.getSku())))
+                .toList();
     }
 }

@@ -133,46 +133,7 @@ public class CardTovExportDaoImpl implements CardTovExportDao {
         return namedJdbc.query(sql, params, CardTovExportRowMapper.M);
     }
 
-//    @Override
-//    public List<CardTovExportDto> findBetweenExcluding(String minSku, String maxSku,
-//                                                       Collection<String> exclude, int cap) {
-//        if (minSku == null || maxSku == null || minSku.equals(maxSku)) return List.of();
-//        int lim = Math.max(1, Math.min(cap, 2000)); // предохранитель
-//        // В T-SQL TOP нельзя параметризовать — подставляем безопасно отформатированное число.
-//        String sql = (exclude == null || exclude.isEmpty())
-//                ? """
-//                   SELECT TOP %d
-//                          sku, name,
-//                          NGROUP_TVR, NGROUP_TV2, NGROUP_TV3, NGROUP_TV4, NGROUP_TV5, NGROUP_TV6,
-//                          img, EDIN_IZMER, global_unique_id,
-//                          weight, [length], [width], [height],
-//                          status, VES_EDINIC, [DESCRIPTION], RAZM_IZMER, gr_descr
-//                   FROM dbo.card_tov_export
-//                   WHERE sku > :minSku AND sku < :maxSku
-//                   ORDER BY sku
-//                   """.formatted(lim)
-//                : """
-//                   SELECT TOP %d
-//                          sku, name,
-//                          NGROUP_TVR, NGROUP_TV2, NGROUP_TV3, NGROUP_TV4, NGROUP_TV5, NGROUP_TV6,
-//                          img, EDIN_IZMER, global_unique_id,
-//                          weight, [length], [width], [height],
-//                          status, VES_EDINIC, [DESCRIPTION], RAZM_IZMER, gr_descr
-//                   FROM dbo.card_tov_export
-//                   WHERE sku > :minSku AND sku < :maxSku
-//                     AND sku NOT IN (:exclude)
-//                   ORDER BY sku
-//                   """.formatted(lim);
-//
-//        var params = new MapSqlParameterSource()
-//                .addValue("minSku", minSku)
-//                .addValue("maxSku", maxSku);
-//
-//        if (exclude != null && !exclude.isEmpty()) {
-//            params.addValue("exclude", exclude);
-//        }
-//        return namedJdbc.query(sql, params, CardTovExportRowMapper.M);
-//    }
+
 @Override
 public List<CardTovExportDto> findBetweenExcluding(
         String minSku, String maxSku,

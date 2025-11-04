@@ -15,9 +15,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @RetryLabel("WpProductDaoImpl")
 @Repository
@@ -74,6 +72,35 @@ public class WpProductDaoImpl implements WpProductDao {
                 rs.getLong("post_id")
         ));
     }
+
+    @Override
+    public Map<String, Long> findIdsBySkus(Collection<String> skus) {
+        if (skus == null || skus.isEmpty()) {
+            return Map.of();
+        }
+
+        String sql = """
+            SELECT meta_value AS sku, post_id
+            FROM wp_postmeta
+            WHERE meta_key = '_sku'
+              AND meta_value IN (:skus)
+        """;
+
+        Map<String, Object> params = Map.of("skus", skus);
+
+        return wpNamedJdbc.query(sql, params, rs -> {
+            Map<String, Long> map = new LinkedHashMap<>();
+            while (rs.next()) {
+                String sku = rs.getString("sku");
+                Long id = rs.getLong("post_id");
+                if (sku != null && id != null) {
+                    map.put(sku, id);
+                }
+            }
+            return map;
+        });
+    }
+
 
     private static ItemHash mapRowToItemHash(ResultSet rs) throws SQLException {
         String sku  = rs.getString("sku");
