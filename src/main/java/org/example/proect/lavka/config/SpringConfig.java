@@ -11,13 +11,15 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 import org.springframework.web.servlet.config.annotation.ViewResolverRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.thymeleaf.spring6.SpringTemplateEngine;
 import org.thymeleaf.spring6.templateresolver.SpringResourceTemplateResolver;
 import org.thymeleaf.spring6.view.ThymeleafViewResolver;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+
 
 import javax.sql.DataSource;
 import java.util.Random;
@@ -61,26 +63,28 @@ public class SpringConfig implements WebMvcConfigurer {
 
     }
 
-//    @Bean
-//    @DependsOn("databaseProperties")
-//    DataSource dataSource(DatabaseProperties databaseProperties) {
-//        DriverManagerDataSource dataSource = new DriverManagerDataSource();
-//        dataSource.setDriverClassName(databaseProperties.driverClassName());
-//        dataSource.setUrl(databaseProperties.url());
-//        dataSource.setUsername(databaseProperties.username());
-//        dataSource.setPassword(databaseProperties.password());
-//        return dataSource;
-//    }
 
     @Bean(name = "folioDataSource")
     @Primary
-    DataSource dataSource() {
-        DriverManagerDataSource dataSource = new DriverManagerDataSource();
-        dataSource.setDriverClassName(databaseProperties.getDriverClassName());
-        dataSource.setUrl(databaseProperties.getUrl());
-        dataSource.setUsername(databaseProperties.getUsername());
-        dataSource.setPassword(databaseProperties.getPassword());
-        return dataSource;
+    public DataSource dataSource(DatabaseProperties databaseProperties) {
+        HikariConfig cfg = new HikariConfig();
+
+        cfg.setDriverClassName(databaseProperties.getDriverClassName());
+        cfg.setJdbcUrl(databaseProperties.getUrl());
+        cfg.setUsername(databaseProperties.getUsername());
+        cfg.setPassword(databaseProperties.getPassword());
+
+        // 🧠 Параметры пула и таймаутов (важно при обрывах)
+        cfg.setMaximumPoolSize(10);
+        cfg.setMinimumIdle(1);
+        cfg.setConnectionTimeout(20_000);     // ждать до 20 сек получения коннекта
+        cfg.setIdleTimeout(60_000);           // не закрывать раньше минуты
+        cfg.setKeepaliveTime(30_000);         // поддерживать соединение каждые 30 сек
+        cfg.setValidationTimeout(5_000);
+        cfg.setConnectionTestQuery("SELECT 1");
+        cfg.setInitializationFailTimeout(-1); // не падать при старте, если база недоступна
+
+        return new HikariDataSource(cfg);
     }
 
     @Bean(name = "folioJdbcTemplate")
