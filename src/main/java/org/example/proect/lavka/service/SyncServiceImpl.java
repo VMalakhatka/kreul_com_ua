@@ -2,6 +2,9 @@ package org.example.proect.lavka.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
+import org.slf4j.Marker;
+import org.slf4j.MarkerFactory;
 import org.example.proect.lavka.client.LavkaLocationsClient;
 import org.example.proect.lavka.client.WooApiClient;
 import org.example.proect.lavka.dao.wp.WpProductDao;
@@ -11,6 +14,7 @@ import org.example.proect.lavka.dto.sync.SyncRunResponse;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -23,6 +27,8 @@ public class SyncServiceImpl implements SyncService {
     private final WooApiClient wooApiClient;
     private final LavkaLocationsClient lavkaLocationsClient;
 
+    private static final Marker OPS = MarkerFactory.getMarker("OPS");
+
     @Override
     public SyncRunResponse runOneBatch(
             Integer limit,
@@ -30,6 +36,8 @@ public class SyncServiceImpl implements SyncService {
             String startCursorAfter,
             Boolean dryRun
     ) {
+        final String reqId = java.util.UUID.randomUUID().toString();
+        MDC.put("reqId", reqId);
         // === 0. Входные параметры ===
         final int runLimit = (limit == null || limit < 1)
                 ? 1_000_000_000 // условно бесконечно
@@ -46,6 +54,7 @@ public class SyncServiceImpl implements SyncService {
                 : Math.min(pageSizeWoo, 1000);
 
         final boolean isDry = (dryRun != null && dryRun);
+        MDC.put("dry", String.valueOf(isDry));
         Map<Long, String> categoryDescMap = new HashMap<>();
 
         // === 1. Счётчики результата ===
@@ -61,154 +70,189 @@ public class SyncServiceImpl implements SyncService {
                 : startCursorAfter.trim();
 
         boolean stopeedByLimit = false;
+        try {
+            // ===== ВНЕШНИЙ ЦИКЛ =====
+            while (true) {
 
-        // ===== ВНЕШНИЙ ЦИКЛ =====
-        while (true) {
+                // Снимок перед началом обработки этого окна Woo
+                final String windowStartCursor = globalCursorAfter;
+                MDC.put("windowCursor", String.valueOf(windowStartCursor));
 
-            // Снимок перед началом обработки этого окна Woo
-            final String windowStartCursor = globalCursorAfter;
+                // 2.1 Берём окно Woo начиная сразу после globalCursorAfter
+                //     +1 чтобы понять "есть ли ещё дальше"
+                List<SeenItem> windowRaw =
+                        wpProductDao.collectSeenWindow(wooWindowSize + 1, globalCursorAfter);
 
-            // 2.1 Берём окно Woo начиная сразу после globalCursorAfter
-            //     +1 чтобы понять "есть ли ещё дальше"
-            List<SeenItem> windowRaw =
-                    wpProductDao.collectSeenWindow(wooWindowSize + 1, globalCursorAfter);
-
-            // Если вообще ничего нет -> Woo кончился, выходим полностью
-            if (windowRaw.isEmpty()) {
-                break;
-            }
-
-            // есть ли "хвост" дальше этого окна?
-            boolean wooAlmostAtEnd = (windowRaw.size() <= wooWindowSize);
-
-            // 3. готовим окно для diff (только sku + hash)
-            List<CardTovExportService.ItemHash> windowForDiff = windowRaw.stream()
-                    .limit(wooWindowSize)
-                    .map(it -> new CardTovExportService.ItemHash(
-                            it.sku(),
-                            it.hash() == null ? "" : it.hash()))
-                    .toList();
-
-            totalProcessed += windowForDiff.size();
-
-            Map<String, Long> existingIdsBySku = windowRaw.stream()
-                    .collect(Collectors.toMap(SeenItem::sku, SeenItem::postId, (a, b)->a));
-
-            // 2.2 В этом окне Woo мы будем крутить ВНУТРЕННИЙ ЦИКЛ,
-            //     пока diffPage говорит, что есть ещё create'ов
-            String innerAfterSku = globalCursorAfter;   // локальный курсор для diffPage
-            boolean firstIterationForThisWindow = true; // чтобы не дублировать update/delete
-            boolean windowFinished = false;             // станет true когда diff.last()==true
-
-            // ===== ВНУТРЕННИЙ ЦИКЛ =====
-            while (!windowFinished) {
-
-                // 2.2.1 Получаем дифф
-                CardTovExportService.DiffResult diff =
-                        cardTovExportService.diffPage(
-                                innerAfterSku,
-                                diffChunkLimit,
-                                windowForDiff
-                        );
-
-                // разбор результата
-                List<String> toDelete = firstIterationForThisWindow ? nzList(diff.toDelete()): List.of();
-                List<CardTovExportOutDto> toUpdateFull = firstIterationForThisWindow ? nzList(diff.toUpdateFull()):List.of();
-                List<CardTovExportOutDto> toCreateFull = nzList(diff.toCreateFull());
-
-                // считаем, сколько всего штук в этой порции
-                int batchDel = firstIterationForThisWindow ? toDelete.size() : 0;
-                int batchUpd = firstIterationForThisWindow ? toUpdateFull.size() : 0;
-                int batchAdd = toCreateFull.size();
-                int batchProcessed = batchDel + batchUpd + batchAdd;
-
-                if (batchProcessed != 0) {
-                    if (!isDry) {
-                        for (CardTovExportOutDto dto : toUpdateFull) {
-                            collectCategoryDesc(categoryDescMap, dto.groupId(), dto.grDescr());
-                        }
-                        for (CardTovExportOutDto dto : toCreateFull) {
-                            collectCategoryDesc(categoryDescMap, dto.groupId(), dto.grDescr());
-                        }
-                    }
-
-                    Map<String, Object> batchPayload = buildWooBatchPayload(
-                            toUpdateFull, toCreateFull, toDelete, existingIdsBySku
-                    );
-                    List<Map<String, Object>> subPayloads = splitBatchPayload(batchPayload, 50); // 50–100 ок
-                    if (firstIterationForThisWindow) {
-                        totalDrafted += batchDel;  // намерение заdraftить
-                        totalUpdated += batchUpd;
-                    }
-                    if (isDry) {
-                        totalCreated += batchAdd;
-                    } else {
-                        int createdNow = 0, updatedNow = 0;
-                        for (Map<String, Object> sub : subPayloads) {
-                            var res = postWithBisect(sub, 1, allErrors); // делим до одиночек при 500
-                            createdNow += res.createdCount();
-                            updatedNow += res.updatedCount();
-                        }
-                        if (firstIterationForThisWindow) {
-                            totalUpdated += batchUpd;   // как и было (логика «за окно» ок)
-                            totalDrafted += batchDel;
-                        }
-                        totalCreated += createdNow;
-                    }
-                }
-
-                // 2.2.3 Двигаем локальный курсор и смотрим флаги
-                innerAfterSku = diff.nextAfter();   // может стать последний созданный SKU
-                windowFinished = diff.last();       // true => мы ДОКОНЧАЛИ все create для этого окна
-                firstIterationForThisWindow = false;
-
-                // 2.2.4 Стоперы безопасности
-
-                // Если достигли общий лимит по запросу runLimit — выходим полностью
-                if (totalProcessed >= runLimit) {
-                    stopeedByLimit = true;
+                // Если вообще ничего нет -> Woo кончился, выходим полностью
+                if (windowRaw.isEmpty()) {
                     break;
                 }
 
-                // Если diff не дал nextAfter (или не сдвинул):
-                // это значит мы застряли, смысла продолжать нет
-                if (innerAfterSku == null || innerAfterSku.isBlank()) {
-                    windowFinished = true;
+                // есть ли "хвост" дальше этого окна?
+                boolean wooAlmostAtEnd = (windowRaw.size() <= wooWindowSize);
+
+                // 3. готовим окно для diff (только sku + hash)
+                List<CardTovExportService.ItemHash> windowForDiff = windowRaw.stream()
+                        .limit(wooWindowSize)
+                        .map(it -> new CardTovExportService.ItemHash(
+                                it.sku(),
+                                it.hash() == null ? "" : it.hash()))
+                        .toList();
+
+                totalProcessed += windowForDiff.size();
+
+                Map<String, Long> existingIdsBySku = windowRaw.stream()
+                        .collect(Collectors.toMap(SeenItem::sku, SeenItem::postId, (a, b)->a));
+
+                // invert to id->sku for logging
+                Map<Long,String> id2sku = existingIdsBySku.entrySet().stream()
+                        .filter(e -> e.getKey()!=null && e.getValue()!=null)
+                        .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey, (a,b)->a));
+                org.example.proect.lavka.utils.LogCtx.ID2SKU.set(id2sku);
+
+                // 2.2 В этом окне Woo мы будем крутить ВНУТРЕННИЙ ЦИКЛ,
+                //     пока diffPage говорит, что есть ещё create'ов
+                String innerAfterSku = globalCursorAfter;   // локальный курсор для diffPage
+                boolean firstIterationForThisWindow = true; // чтобы не дублировать update/delete
+                boolean windowFinished = false;             // станет true когда diff.last()==true
+                // ===== ВНУТРЕННИЙ ЦИКЛ =====
+                while (!windowFinished) {
+
+                    MDC.put("innerAfter", String.valueOf(innerAfterSku));
+                    // 2.2.1 Получаем дифф
+                    CardTovExportService.DiffResult diff =
+                            cardTovExportService.diffPage(
+                                    innerAfterSku,
+                                    diffChunkLimit,
+                                    windowForDiff
+                            );
+
+                    // разбор результата
+                    List<String> toDelete = firstIterationForThisWindow ? nzList(diff.toDelete()): List.of();
+                    List<CardTovExportOutDto> toUpdateFull = firstIterationForThisWindow ? nzList(diff.toUpdateFull()):List.of();
+                    List<CardTovExportOutDto> toCreateFull = nzList(diff.toCreateFull());
+
+                    // считаем, сколько всего штук в этой порции
+                    int batchDel = firstIterationForThisWindow ? toDelete.size() : 0;
+                    int batchUpd = firstIterationForThisWindow ? toUpdateFull.size() : 0;
+                    int batchAdd = toCreateFull.size();
+                    int batchProcessed = batchDel + batchUpd + batchAdd;
+
+                    if (batchProcessed != 0) {
+                        if (!isDry) {
+                            for (CardTovExportOutDto dto : toUpdateFull) {
+                                collectCategoryDesc(categoryDescMap, dto.groupId(), dto.grDescr());
+                            }
+                            for (CardTovExportOutDto dto : toCreateFull) {
+                                collectCategoryDesc(categoryDescMap, dto.groupId(), dto.grDescr());
+                            }
+                        }
+
+                        Map<String, Object> batchPayload = buildWooBatchPayload(
+                                toUpdateFull, toCreateFull, toDelete, existingIdsBySku
+                        );
+                        List<Map<String, Object>> subPayloads = splitBatchPayload(batchPayload, 50); // 50–100 ок
+                        if (firstIterationForThisWindow) {
+                            totalDrafted += batchDel;  // намерение заdraftить
+                            totalUpdated += batchUpd;
+                        }
+                        if (isDry) {
+                            totalCreated += batchAdd;
+                        } else {
+                            final AtomicInteger batchNo = new AtomicInteger(0);
+                            int createdNow = 0, updatedNow = 0;
+                            for (Map<String, Object> sub : subPayloads) {
+                                int no = batchNo.incrementAndGet();
+                                MDC.put("batchNo", String.valueOf(no));
+
+                                String skus = extractSkusFromBatch(sub);
+                                log.info(OPS, "[sync.ops] upsert batch start size={} skus={}", countItems(sub), skus);
+
+                                var res = postWithBisect(sub, 1, allErrors);
+
+                                log.info(OPS, "[sync.ops] upsert batch done created={} updated={} size={} skus={}",
+                                        res.createdCount(), res.updatedCount(), countItems(sub), skus);
+
+                                if (log.isDebugEnabled()) {
+                                    debugListOps(sub);
+                                }
+
+                                createdNow += res.createdCount();
+                                updatedNow += res.updatedCount();
+                            }
+                            if (firstIterationForThisWindow) {
+                                totalUpdated += batchUpd;   // как и было (логика «за окно» ок)
+                                totalDrafted += batchDel;
+                            }
+                            totalCreated += createdNow;
+
+                            MDC.remove("batchNo"); // очистим ключ после подпакетов
+                        }
+                    }
+
+                    // 2.2.3 Двигаем локальный курсор и смотрим флаги
+                    innerAfterSku = diff.nextAfter();   // может стать последний созданный SKU
+                    windowFinished = diff.last();       // true => мы ДОКОНЧАЛИ все create для этого окна
+                    firstIterationForThisWindow = false;
+
+                    MDC.remove("innerAfter");
+
+                    // 2.2.4 Стоперы безопасности
+
+                    // Если достигли общий лимит по запросу runLimit — выходим полностью
+                    if (totalProcessed >= runLimit) {
+                        stopeedByLimit = true;
+                        break;
+                    }
+
+                    // Если diff не дал nextAfter (или не сдвинул):
+                    // это значит мы застряли, смысла продолжать нет
+                    if (innerAfterSku == null || innerAfterSku.isBlank()) {
+                        windowFinished = true;
+                    }
+                    if (innerAfterSku != null
+                            && innerAfterSku.equals(globalCursorAfter)) {
+                        // это прям патологический случай - nextAfter не продвинуло нас от старта
+                        windowFinished = true;
+                    }
+                } // конец внутреннего цикла по одному окну Woo
+
+                // 2.3 После того как ДОГРУЗИЛИ ВСЕ create'ы в рамках этого окна Woo,
+                //     мы должны сдвинуть глобальный курсор дальше,
+                //     но чем? Ответ: innerAfterSku после последнего diff.
+                //
+                // Почему не maxSKU из windowRaw? Потому что diff.nextAfter, когда last=true,
+                // сам делает "якорение" на originalMaxWoo.
+                //
+                // Т.е. innerAfterSku уже корректно указывает позицию, с которой следующее окно должно начинаться.
+                globalCursorAfter = innerAfterSku;
+
+                org.example.proect.lavka.utils.LogCtx.ID2SKU.remove();
+
+                MDC.remove("windowCursor");
+
+                // условия полного выхода:
+                if (stopeedByLimit) {
+                    break;
                 }
-                if (innerAfterSku != null
-                        && innerAfterSku.equals(globalCursorAfter)) {
-                    // это прям патологический случай - nextAfter не продвинуло нас от старта
-                    windowFinished = true;
+                if (globalCursorAfter == null || globalCursorAfter.isBlank()) {
+                    break;
                 }
-            } // конец внутреннего цикла по одному окну Woo
+                if (Objects.equals(windowStartCursor, globalCursorAfter)) {
+                    // курсор глобально не сдвинулся -> мы в тупике (ничего больше не отгружается)
+                    break;
+                }
+                if (wooAlmostAtEnd) {
+                    // Woo за этим окном уже практически пуст, некуда двигаться дальше
+                    break;
+                }
+            } // конец внешнего цикла по окнам Woo
+        } finally {
+            log.info(OPS, "[sync.ops] summary processed={} created={} updated={} drafted={} nextAfter={} stoppedByLimit={}",
+                    totalProcessed, totalCreated, totalUpdated, totalDrafted, globalCursorAfter, stopeedByLimit);
 
-            // 2.3 После того как ДОГРУЗИЛИ ВСЕ create'ы в рамках этого окна Woo,
-            //     мы должны сдвинуть глобальный курсор дальше,
-            //     но чем? Ответ: innerAfterSku после последнего diff.
-            //
-            // Почему не maxSKU из windowRaw? Потому что diff.nextAfter, когда last=true,
-            // сам делает "якорение" на originalMaxWoo.
-            //
-            // Т.е. innerAfterSku уже корректно указывает позицию, с которой следующее окно должно начинаться.
-            globalCursorAfter = innerAfterSku;
-
-            // условия полного выхода:
-            if (stopeedByLimit) {
-                break;
-            }
-            if (globalCursorAfter == null || globalCursorAfter.isBlank()) {
-                break;
-            }
-            if (Objects.equals(windowStartCursor, globalCursorAfter)) {
-                // курсор глобально не сдвинулся -> мы в тупике (ничего больше не отгружается)
-                break;
-            }
-            if (wooAlmostAtEnd) {
-                // Woo за этим окном уже практически пуст, некуда двигаться дальше
-                break;
-            }
-        } // конец внешнего цикла по окнам Woo
-
+            MDC.clear();
+        }
         if (!isDry && !categoryDescMap.isEmpty()) {
             try {
                 lavkaLocationsClient.pushCategoryDescriptionsBatch(categoryDescMap);
@@ -457,9 +501,6 @@ public class SyncServiceImpl implements SyncService {
         acc.put(groupId, grDescr);
     }
 
-    private static String safe(String s) {
-        return s == null ? "" : s;
-    }
 
     private static boolean notBlank(String s) {
         return s != null && !s.trim().isEmpty();
@@ -477,9 +518,6 @@ public class SyncServiceImpl implements SyncService {
         if (payload == null || payload.isEmpty()) {
             return List.of();
         }
-        boolean big;
-        if(payload.size()>99)
-            big=true;
         // исходные списки
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> createList = (List<Map<String, Object>>) payload.getOrDefault("create", List.of());
@@ -528,9 +566,11 @@ public class SyncServiceImpl implements SyncService {
             String skus = extractSkusFromBatch(sub);
             // если уже слишком мелко — логируем и сдаёмся
             int total = countItems(sub);
+            log.warn("[sync.errors] woo_batch_failed size={} skus={} msg={}", total, skus, e.getMessage());
             if (total <= minSize) {
                 allErrors.add("woo_batch_failed(final "+total+"): " + e.getMessage()
                         + " skus=[" + skus + "]");
+                log.error("[sync.errors] final-fail size={} skus={} err", total, skus, e);
                 return new WooApiClient.WooBatchResult(0,0);
             }
             // делим пополам
@@ -547,9 +587,38 @@ public class SyncServiceImpl implements SyncService {
         List<Map<String,Object>> c = (List<Map<String,Object>>) payload.getOrDefault("create", List.of());
         List<Map<String,Object>> u = (List<Map<String,Object>>) payload.getOrDefault("update", List.of());
         List<String> out = new ArrayList<>();
-        for (var m: c) out.add(String.valueOf(m.getOrDefault("sku", m.get("id"))));
-        for (var m: u) out.add(String.valueOf(m.getOrDefault("sku", m.get("id"))));
+
+        // доступ к id->sku из ThreadLocal
+        Map<Long,String> id2sku = org.example.proect.lavka.utils.LogCtx.ID2SKU.get();
+
+        for (var m: c) {
+            String sku = valAsString(m.get("sku"));
+            if (sku == null) {
+                sku = skuFromIdMap(m.get("id"), id2sku);
+            }
+            out.add(sku != null ? sku : valAsString(m.get("id")));
+        }
+        for (var m: u) {
+            String sku = valAsString(m.get("sku"));
+            if (sku == null) {
+                sku = skuFromIdMap(m.get("id"), id2sku);
+            }
+            out.add(sku != null ? sku : valAsString(m.get("id")));
+        }
         return String.join(",", out);
+    }
+
+    private static String valAsString(Object o){
+        return (o == null) ? null : String.valueOf(o);
+    }
+    private static String skuFromIdMap(Object idObj, Map<Long,String> id2sku){
+        if (idObj == null || id2sku == null) return null;
+        try {
+            long id = Long.parseLong(String.valueOf(idObj));
+            return id2sku.get(id);
+        } catch (NumberFormatException ignore) {
+            return null;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -577,6 +646,20 @@ public class SyncServiceImpl implements SyncService {
         if (!c.isEmpty()) p.put("create", c);
         if (!u.isEmpty()) p.put("update", u);
         return p;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void debugListOps(Map<String,Object> sub){
+        try {
+            List<Map<String,Object>> c = (List<Map<String,Object>>) sub.getOrDefault("create", List.of());
+            List<Map<String,Object>> u = (List<Map<String,Object>>) sub.getOrDefault("update", List.of());
+            for (var m: c) log.debug(OPS, "[sync.ops] CREATE sku={} id?={}", m.get("sku"), m.get("id"));
+            for (var m: u) {
+                String st = String.valueOf(m.getOrDefault("status", ""));
+                if ("draft".equals(st)) log.debug(OPS, "[sync.ops] DRAFT sku/id={}/{}", m.get("sku"), m.get("id"));
+                else                    log.debug(OPS, "[sync.ops] UPDATE sku/id={}/{}", m.get("sku"), m.get("id"));
+            }
+        } catch (Exception ignore) {}
     }
 
 }

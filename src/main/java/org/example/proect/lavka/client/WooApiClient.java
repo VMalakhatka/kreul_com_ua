@@ -1,6 +1,7 @@
 package org.example.proect.lavka.client;
 
 import jakarta.annotation.Nullable;
+import org.example.proect.lavka.client.support.RetryingRestExecutor;
 import org.example.proect.lavka.dto.category.WooCategory;
 import org.example.proect.lavka.property.WooProperties;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -20,11 +21,14 @@ import java.util.regex.Pattern;
 public class WooApiClient {
     private final RestTemplate restTemplate;
     private final WooProperties props;
+    private final RetryingRestExecutor rex;
 
     public WooApiClient(@Qualifier("wooRestTemplate") RestTemplate restTemplate,
-                        WooProperties props) {
+                        WooProperties props,
+                        RetryingRestExecutor rex) {
         this.restTemplate = restTemplate;
         this.props = props;
+        this.rex = rex;
     }
 
 
