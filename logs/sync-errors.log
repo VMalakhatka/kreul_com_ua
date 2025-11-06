@@ -1,86 +1,962 @@
-2025-11-05 20:42:08.304 [http-nio-8080-exec-1] [7a0a42d6-94f5-4a49-b5b0-f611910fc724 kuznetcov ] WARN  o.e.p.l.utils.RetryLoggingListener - 🔁 Retry attempt #2 for CardTovExportDaoImpl due to DataAccessResourceFailureException: PreparedStatementCallback; SQL [SELECT
-       sku,
-       name,
-       NGROUP_TVR,
-       NGROUP_TV2,
-       NGROUP_TV3,
-       NGROUP_TV4,
-       NGROUP_TV5,
-       NGROUP_TV6,
-       img,
-       EDIN_IZMER,
-       global_unique_id,
-       weight,
-       [length],
-       [width],
-       [height],
-       status,
-       VES_EDINIC,
-       [DESCRIPTION],
-       RAZM_IZMER,
-       gr_descr
-FROM dbo.card_tov_export
-WHERE sku IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-]; I/O Error: Connection reset
-2025-11-05 20:42:08.306 [http-nio-8080-exec-1] [7a0a42d6-94f5-4a49-b5b0-f611910fc724 kuznetcov ] ERROR o.e.p.l.utils.RetryLoggingListener - ❌ Retry sequence ended with failure after 2 attempts: PreparedStatementCallback; SQL [SELECT
-       sku,
-       name,
-       NGROUP_TVR,
-       NGROUP_TV2,
-       NGROUP_TV3,
-       NGROUP_TV4,
-       NGROUP_TV5,
-       NGROUP_TV6,
-       img,
-       EDIN_IZMER,
-       global_unique_id,
-       weight,
-       [length],
-       [width],
-       [height],
-       status,
-       VES_EDINIC,
-       [DESCRIPTION],
-       RAZM_IZMER,
-       gr_descr
-FROM dbo.card_tov_export
-WHERE sku IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-]; I/O Error: Connection reset
-2025-11-05 20:42:08.344 [http-nio-8080-exec-1] [  ] ERROR o.e.p.l.e.GlobalExceptionHandler - [sync.errors] db uri=/sync/run cause=SocketException msg=Connection reset
-org.springframework.dao.DataAccessResourceFailureException: PreparedStatementCallback; SQL [SELECT
-       sku,
-       name,
-       NGROUP_TVR,
-       NGROUP_TV2,
-       NGROUP_TV3,
-       NGROUP_TV4,
-       NGROUP_TV5,
-       NGROUP_TV6,
-       img,
-       EDIN_IZMER,
-       global_unique_id,
-       weight,
-       [length],
-       [width],
-       [height],
-       status,
-       VES_EDINIC,
-       [DESCRIPTION],
-       RAZM_IZMER,
-       gr_descr
-FROM dbo.card_tov_export
-WHERE sku IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-]; I/O Error: Connection reset
-	at org.springframework.jdbc.support.SQLStateSQLExceptionTranslator.doTranslate(SQLStateSQLExceptionTranslator.java:121)
+2025-11-06 00:01:17.130 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:02:07.311 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:18:22.329 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:34:20.059 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:50:35.009 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:51:25.034 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:52:15.064 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:53:05.109 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:53:55.129 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:54:45.151 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:55:35.171 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:56:25.194 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:57:15.217 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:58:05.244 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:58:55.276 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 00:59:45.298 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:00:35.333 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:01:25.352 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:02:15.367 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:03:05.384 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:03:55.406 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:04:45.428 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:05:35.450 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:06:25.479 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:07:15.506 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:08:05.524 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:08:55.548 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:09:45.573 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:10:35.603 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:11:25.620 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:12:15.644 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:13:05.664 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:13:55.692 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:14:45.719 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:15:35.744 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:16:25.775 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:17:15.806 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:18:05.848 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:18:55.878 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:19:45.904 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:20:35.923 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:21:25.951 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:22:15.989 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:23:06.008 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:23:56.031 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:24:46.048 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:25:36.075 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:26:26.104 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:27:16.131 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:28:06.154 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:28:56.178 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:29:46.204 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:30:36.216 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:31:26.232 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:32:16.247 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:33:06.272 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:33:56.294 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:34:46.316 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:35:36.340 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:36:26.364 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:37:16.383 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:38:06.402 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:38:56.420 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:39:46.448 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:40:36.468 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:41:26.499 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:42:16.526 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:43:06.565 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:43:56.592 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:44:46.620 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:45:36.640 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:46:26.673 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:47:16.688 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:48:06.706 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:48:56.736 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:49:46.756 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:50:36.772 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:51:26.784 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:52:16.801 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:53:06.838 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:53:56.867 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:54:46.889 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:55:36.905 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:56:26.931 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:57:16.956 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:58:06.988 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:58:57.014 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 01:59:47.040 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:00:37.058 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:01:27.071 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:02:17.096 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:03:07.117 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:03:57.149 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:04:47.166 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:05:37.194 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:06:27.214 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:07:17.237 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:08:07.264 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:08:57.292 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:09:47.311 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:10:37.339 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:11:27.370 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:12:17.395 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:13:07.419 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:13:57.446 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:14:47.476 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:15:37.495 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:16:27.519 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:17:17.543 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:18:07.573 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:18:57.614 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:19:47.643 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:20:37.664 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:21:27.691 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:22:17.715 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:23:07.732 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:23:57.749 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:24:47.768 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:25:37.792 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:26:27.820 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:27:17.847 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:28:07.893 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:28:57.918 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:29:47.943 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:30:37.963 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:31:27.994 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:32:18.010 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:33:08.030 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:33:58.050 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:34:48.086 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:35:38.111 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:36:28.137 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:37:18.155 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:38:08.183 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:38:58.206 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:39:48.230 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:40:38.252 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:41:28.274 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:42:18.295 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:43:08.314 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:43:58.343 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:44:48.370 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:45:38.386 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:46:28.407 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:47:18.433 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:48:08.448 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:48:58.469 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:49:48.484 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:50:38.499 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:51:28.529 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:52:18.551 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:53:08.574 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:53:58.610 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:54:48.619 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:55:38.635 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:56:28.664 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:57:18.699 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:58:08.726 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:58:58.757 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 02:59:48.783 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:00:38.800 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:01:28.833 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:02:18.854 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:03:08.880 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:03:58.902 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:04:48.923 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:05:38.938 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:06:28.956 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:07:18.985 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:08:09.006 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:08:59.029 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:09:49.056 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:10:39.069 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:11:29.099 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:12:19.126 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:13:09.141 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:13:59.162 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:14:49.191 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:15:39.214 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:16:29.244 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:17:19.261 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:18:09.287 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:18:59.308 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:19:49.330 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:20:39.352 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:21:29.397 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:22:19.423 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:23:09.445 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:23:59.466 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:24:49.485 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:25:39.505 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:26:29.515 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:27:19.541 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:28:09.578 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:28:59.614 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:29:49.640 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:30:39.667 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:31:29.694 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:32:19.709 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:33:09.734 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:33:59.760 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:34:49.778 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:35:39.807 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:36:29.829 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:37:19.855 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:38:09.882 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:38:59.903 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:39:49.918 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:40:39.941 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:41:29.965 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:42:19.985 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:43:10.006 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:44:00.024 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:44:50.054 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:45:40.079 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:46:30.098 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:47:20.127 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:48:10.153 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:49:00.179 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:49:50.201 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:50:40.220 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:51:30.248 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:52:20.271 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:53:10.290 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:54:00.316 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:54:50.340 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:55:40.362 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:56:30.388 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:57:20.413 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:58:10.438 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:59:00.458 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 03:59:50.479 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:00:40.495 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:01:30.516 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:02:20.547 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:03:10.564 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:04:00.587 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:04:50.613 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:05:40.642 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:06:30.665 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:07:20.688 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:08:10.712 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:09:00.734 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:09:50.763 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:10:40.788 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:11:30.805 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:12:20.826 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:13:10.850 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:14:00.870 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:14:50.894 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:15:40.918 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:16:30.947 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:17:20.959 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:18:10.974 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:19:00.986 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:19:51.014 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:20:41.040 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:21:31.061 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:22:21.073 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:23:11.097 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:24:01.119 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:24:51.142 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:25:41.166 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:26:31.190 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:27:21.207 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:28:11.229 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:29:01.250 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:29:51.274 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:30:41.294 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:31:31.319 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:32:21.334 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:33:11.360 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:34:01.378 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:34:51.397 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:35:41.419 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:36:31.429 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:37:21.451 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:38:11.470 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:39:01.488 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:39:51.505 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:40:41.526 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:41:31.553 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:42:21.570 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:43:11.585 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:44:01.596 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:44:51.614 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:45:41.636 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:46:31.663 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:47:21.687 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:48:11.703 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:49:01.721 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:49:51.737 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:50:41.759 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:51:31.785 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:52:21.809 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:53:11.826 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:54:01.845 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:54:51.862 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:55:41.896 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:56:31.922 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:57:21.941 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:58:11.960 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:59:01.983 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 04:59:51.993 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:00:42.017 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:01:32.036 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:02:22.056 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:03:12.075 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:04:02.103 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:04:52.121 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:05:42.131 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:06:32.149 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:07:22.171 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:08:12.188 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:09:02.213 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:09:52.237 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:10:42.263 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:11:32.289 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:12:22.317 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:13:12.337 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:14:02.365 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:14:52.385 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:15:42.401 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:16:32.417 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:17:22.437 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:18:12.455 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:19:02.478 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:19:52.499 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:20:42.525 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:21:32.544 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:22:22.560 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:23:12.578 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:24:02.594 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:24:52.624 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:25:42.639 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:26:32.661 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:27:22.680 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:28:12.703 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:29:02.735 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:29:52.755 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:30:42.779 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:31:32.805 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:32:22.832 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:33:12.847 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:34:02.905 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:34:52.931 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:35:42.956 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:36:32.966 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:37:22.995 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:38:13.009 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:39:03.034 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:39:53.060 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:40:43.079 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:41:33.102 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:42:23.133 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:43:13.151 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:44:03.188 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:44:53.205 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:45:43.220 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:46:33.240 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:47:23.262 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:48:13.276 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:49:03.298 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:49:53.317 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:50:43.340 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:51:33.355 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:52:23.378 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:53:13.400 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:54:03.422 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:54:53.437 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:55:43.447 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:56:33.456 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:57:23.475 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:58:13.483 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:59:03.501 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 05:59:53.530 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:00:43.557 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:01:33.589 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:02:23.607 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:03:13.633 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:04:03.648 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:04:53.665 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:05:43.687 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:06:33.703 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:07:23.719 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:08:13.736 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:09:03.752 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:09:53.773 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:10:43.789 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:11:33.813 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:12:23.829 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:13:13.844 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:14:03.867 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:14:53.887 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:15:43.910 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:16:33.927 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:17:23.949 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:18:13.971 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:19:03.993 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:19:54.011 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:20:44.036 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:21:34.055 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:22:24.079 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:23:14.101 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:24:04.124 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:24:54.140 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:25:44.160 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:26:34.181 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:27:24.207 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:28:14.228 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:29:04.258 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:29:54.275 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:30:44.300 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:31:34.310 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:32:24.334 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:33:14.347 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:34:04.367 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:34:54.389 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:35:44.405 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:36:34.422 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:37:24.441 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:38:14.460 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:39:04.484 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:39:54.498 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:40:44.509 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:41:34.524 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:42:24.531 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:43:14.556 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:44:04.580 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:44:54.600 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:45:44.617 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:46:34.632 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:47:24.640 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:48:14.657 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:49:04.682 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:49:54.705 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:50:44.736 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:51:34.760 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:52:24.782 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:53:14.804 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:54:04.828 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:54:54.850 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:55:44.875 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:56:34.891 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:57:24.917 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:58:14.934 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:59:04.953 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 06:59:54.974 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:00:45.003 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:01:35.026 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:02:25.051 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:03:15.075 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:04:05.099 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:04:55.110 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:05:45.124 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:06:35.148 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:07:25.173 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:08:15.191 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:09:05.217 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:09:55.243 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:10:45.266 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:11:35.288 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:12:25.310 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:13:15.334 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:14:05.349 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:14:55.376 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 07:15:45.412 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:25:19.686 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:26:09.703 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:26:59.715 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:27:49.727 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:28:39.744 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:29:29.757 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:30:19.765 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:31:09.779 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:31:59.796 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:32:49.814 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:33:39.831 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:34:29.858 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:35:19.867 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:36:09.890 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 11:36:59.904 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 12:29:09.416 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2025-11-06 12:29:31.342 [http-nio-8080-exec-4] [de41fcb5-9af1-4540-bf3b-816deb6d3cdc  ] ERROR o.e.p.l.e.GlobalExceptionHandler - [sync.errors] unhandled uri=/admin/media/search msg=The AWS Access Key Id you provided does not exist in our records. (Service: S3, Status Code: 403, Request ID: tx73de77c32e7c45fd8df3f-00690c8691, Extended Request ID: tx73de77c32e7c45fd8df3f-00690c8691)
+software.amazon.awssdk.services.s3.model.S3Exception: The AWS Access Key Id you provided does not exist in our records. (Service: S3, Status Code: 403, Request ID: tx73de77c32e7c45fd8df3f-00690c8691, Extended Request ID: tx73de77c32e7c45fd8df3f-00690c8691)
+	at software.amazon.awssdk.protocols.xml.internal.unmarshall.AwsXmlPredicatedResponseHandler.handleErrorResponse(AwsXmlPredicatedResponseHandler.java:156)
+	at software.amazon.awssdk.protocols.xml.internal.unmarshall.AwsXmlPredicatedResponseHandler.handleResponse(AwsXmlPredicatedResponseHandler.java:108)
+	at software.amazon.awssdk.protocols.xml.internal.unmarshall.AwsXmlPredicatedResponseHandler.handle(AwsXmlPredicatedResponseHandler.java:85)
+	at software.amazon.awssdk.protocols.xml.internal.unmarshall.AwsXmlPredicatedResponseHandler.handle(AwsXmlPredicatedResponseHandler.java:43)
+	at software.amazon.awssdk.awscore.client.handler.AwsSyncClientHandler$Crc32ValidationResponseHandler.handle(AwsSyncClientHandler.java:93)
+	at software.amazon.awssdk.core.internal.handler.BaseClientHandler.lambda$successTransformationResponseHandler$7(BaseClientHandler.java:279)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.HandleResponseStage.execute(HandleResponseStage.java:50)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.HandleResponseStage.execute(HandleResponseStage.java:38)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptTimeoutTrackingStage.execute(ApiCallAttemptTimeoutTrackingStage.java:72)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptTimeoutTrackingStage.execute(ApiCallAttemptTimeoutTrackingStage.java:42)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.TimeoutExceptionHandlingStage.execute(TimeoutExceptionHandlingStage.java:78)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.TimeoutExceptionHandlingStage.execute(TimeoutExceptionHandlingStage.java:40)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptMetricCollectionStage.execute(ApiCallAttemptMetricCollectionStage.java:55)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptMetricCollectionStage.execute(ApiCallAttemptMetricCollectionStage.java:39)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:81)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:36)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:56)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:36)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.executeWithTimer(ApiCallTimeoutTrackingStage.java:80)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:60)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:42)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallMetricCollectionStage.execute(ApiCallMetricCollectionStage.java:50)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallMetricCollectionStage.execute(ApiCallMetricCollectionStage.java:32)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:37)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:26)
+	at software.amazon.awssdk.core.internal.http.AmazonSyncHttpClient$RequestExecutionBuilderImpl.execute(AmazonSyncHttpClient.java:224)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.invoke(BaseSyncClientHandler.java:103)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.doExecute(BaseSyncClientHandler.java:173)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.lambda$execute$1(BaseSyncClientHandler.java:80)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.measureApiCallSuccess(BaseSyncClientHandler.java:182)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.execute(BaseSyncClientHandler.java:74)
+	at software.amazon.awssdk.core.client.handler.SdkSyncClientHandler.execute(SdkSyncClientHandler.java:45)
+	at software.amazon.awssdk.awscore.client.handler.AwsSyncClientHandler.execute(AwsSyncClientHandler.java:53)
+	at software.amazon.awssdk.services.s3.DefaultS3Client.listObjectsV2(DefaultS3Client.java:7358)
+	at software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable$ListObjectsV2ResponseFetcher.nextPage(ListObjectsV2Iterable.java:154)
+	at software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable$ListObjectsV2ResponseFetcher.nextPage(ListObjectsV2Iterable.java:145)
+	at software.amazon.awssdk.core.pagination.sync.PaginatedResponsesIterator.next(PaginatedResponsesIterator.java:58)
+	at org.example.proect.lavka.service.OvhS3MediaService.findByFileName(OvhS3MediaService.java:51)
+	at org.example.proect.lavka.controller.MediaController.search(MediaController.java:26)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:259)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest(InvocableHandlerMethod.java:192)
+	at org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:118)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod(RequestMappingHandlerAdapter.java:920)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.handleInternal(RequestMappingHandlerAdapter.java:830)
+	at org.springframework.web.servlet.mvc.method.AbstractHandlerMethodAdapter.handle(AbstractHandlerMethodAdapter.java:87)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089)
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979)
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014)
+	at org.springframework.web.servlet.FrameworkServlet.doGet(FrameworkServlet.java:903)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:564)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:205)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:109)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.example.proect.lavka.web.RequestIdFilter.doFilterInternal(RequestIdFilter.java:38)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90)
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:482)
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115)
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:391)
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63)
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:896)
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1744)
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1191)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+2025-11-06 12:41:36.460 [http-nio-8080-exec-1] [f0e42d78-d613-44ec-8ea0-cc6ec8d8bec4  ] ERROR o.e.p.l.e.GlobalExceptionHandler - [sync.errors] unhandled uri=/admin/media/search msg=Thread was interrupted
+software.amazon.awssdk.core.exception.AbortedException: Thread was interrupted
+	at software.amazon.awssdk.core.exception.AbortedException$BuilderImpl.build(AbortedException.java:93)
+	at software.amazon.awssdk.core.exception.AbortedException.create(AbortedException.java:38)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.handleInterruptedException(ApiCallTimeoutTrackingStage.java:143)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.translatePipelineException(ApiCallTimeoutTrackingStage.java:107)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:62)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:42)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallMetricCollectionStage.execute(ApiCallMetricCollectionStage.java:50)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallMetricCollectionStage.execute(ApiCallMetricCollectionStage.java:32)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:37)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:26)
+	at software.amazon.awssdk.core.internal.http.AmazonSyncHttpClient$RequestExecutionBuilderImpl.execute(AmazonSyncHttpClient.java:224)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.invoke(BaseSyncClientHandler.java:103)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.doExecute(BaseSyncClientHandler.java:173)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.lambda$execute$1(BaseSyncClientHandler.java:80)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.measureApiCallSuccess(BaseSyncClientHandler.java:182)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.execute(BaseSyncClientHandler.java:74)
+	at software.amazon.awssdk.core.client.handler.SdkSyncClientHandler.execute(SdkSyncClientHandler.java:45)
+	at software.amazon.awssdk.awscore.client.handler.AwsSyncClientHandler.execute(AwsSyncClientHandler.java:53)
+	at software.amazon.awssdk.services.s3.DefaultS3Client.listObjectsV2(DefaultS3Client.java:7358)
+	at software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable$ListObjectsV2ResponseFetcher.nextPage(ListObjectsV2Iterable.java:154)
+	at software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable$ListObjectsV2ResponseFetcher.nextPage(ListObjectsV2Iterable.java:145)
+	at software.amazon.awssdk.core.pagination.sync.PaginatedResponsesIterator.next(PaginatedResponsesIterator.java:58)
+	at org.example.proect.lavka.service.OvhS3MediaService.findByFileName(OvhS3MediaService.java:51)
+	at org.example.proect.lavka.controller.MediaController.search(MediaController.java:26)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:259)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest(InvocableHandlerMethod.java:192)
+	at org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:118)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod(RequestMappingHandlerAdapter.java:920)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.handleInternal(RequestMappingHandlerAdapter.java:830)
+	at org.springframework.web.servlet.mvc.method.AbstractHandlerMethodAdapter.handle(AbstractHandlerMethodAdapter.java:87)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089)
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979)
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014)
+	at org.springframework.web.servlet.FrameworkServlet.doGet(FrameworkServlet.java:903)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:564)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:205)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:109)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.example.proect.lavka.web.RequestIdFilter.doFilterInternal(RequestIdFilter.java:38)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90)
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:482)
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115)
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:391)
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63)
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:896)
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1744)
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1191)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+Caused by: software.amazon.awssdk.core.exception.SdkInterruptedException: null
+	at software.amazon.awssdk.core.internal.http.InterruptMonitor.checkInterrupted(InterruptMonitor.java:40)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:55)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:36)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.executeWithTimer(ApiCallTimeoutTrackingStage.java:80)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:60)
+	... 69 common frames omitted
+2025-11-06 12:42:55.186 [http-nio-8080-exec-1] [fbb8a6da-f1d5-48f2-9562-dd13807c1166  ] ERROR o.e.p.l.e.GlobalExceptionHandler - [sync.errors] unhandled uri=/admin/media/search msg=The specified key does not exist. (Service: S3, Status Code: 404, Request ID: txc806a3965615476995e5f-00690c89bc, Extended Request ID: txc806a3965615476995e5f-00690c89bc)
+software.amazon.awssdk.services.s3.model.NoSuchKeyException: The specified key does not exist. (Service: S3, Status Code: 404, Request ID: txc806a3965615476995e5f-00690c89bc, Extended Request ID: txc806a3965615476995e5f-00690c89bc)
+	at software.amazon.awssdk.protocols.xml.internal.unmarshall.AwsXmlPredicatedResponseHandler.handleErrorResponse(AwsXmlPredicatedResponseHandler.java:156)
+	at software.amazon.awssdk.protocols.xml.internal.unmarshall.AwsXmlPredicatedResponseHandler.handleResponse(AwsXmlPredicatedResponseHandler.java:108)
+	at software.amazon.awssdk.protocols.xml.internal.unmarshall.AwsXmlPredicatedResponseHandler.handle(AwsXmlPredicatedResponseHandler.java:85)
+	at software.amazon.awssdk.protocols.xml.internal.unmarshall.AwsXmlPredicatedResponseHandler.handle(AwsXmlPredicatedResponseHandler.java:43)
+	at software.amazon.awssdk.awscore.client.handler.AwsSyncClientHandler$Crc32ValidationResponseHandler.handle(AwsSyncClientHandler.java:93)
+	at software.amazon.awssdk.core.internal.handler.BaseClientHandler.lambda$successTransformationResponseHandler$7(BaseClientHandler.java:279)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.HandleResponseStage.execute(HandleResponseStage.java:50)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.HandleResponseStage.execute(HandleResponseStage.java:38)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptTimeoutTrackingStage.execute(ApiCallAttemptTimeoutTrackingStage.java:72)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptTimeoutTrackingStage.execute(ApiCallAttemptTimeoutTrackingStage.java:42)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.TimeoutExceptionHandlingStage.execute(TimeoutExceptionHandlingStage.java:78)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.TimeoutExceptionHandlingStage.execute(TimeoutExceptionHandlingStage.java:40)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptMetricCollectionStage.execute(ApiCallAttemptMetricCollectionStage.java:55)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptMetricCollectionStage.execute(ApiCallAttemptMetricCollectionStage.java:39)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:81)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:36)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:56)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:36)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.executeWithTimer(ApiCallTimeoutTrackingStage.java:80)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:60)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:42)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallMetricCollectionStage.execute(ApiCallMetricCollectionStage.java:50)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallMetricCollectionStage.execute(ApiCallMetricCollectionStage.java:32)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:37)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:26)
+	at software.amazon.awssdk.core.internal.http.AmazonSyncHttpClient$RequestExecutionBuilderImpl.execute(AmazonSyncHttpClient.java:224)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.invoke(BaseSyncClientHandler.java:103)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.doExecute(BaseSyncClientHandler.java:173)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.lambda$execute$1(BaseSyncClientHandler.java:80)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.measureApiCallSuccess(BaseSyncClientHandler.java:182)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.execute(BaseSyncClientHandler.java:74)
+	at software.amazon.awssdk.core.client.handler.SdkSyncClientHandler.execute(SdkSyncClientHandler.java:45)
+	at software.amazon.awssdk.awscore.client.handler.AwsSyncClientHandler.execute(AwsSyncClientHandler.java:53)
+	at software.amazon.awssdk.services.s3.DefaultS3Client.listObjectsV2(DefaultS3Client.java:7358)
+	at software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable$ListObjectsV2ResponseFetcher.nextPage(ListObjectsV2Iterable.java:154)
+	at software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable$ListObjectsV2ResponseFetcher.nextPage(ListObjectsV2Iterable.java:145)
+	at software.amazon.awssdk.core.pagination.sync.PaginatedResponsesIterator.next(PaginatedResponsesIterator.java:58)
+	at org.example.proect.lavka.service.OvhS3MediaService.findByFileName(OvhS3MediaService.java:51)
+	at org.example.proect.lavka.controller.MediaController.search(MediaController.java:26)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:259)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest(InvocableHandlerMethod.java:192)
+	at org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:118)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod(RequestMappingHandlerAdapter.java:920)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.handleInternal(RequestMappingHandlerAdapter.java:830)
+	at org.springframework.web.servlet.mvc.method.AbstractHandlerMethodAdapter.handle(AbstractHandlerMethodAdapter.java:87)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089)
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979)
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014)
+	at org.springframework.web.servlet.FrameworkServlet.doGet(FrameworkServlet.java:903)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:564)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:205)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:109)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.example.proect.lavka.web.RequestIdFilter.doFilterInternal(RequestIdFilter.java:38)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90)
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:482)
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115)
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:391)
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63)
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:896)
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1744)
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1191)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+2025-11-06 12:44:28.255 [http-nio-8080-exec-1] [e14f2b80-0827-4cce-90bb-ee8dcc69090b  ] ERROR o.e.p.l.e.GlobalExceptionHandler - [sync.errors] unhandled uri=/admin/media/search msg=The authorization header is malformed; the region 'GRA' is wrong; expecting 'gra' (Service: S3, Status Code: 400, Request ID: tx51b566b08d84475d84174-00690c8a19, Extended Request ID: tx51b566b08d84475d84174-00690c8a19)
+software.amazon.awssdk.services.s3.model.S3Exception: The authorization header is malformed; the region 'GRA' is wrong; expecting 'gra' (Service: S3, Status Code: 400, Request ID: tx51b566b08d84475d84174-00690c8a19, Extended Request ID: tx51b566b08d84475d84174-00690c8a19)
+	at software.amazon.awssdk.protocols.xml.internal.unmarshall.AwsXmlPredicatedResponseHandler.handleErrorResponse(AwsXmlPredicatedResponseHandler.java:156)
+	at software.amazon.awssdk.protocols.xml.internal.unmarshall.AwsXmlPredicatedResponseHandler.handleResponse(AwsXmlPredicatedResponseHandler.java:108)
+	at software.amazon.awssdk.protocols.xml.internal.unmarshall.AwsXmlPredicatedResponseHandler.handle(AwsXmlPredicatedResponseHandler.java:85)
+	at software.amazon.awssdk.protocols.xml.internal.unmarshall.AwsXmlPredicatedResponseHandler.handle(AwsXmlPredicatedResponseHandler.java:43)
+	at software.amazon.awssdk.awscore.client.handler.AwsSyncClientHandler$Crc32ValidationResponseHandler.handle(AwsSyncClientHandler.java:93)
+	at software.amazon.awssdk.core.internal.handler.BaseClientHandler.lambda$successTransformationResponseHandler$7(BaseClientHandler.java:279)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.HandleResponseStage.execute(HandleResponseStage.java:50)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.HandleResponseStage.execute(HandleResponseStage.java:38)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptTimeoutTrackingStage.execute(ApiCallAttemptTimeoutTrackingStage.java:72)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptTimeoutTrackingStage.execute(ApiCallAttemptTimeoutTrackingStage.java:42)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.TimeoutExceptionHandlingStage.execute(TimeoutExceptionHandlingStage.java:78)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.TimeoutExceptionHandlingStage.execute(TimeoutExceptionHandlingStage.java:40)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptMetricCollectionStage.execute(ApiCallAttemptMetricCollectionStage.java:55)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptMetricCollectionStage.execute(ApiCallAttemptMetricCollectionStage.java:39)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:81)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:36)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:56)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:36)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.executeWithTimer(ApiCallTimeoutTrackingStage.java:80)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:60)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:42)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallMetricCollectionStage.execute(ApiCallMetricCollectionStage.java:50)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallMetricCollectionStage.execute(ApiCallMetricCollectionStage.java:32)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:37)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:26)
+	at software.amazon.awssdk.core.internal.http.AmazonSyncHttpClient$RequestExecutionBuilderImpl.execute(AmazonSyncHttpClient.java:224)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.invoke(BaseSyncClientHandler.java:103)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.doExecute(BaseSyncClientHandler.java:173)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.lambda$execute$1(BaseSyncClientHandler.java:80)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.measureApiCallSuccess(BaseSyncClientHandler.java:182)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.execute(BaseSyncClientHandler.java:74)
+	at software.amazon.awssdk.core.client.handler.SdkSyncClientHandler.execute(SdkSyncClientHandler.java:45)
+	at software.amazon.awssdk.awscore.client.handler.AwsSyncClientHandler.execute(AwsSyncClientHandler.java:53)
+	at software.amazon.awssdk.services.s3.DefaultS3Client.listObjectsV2(DefaultS3Client.java:7358)
+	at software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable$ListObjectsV2ResponseFetcher.nextPage(ListObjectsV2Iterable.java:154)
+	at software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable$ListObjectsV2ResponseFetcher.nextPage(ListObjectsV2Iterable.java:145)
+	at software.amazon.awssdk.core.pagination.sync.PaginatedResponsesIterator.next(PaginatedResponsesIterator.java:58)
+	at org.example.proect.lavka.service.OvhS3MediaService.findByFileName(OvhS3MediaService.java:51)
+	at org.example.proect.lavka.controller.MediaController.search(MediaController.java:26)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:259)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest(InvocableHandlerMethod.java:192)
+	at org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:118)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod(RequestMappingHandlerAdapter.java:920)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.handleInternal(RequestMappingHandlerAdapter.java:830)
+	at org.springframework.web.servlet.mvc.method.AbstractHandlerMethodAdapter.handle(AbstractHandlerMethodAdapter.java:87)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089)
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979)
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014)
+	at org.springframework.web.servlet.FrameworkServlet.doGet(FrameworkServlet.java:903)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:564)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:205)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:109)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.example.proect.lavka.web.RequestIdFilter.doFilterInternal(RequestIdFilter.java:38)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90)
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:482)
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115)
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:391)
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63)
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:896)
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1744)
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1191)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+2025-11-06 16:01:08.589 [http-nio-8080-exec-4] [3a035f86-2df6-49dd-a281-a14afbd6afb9  ] ERROR o.e.p.l.e.GlobalExceptionHandler - [sync.errors] unhandled uri=/admin/media/search msg=Thread was interrupted
+software.amazon.awssdk.core.exception.AbortedException: Thread was interrupted
+	at software.amazon.awssdk.core.exception.AbortedException$BuilderImpl.build(AbortedException.java:93)
+	at software.amazon.awssdk.core.exception.AbortedException.create(AbortedException.java:38)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptTimeoutTrackingStage.handleInterruptedException(ApiCallAttemptTimeoutTrackingStage.java:141)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptTimeoutTrackingStage.translatePipelineException(ApiCallAttemptTimeoutTrackingStage.java:105)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptTimeoutTrackingStage.execute(ApiCallAttemptTimeoutTrackingStage.java:89)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptTimeoutTrackingStage.execute(ApiCallAttemptTimeoutTrackingStage.java:42)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.TimeoutExceptionHandlingStage.execute(TimeoutExceptionHandlingStage.java:78)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.TimeoutExceptionHandlingStage.execute(TimeoutExceptionHandlingStage.java:40)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptMetricCollectionStage.execute(ApiCallAttemptMetricCollectionStage.java:55)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptMetricCollectionStage.execute(ApiCallAttemptMetricCollectionStage.java:39)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:81)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:36)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:56)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:36)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.executeWithTimer(ApiCallTimeoutTrackingStage.java:80)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:60)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:42)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallMetricCollectionStage.execute(ApiCallMetricCollectionStage.java:50)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallMetricCollectionStage.execute(ApiCallMetricCollectionStage.java:32)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:37)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:26)
+	at software.amazon.awssdk.core.internal.http.AmazonSyncHttpClient$RequestExecutionBuilderImpl.execute(AmazonSyncHttpClient.java:224)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.invoke(BaseSyncClientHandler.java:103)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.doExecute(BaseSyncClientHandler.java:173)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.lambda$execute$1(BaseSyncClientHandler.java:80)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.measureApiCallSuccess(BaseSyncClientHandler.java:182)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.execute(BaseSyncClientHandler.java:74)
+	at software.amazon.awssdk.core.client.handler.SdkSyncClientHandler.execute(SdkSyncClientHandler.java:45)
+	at software.amazon.awssdk.awscore.client.handler.AwsSyncClientHandler.execute(AwsSyncClientHandler.java:53)
+	at software.amazon.awssdk.services.s3.DefaultS3Client.listObjectsV2(DefaultS3Client.java:7358)
+	at software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable$ListObjectsV2ResponseFetcher.nextPage(ListObjectsV2Iterable.java:156)
+	at software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable$ListObjectsV2ResponseFetcher.nextPage(ListObjectsV2Iterable.java:145)
+	at software.amazon.awssdk.core.pagination.sync.PaginatedResponsesIterator.next(PaginatedResponsesIterator.java:58)
+	at org.example.proect.lavka.service.OvhS3MediaService.findByFileName(OvhS3MediaService.java:45)
+	at org.example.proect.lavka.controller.MediaController.search(MediaController.java:26)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:259)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest(InvocableHandlerMethod.java:192)
+	at org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:118)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod(RequestMappingHandlerAdapter.java:920)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.handleInternal(RequestMappingHandlerAdapter.java:830)
+	at org.springframework.web.servlet.mvc.method.AbstractHandlerMethodAdapter.handle(AbstractHandlerMethodAdapter.java:87)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089)
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979)
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014)
+	at org.springframework.web.servlet.FrameworkServlet.doGet(FrameworkServlet.java:903)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:564)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:205)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:109)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.example.proect.lavka.web.RequestIdFilter.doFilterInternal(RequestIdFilter.java:38)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:174)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:149)
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90)
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:482)
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115)
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:391)
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63)
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:896)
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1744)
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1191)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+Caused by: software.amazon.awssdk.core.exception.SdkInterruptedException: null
+	at software.amazon.awssdk.core.internal.http.InterruptMonitor.checkInterrupted(InterruptMonitor.java:55)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.AfterTransmissionExecutionInterceptorsStage.execute(AfterTransmissionExecutionInterceptorsStage.java:34)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.AfterTransmissionExecutionInterceptorsStage.execute(AfterTransmissionExecutionInterceptorsStage.java:28)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallAttemptTimeoutTrackingStage.execute(ApiCallAttemptTimeoutTrackingStage.java:72)
+	... 81 common frames omitted
+2025-11-06 16:16:24.492 [http-nio-8080-exec-6] [a31d134f-b582-4f37-971b-f557b607d12c  ] ERROR o.e.p.l.e.GlobalExceptionHandler - [sync.errors] db uri=/admin/media/reindex cause=BatchUpdateException msg=Incorrect syntax near the keyword 'ON'.
+org.springframework.dao.TransientDataAccessResourceException: PreparedStatementCallback; SQL [INSERT INTO s3_media_index (filename_lower, full_key, size_bytes, last_modified, etag)
+VALUES (?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE
+  size_bytes = VALUES(size_bytes),
+  last_modified = VALUES(last_modified),
+  etag = VALUES(etag),
+  updated_at = CURRENT_TIMESTAMP
+]; Incorrect syntax near the keyword 'ON'.
+	at org.springframework.jdbc.support.SQLStateSQLExceptionTranslator.doTranslate(SQLStateSQLExceptionTranslator.java:124)
 	at org.springframework.jdbc.support.AbstractFallbackSQLExceptionTranslator.translate(AbstractFallbackSQLExceptionTranslator.java:107)
 	at org.springframework.jdbc.support.AbstractFallbackSQLExceptionTranslator.translate(AbstractFallbackSQLExceptionTranslator.java:116)
 	at org.springframework.jdbc.core.JdbcTemplate.translateException(JdbcTemplate.java:1548)
 	at org.springframework.jdbc.core.JdbcTemplate.execute(JdbcTemplate.java:677)
-	at org.springframework.jdbc.core.JdbcTemplate.query(JdbcTemplate.java:723)
-	at org.springframework.jdbc.core.JdbcTemplate.query(JdbcTemplate.java:748)
-	at org.springframework.jdbc.core.JdbcTemplate.query(JdbcTemplate.java:804)
-	at org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate.query(NamedParameterJdbcTemplate.java:218)
-	at org.example.proect.lavka.dao.CardTovExportDaoImpl.findBySkus(CardTovExportDaoImpl.java:133)
+	at org.springframework.jdbc.core.JdbcTemplate.execute(JdbcTemplate.java:701)
+	at org.springframework.jdbc.core.JdbcTemplate.batchUpdate(JdbcTemplate.java:1047)
+	at org.example.proect.lavka.dao.wp.S3MediaIndexDao.upsertBatch(S3MediaIndexDao.java:37)
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
 	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
 	at org.springframework.aop.support.AopUtils.invokeJoinpointUsingReflection(AopUtils.java:351)
@@ -90,30 +966,23 @@ WHERE sku IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 	at org.springframework.dao.support.PersistenceExceptionTranslationInterceptor.invoke(PersistenceExceptionTranslationInterceptor.java:137)
 	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:184)
 	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:765)
-	at org.springframework.aop.aspectj.MethodInvocationProceedingJoinPoint.proceed(MethodInvocationProceedingJoinPoint.java:89)
-	at org.example.proect.lavka.utils.RetryLabelAspect.nameRetryContext(RetryLabelAspect.java:30)
+	at org.springframework.aop.framework.CglibAopProxy$DynamicAdvisedInterceptor.intercept(CglibAopProxy.java:717)
+	at org.example.proect.lavka.dao.wp.S3MediaIndexDao$$SpringCGLIB$$0.upsertBatch(<generated>)
+	at org.example.proect.lavka.service.S3MediaIndexService.reindexAll(S3MediaIndexService.java:57)
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
 	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
-	at org.springframework.aop.aspectj.AbstractAspectJAdvice.invokeAdviceMethodWithGivenArgs(AbstractAspectJAdvice.java:637)
-	at org.springframework.aop.aspectj.AbstractAspectJAdvice.invokeAdviceMethod(AbstractAspectJAdvice.java:627)
-	at org.springframework.aop.aspectj.AspectJAroundAdvice.invoke(AspectJAroundAdvice.java:71)
-	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:173)
+	at org.springframework.aop.support.AopUtils.invokeJoinpointUsingReflection(AopUtils.java:351)
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.invokeJoinpoint(ReflectiveMethodInvocation.java:196)
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:163)
 	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:765)
-	at org.springframework.retry.interceptor.RetryOperationsInterceptor$1.doWithRetry(RetryOperationsInterceptor.java:102)
-	at org.springframework.retry.support.RetryTemplate.doExecute(RetryTemplate.java:335)
-	at org.springframework.retry.support.RetryTemplate.execute(RetryTemplate.java:211)
-	at org.springframework.retry.interceptor.RetryOperationsInterceptor.invoke(RetryOperationsInterceptor.java:135)
-	at org.springframework.retry.annotation.AnnotationAwareRetryOperationsInterceptor.invoke(AnnotationAwareRetryOperationsInterceptor.java:161)
-	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:184)
-	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:765)
-	at org.springframework.aop.interceptor.ExposeInvocationInterceptor.invoke(ExposeInvocationInterceptor.java:97)
+	at org.springframework.transaction.interceptor.TransactionInterceptor$1.proceedWithInvocation(TransactionInterceptor.java:123)
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:385)
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
 	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:184)
 	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:765)
 	at org.springframework.aop.framework.CglibAopProxy$DynamicAdvisedInterceptor.intercept(CglibAopProxy.java:717)
-	at org.example.proect.lavka.dao.CardTovExportDaoImpl$$SpringCGLIB$$0.findBySkus(<generated>)
-	at org.example.proect.lavka.service.CardTovExportService.diffPage(CardTovExportService.java:88)
-	at org.example.proect.lavka.service.SyncServiceImpl.runOneBatch(SyncServiceImpl.java:124)
-	at org.example.proect.lavka.controller.SyncController.runOneBatch(SyncController.java:33)
+	at org.example.proect.lavka.service.S3MediaIndexService$$SpringCGLIB$$0.reindexAll(<generated>)
+	at org.example.proect.lavka.controller.MediaController.reindex(MediaController.java:24)
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
 	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
 	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:259)
@@ -162,38 +1031,30 @@ WHERE sku IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659)
 	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
 	at java.base/java.lang.Thread.run(Thread.java:1583)
-Caused by: java.sql.SQLException: I/O Error: Connection reset
-	at net.sourceforge.jtds.jdbc.TdsCore.executeSQL(TdsCore.java:1093)
-	at net.sourceforge.jtds.jdbc.TdsCore.microsoftPrepare(TdsCore.java:1219)
-	at net.sourceforge.jtds.jdbc.JtdsConnection.prepareSQL(JtdsConnection.java:708)
-	at net.sourceforge.jtds.jdbc.JtdsPreparedStatement.executeQuery(JtdsPreparedStatement.java:1028)
-	at org.springframework.jdbc.core.JdbcTemplate$1.doInPreparedStatement(JdbcTemplate.java:732)
+Caused by: java.sql.BatchUpdateException: Incorrect syntax near the keyword 'ON'.
+	at net.sourceforge.jtds.jdbc.JtdsStatement.executeBatch(JtdsStatement.java:1069)
+	at com.zaxxer.hikari.pool.ProxyStatement.executeBatch(ProxyStatement.java:127)
+	at com.zaxxer.hikari.pool.HikariProxyPreparedStatement.executeBatch(HikariProxyPreparedStatement.java)
+	at org.springframework.jdbc.core.JdbcTemplate.lambda$getPreparedStatementCallback$6(JdbcTemplate.java:1609)
 	at org.springframework.jdbc.core.JdbcTemplate.execute(JdbcTemplate.java:658)
-	... 86 common frames omitted
-Caused by: java.net.SocketException: Connection reset
-	at java.base/sun.nio.ch.NioSocketImpl.implRead(NioSocketImpl.java:318)
-	at java.base/sun.nio.ch.NioSocketImpl.read(NioSocketImpl.java:346)
-	at java.base/sun.nio.ch.NioSocketImpl$1.read(NioSocketImpl.java:796)
-	at java.base/java.net.Socket$SocketInputStream.read(Socket.java:1099)
-	at java.base/java.io.DataInputStream.readFully(DataInputStream.java:208)
-	at java.base/java.io.DataInputStream.readFully(DataInputStream.java:179)
-	at net.sourceforge.jtds.jdbc.SharedSocket.readPacket(SharedSocket.java:850)
-	at net.sourceforge.jtds.jdbc.SharedSocket.getNetPacket(SharedSocket.java:731)
-	at net.sourceforge.jtds.jdbc.ResponseStream.getPacket(ResponseStream.java:477)
-	at net.sourceforge.jtds.jdbc.ResponseStream.read(ResponseStream.java:114)
-	at net.sourceforge.jtds.jdbc.ResponseStream.peek(ResponseStream.java:99)
-	at net.sourceforge.jtds.jdbc.TdsCore.wait(TdsCore.java:4127)
-	at net.sourceforge.jtds.jdbc.TdsCore.executeSQL(TdsCore.java:1086)
-	... 91 common frames omitted
-2025-11-05 21:59:31.776 [http-nio-8080-exec-1] [  ] ERROR o.e.p.l.e.GlobalExceptionHandler - [sync.errors] db uri=/sync/run cause=SocketTimeoutException msg=Connect timed out
-org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
-	at org.springframework.jdbc.datasource.DataSourceUtils.getConnection(DataSourceUtils.java:84)
-	at org.springframework.jdbc.core.JdbcTemplate.execute(JdbcTemplate.java:653)
-	at org.springframework.jdbc.core.JdbcTemplate.query(JdbcTemplate.java:723)
-	at org.springframework.jdbc.core.JdbcTemplate.query(JdbcTemplate.java:748)
-	at org.springframework.jdbc.core.JdbcTemplate.query(JdbcTemplate.java:804)
-	at org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate.query(NamedParameterJdbcTemplate.java:218)
-	at org.example.proect.lavka.dao.CardTovExportDaoImpl.findBySkus(CardTovExportDaoImpl.java:124)
+	... 77 common frames omitted
+2025-11-06 16:25:07.774 [http-nio-8080-exec-4] [e785760a-5543-479b-874d-cc7093f95296  ] ERROR o.e.p.l.e.GlobalExceptionHandler - [sync.errors] db uri=/admin/media/reindex cause=BatchUpdateException msg=Incorrect syntax near the keyword 'ON'.
+org.springframework.dao.TransientDataAccessResourceException: PreparedStatementCallback; SQL [INSERT INTO s3_media_index (filename_lower, full_key, size_bytes, last_modified, etag)
+VALUES (?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE
+  size_bytes = VALUES(size_bytes),
+  last_modified = VALUES(last_modified),
+  etag = VALUES(etag),
+  updated_at = CURRENT_TIMESTAMP
+]; Incorrect syntax near the keyword 'ON'.
+	at org.springframework.jdbc.support.SQLStateSQLExceptionTranslator.doTranslate(SQLStateSQLExceptionTranslator.java:124)
+	at org.springframework.jdbc.support.AbstractFallbackSQLExceptionTranslator.translate(AbstractFallbackSQLExceptionTranslator.java:107)
+	at org.springframework.jdbc.support.AbstractFallbackSQLExceptionTranslator.translate(AbstractFallbackSQLExceptionTranslator.java:116)
+	at org.springframework.jdbc.core.JdbcTemplate.translateException(JdbcTemplate.java:1548)
+	at org.springframework.jdbc.core.JdbcTemplate.execute(JdbcTemplate.java:677)
+	at org.springframework.jdbc.core.JdbcTemplate.execute(JdbcTemplate.java:701)
+	at org.springframework.jdbc.core.JdbcTemplate.batchUpdate(JdbcTemplate.java:1047)
+	at org.example.proect.lavka.dao.wp.S3MediaIndexDao.upsertBatch(S3MediaIndexDao.java:37)
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
 	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
 	at org.springframework.aop.support.AopUtils.invokeJoinpointUsingReflection(AopUtils.java:351)
@@ -204,10 +1065,22 @@ org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC
 	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:184)
 	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:765)
 	at org.springframework.aop.framework.CglibAopProxy$DynamicAdvisedInterceptor.intercept(CglibAopProxy.java:717)
-	at org.example.proect.lavka.dao.CardTovExportDaoImpl$$SpringCGLIB$$0.findBySkus(<generated>)
-	at org.example.proect.lavka.service.CardTovExportService.diffPage(CardTovExportService.java:88)
-	at org.example.proect.lavka.service.SyncServiceImpl.runOneBatch(SyncServiceImpl.java:124)
-	at org.example.proect.lavka.controller.SyncController.runOneBatch(SyncController.java:33)
+	at org.example.proect.lavka.dao.wp.S3MediaIndexDao$$SpringCGLIB$$0.upsertBatch(<generated>)
+	at org.example.proect.lavka.service.S3MediaIndexService.reindexAll(S3MediaIndexService.java:57)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.springframework.aop.support.AopUtils.invokeJoinpointUsingReflection(AopUtils.java:351)
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.invokeJoinpoint(ReflectiveMethodInvocation.java:196)
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:163)
+	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:765)
+	at org.springframework.transaction.interceptor.TransactionInterceptor$1.proceedWithInvocation(TransactionInterceptor.java:123)
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:385)
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:184)
+	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:765)
+	at org.springframework.aop.framework.CglibAopProxy$DynamicAdvisedInterceptor.intercept(CglibAopProxy.java:717)
+	at org.example.proect.lavka.service.S3MediaIndexService$$SpringCGLIB$$0.reindexAll(<generated>)
+	at org.example.proect.lavka.controller.MediaController.reindex(MediaController.java:24)
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
 	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
 	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:259)
@@ -256,26 +1129,11 @@ org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC
 	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659)
 	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
 	at java.base/java.lang.Thread.run(Thread.java:1583)
-Caused by: java.sql.SQLException: Login timed out.
-	at net.sourceforge.jtds.jdbc.JtdsConnection.<init>(JtdsConnection.java:433)
-	at net.sourceforge.jtds.jdbc.Driver.connect(Driver.java:184)
-	at java.sql/java.sql.DriverManager.getConnection(DriverManager.java:683)
-	at java.sql/java.sql.DriverManager.getConnection(DriverManager.java:191)
-	at org.springframework.jdbc.datasource.DriverManagerDataSource.getConnectionFromDriverManager(DriverManagerDataSource.java:155)
-	at org.springframework.jdbc.datasource.DriverManagerDataSource.getConnectionFromDriver(DriverManagerDataSource.java:146)
-	at org.springframework.jdbc.datasource.AbstractDriverBasedDataSource.getConnectionFromDriver(AbstractDriverBasedDataSource.java:205)
-	at org.springframework.jdbc.datasource.AbstractDriverBasedDataSource.getConnection(AbstractDriverBasedDataSource.java:169)
-	at org.springframework.jdbc.datasource.DataSourceUtils.fetchConnection(DataSourceUtils.java:160)
-	at org.springframework.jdbc.datasource.DataSourceUtils.doGetConnection(DataSourceUtils.java:118)
-	at org.springframework.jdbc.datasource.DataSourceUtils.getConnection(DataSourceUtils.java:81)
-	... 68 common frames omitted
-Caused by: java.net.SocketTimeoutException: Connect timed out
-	at java.base/sun.nio.ch.NioSocketImpl.timedFinishConnect(NioSocketImpl.java:546)
-	at java.base/sun.nio.ch.NioSocketImpl.connect(NioSocketImpl.java:592)
-	at java.base/java.net.SocksSocketImpl.connect(SocksSocketImpl.java:327)
-	at java.base/java.net.Socket.connect(Socket.java:751)
-	at net.sourceforge.jtds.jdbc.SharedSocket.createSocketForJDBC3(SharedSocket.java:288)
-	at net.sourceforge.jtds.jdbc.SharedSocket.<init>(SharedSocket.java:251)
-	at net.sourceforge.jtds.jdbc.JtdsConnection.<init>(JtdsConnection.java:331)
-	... 78 common frames omitted
-2025-11-05 22:26:43.766 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+Caused by: java.sql.BatchUpdateException: Incorrect syntax near the keyword 'ON'.
+	at net.sourceforge.jtds.jdbc.JtdsStatement.executeBatch(JtdsStatement.java:1069)
+	at com.zaxxer.hikari.pool.ProxyStatement.executeBatch(ProxyStatement.java:127)
+	at com.zaxxer.hikari.pool.HikariProxyPreparedStatement.executeBatch(HikariProxyPreparedStatement.java)
+	at org.springframework.jdbc.core.JdbcTemplate.lambda$getPreparedStatementCallback$6(JdbcTemplate.java:1609)
+	at org.springframework.jdbc.core.JdbcTemplate.execute(JdbcTemplate.java:658)
+	... 77 common frames omitted
+2025-11-06 16:31:44.959 [scheduling-1] [  ] ERROR o.e.p.lavka.health.DbPingScheduler - [sync.db.health] MSSQL ping=FAIL org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
