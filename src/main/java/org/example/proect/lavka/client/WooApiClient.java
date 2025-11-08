@@ -36,6 +36,22 @@ public class WooApiClient {
         return a != null && b != null && a.trim().equalsIgnoreCase(b.trim());
     }
 
+    // Внутрь WooApiClient
+    public record MediaLinkOnlyPayload(
+            long product_id,
+            String s3_key,
+            String url,
+            String mime,
+            boolean set_featured,
+            boolean add_to_gallery,
+            int gallery_position
+    ) {}
+
+    public Map<String, Object> mediaLinkOnly(MediaLinkOnlyPayload p) {
+        String url = props.getBaseUrl() + "/lavka/v1/media/link-only";
+        return restTemplate.postForObject(url, p, Map.class); // restTemplate уже с auth
+    }
+
     /**
      * Точный поиск по ИМЕНИ + РОДИТЕЛЮ (parent id).
      * Фильтруем на сервере по parent, а на клиенте — по точному совпадению имени.

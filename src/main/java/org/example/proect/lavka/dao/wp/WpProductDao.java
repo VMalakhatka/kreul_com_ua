@@ -18,4 +18,10 @@ public interface WpProductDao {
     List<SeenItem> collectSeenWindow(int limit, String cursorAfter);
 
     Map<String, Long> findIdsBySkus(Collection<String> skus);
+
+    public Long findAttachmentIdByS3KeyOrGuid(String s3Key, String guid);
+
+    public Long findFeaturedId(long productId);
+
+    public List<Long> findGalleryIds(long productId);
 }

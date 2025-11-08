@@ -1,6 +1,7 @@
 package org.example.proect.lavka.dao;
 
 
+import jakarta.annotation.Nullable;
 import org.example.proect.lavka.dto.CardTovExportDto;
 
 import java.util.Collection;
@@ -27,4 +28,8 @@ public interface CardTovExportDao {
     List<CardTovExportDto> findGreaterThanExcluding(String lowerExclusive,
                                                     Collection<String> excludeSkus,
                                                     int limit);
+    public @Nullable CardTovExportDaoImpl.MsCardImages findCardImagesBySku(String sku);
+    public List<CardTovExportDaoImpl.MsGalleryImage> findGalleryByPlusArtic(String plusArtic);
+    public CardTovExportDaoImpl.MsImagesBundle findImagesBundleBySku(String sku);
+
 }

@@ -22,12 +22,18 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class SyncServiceImpl implements SyncService {
 
+    public record AttachTask
+            (String sku, Long knownId, String fileName
+                    , String s3Key, String url, String mime) {}
+
     private final WpProductDao wpProductDao;
     private final CardTovExportService cardTovExportService;
     private final WooApiClient wooApiClient;
     private final LavkaLocationsClient lavkaLocationsClient;
+    private final S3MediaIndexService s3Media;
 
     private static final Marker OPS = MarkerFactory.getMarker("OPS");
+    private final boolean touchImagesOnUpdate = true;
 
     @Override
     public SyncRunResponse runOneBatch(
@@ -432,19 +438,6 @@ public class SyncServiceImpl implements SyncService {
             cats.add(catObj);
             m.put("categories", cats);
         }
-
-        // Картинка
-        // Политика такая:
-        // - при create: всегда ставь картинку (новый товар, ок)
-        // - при update: можно тоже ставить для простоты, пока не оптимизируем дубликаты
-        /*if (dto.img() != null && !dto.img().isBlank()) {
-            java.util.List<java.util.Map<String,Object>> images = new java.util.ArrayList<>();
-            java.util.Map<String,Object> imgObj = new java.util.HashMap<>();
-            imgObj.put("src", dto.img().trim());
-            images.add(imgObj);
-            m.put("images", images);
-        }*/
-
         // --- meta_data ---
         java.util.List<java.util.Map<String,Object>> meta = new java.util.ArrayList<>();
 
@@ -661,5 +654,4 @@ public class SyncServiceImpl implements SyncService {
             }
         } catch (Exception ignore) {}
     }
-
 }

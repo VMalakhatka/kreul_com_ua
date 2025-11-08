@@ -9,6 +9,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 @Repository
@@ -234,5 +235,73 @@ public class S3MediaIndexDao {
                 (rs, n) -> rs.getString(1),
                 sku
         );
+    }
+
+
+    /** Удобный помощник: найти image_id по full_key (как хранится в s3_media_index.full_key). */
+    public @Nullable Long resolveImageIdByFullKey(String fullKey) {
+        return jdbc.query(
+                "SELECT id FROM s3_media_index WHERE full_key = ? LIMIT 1",
+                ps -> ps.setString(1, fullKey),
+                rs -> rs.next() ? rs.getLong(1) : null
+        );
+    }
+
+    /** Вариант: найти image_id по attachedFile (т.е. по уже урезанному пути YYYY/MM/file). */
+    public @Nullable Long resolveImageIdByAttachedFile(String attachedFile) {
+        // так как в индексе хранится full_key, добавим префикс "wp-content/uploads/" для поиска
+        String fullKey = "wp-content/uploads/" + attachedFile.replace('\\','/').replaceAll("^/+", "");
+        return resolveImageIdByFullKey(fullKey);
+    }
+
+    /** Есть ли уже линк по sku+imageId+position? */
+    public boolean linkExists(String sku, long imageId, int position) {
+        Integer cnt = jdbc.query("""
+        SELECT 1 FROM s3_media_links
+        WHERE sku=? AND image_id=? AND position=?
+        LIMIT 1
+    """, ps -> { ps.setString(1, sku); ps.setLong(2, imageId); ps.setInt(3, position); },
+                rs -> rs.next() ? 1 : 0
+        );
+        return cnt != null && cnt == 1;
+    }
+
+    /** Список позиций (position -> image_id) уже связанных для SKU. */
+    public Map<Integer, Long> positionsForSku(String sku) {
+        return jdbc.query("""
+        SELECT position, image_id
+        FROM s3_media_links
+        WHERE sku=?
+    """, ps -> ps.setString(1, sku),
+                rs -> {
+                    Map<Integer,Long> m = new java.util.HashMap<>();
+                    while (rs.next()) m.put(rs.getInt(1), rs.getLong(2));
+                    return m;
+                }
+        );
+    }
+
+    // S3MediaIndexDao
+
+    /** Лучший full_key по имени файла (как в индексе: last_modified DESC, size DESC). */
+    public @Nullable String resolveBestFullKeyByFilename(String filenameLower) {
+        return jdbc.query("""
+        SELECT full_key
+        FROM s3_media_index
+        WHERE filename_lower = ?
+        ORDER BY last_modified DESC, size_bytes DESC
+        LIMIT 1
+    """,
+                ps -> ps.setString(1, filenameLower.toLowerCase()),
+                rs -> rs.next() ? rs.getString(1) : null
+        );
+    }
+
+    /** Быстрый «есть ли линк» по SKU+attachedFile (YYYY/MM/file). */
+    public boolean linkExistsByAttachedFile(String sku, String attachedFile, int position) {
+        String fullKey = "wp-content/uploads/" + attachedFile.replace('\\','/').replaceAll("^/+", "");
+        Long imageId = resolveImageIdByFullKey(fullKey);
+        if (imageId == null) return false;
+        return linkExists(sku, imageId, position);
     }
 }

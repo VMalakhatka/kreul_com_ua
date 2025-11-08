@@ -6,6 +6,7 @@ import org.example.proect.lavka.service.CardTovExportService;
 import org.example.proect.lavka.service.CardTovExportService.ItemHash;
 import org.example.proect.lavka.utils.RetryLabel;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.lang.Nullable;
@@ -29,11 +30,60 @@ import java.util.*;
         maxAttempts = 4,
         backoff = @Backoff(delay = 200, multiplier = 2.0, maxDelay = 5000, random = true)
 )
-@RequiredArgsConstructor
 public class WpProductDaoImpl implements WpProductDao {
 
     // оба коннекта у тебя уже сконфигурированы где-то как wpJdbcTemplate/wpNamedJdbc
-    private final @Qualifier("wpNamedJdbc") NamedParameterJdbcTemplate wpNamedJdbc;
+    private final NamedParameterJdbcTemplate wpNamedJdbc;
+    private final JdbcTemplate jdbc;
+
+    public WpProductDaoImpl(@Qualifier("wpJdbcTemplate") JdbcTemplate jdbc
+            , @Qualifier("wpNamedJdbc") NamedParameterJdbcTemplate wpNamedJdbc) {
+        this.jdbc = jdbc;
+        this.wpNamedJdbc = wpNamedJdbc;
+    }
+
+    /** ID attachment по s3_key (wp_postmeta._wp_attached_file) или по guid (URL). */
+    @Override
+    public Long findAttachmentIdByS3KeyOrGuid(String s3Key, String guid) {
+        // сначала по _wp_attached_file (надежнее)
+        Long id = jdbc.query(
+                "SELECT post_id FROM wp_postmeta WHERE meta_key='_wp_attached_file' AND meta_value=? LIMIT 1",
+                ps -> ps.setString(1, s3Key),
+                rs -> rs.next() ? rs.getLong(1) : null
+        );
+        if (id != null) return id;
+        // fallback по guid
+        return jdbc.query(
+                "SELECT ID FROM wp_posts WHERE post_type='attachment' AND guid=? LIMIT 1",
+                ps -> ps.setString(1, guid),
+                rs -> rs.next() ? rs.getLong(1) : null
+        );
+    }
+
+    /** Текущий featured attachment для товара. */
+    @Override
+    public Long findFeaturedId(long productId) {
+        return jdbc.query(
+                "SELECT meta_value FROM wp_postmeta WHERE post_id=? AND meta_key='_thumbnail_id' LIMIT 1",
+                ps -> ps.setLong(1, productId),
+                rs -> rs.next() ? rs.getLong(1) : null
+        );
+    }
+
+    /** Массив ID в галерее (в порядке). */
+    @Override
+    public List<Long> findGalleryIds(long productId) {
+        String csv = jdbc.query(
+                "SELECT meta_value FROM wp_postmeta WHERE post_id=? AND meta_key='_product_image_gallery' LIMIT 1",
+                ps -> ps.setLong(1, productId),
+                rs -> rs.next() ? rs.getString(1) : null
+        );
+        if (csv == null || csv.isBlank()) return List.of();
+        String[] parts = csv.split(",");
+        List<Long> ids = new java.util.ArrayList<>(parts.length);
+        for (String p : parts) try { ids.add(Long.parseLong(p.trim())); } catch (Exception ignore){}
+        return ids;
+    }
 
     @Override
     public List<SeenItem> collectSeenWindow(int limit, @Nullable String afterSku) {

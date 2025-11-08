@@ -1,5 +1,6 @@
 package org.example.proect.lavka.dao;
 
+import jakarta.annotation.Nullable;
 import org.example.proect.lavka.dao.support.AbstractRetryingDao;
 import org.example.proect.lavka.dao.mapper.CardTovExportRowMapper;
 import org.example.proect.lavka.dto.CardTovExportDto;
@@ -286,5 +287,69 @@ public List<CardTovExportDto> findBetweenExcluding(
 
     private static Integer getI(ResultSet rs, String col) throws SQLException {
         return (rs.getObject(col) == null) ? null : rs.getInt(col);
+    }
+
+    public record MsCardImages(
+            String sku,
+            String mainFileName,   // из ALL_ARTC.S50
+            String plusArtic       // связь на галерею
+    ) {}
+
+    public record MsGalleryImage(
+            String fileName,       // dbo.img_prod.image
+            Integer sortOrder      // dbo.img_prod.sort_order
+    ) {}
+
+    /** Основное изображение и ключ связи (PLUS_ARTIC) по SKU. */
+    @Override
+    public @Nullable MsCardImages findCardImagesBySku(String sku) {
+        String sql = """
+        SELECT a.COD_ARTIC AS sku,
+               b.S50       AS mainFileName,
+               b.PLUS_ARTIC AS plusArtic
+        FROM dbo.SCL_ARTC a
+        LEFT JOIN dbo.ALL_ARTC b ON b.COD_ARTIC = a.COD_ARTIC
+        WHERE a.COD_ARTIC = :sku
+        """;
+        var params = new MapSqlParameterSource().addValue("sku", sku);
+        return namedJdbc.query(sql, params, rs -> {
+            if (!rs.next()) return null;
+            return new MsCardImages(
+                    rs.getString("sku"),
+                    rs.getString("mainFileName"),
+                    rs.getString("plusArtic")
+            );
+        });
+    }
+
+    /** Галерея по PLUS_ARTIC (если null — вернёт пусто). */
+    @Override
+    public List<MsGalleryImage> findGalleryByPlusArtic(String plusArtic) {
+        if (plusArtic == null || plusArtic.isBlank()) return List.of();
+        String sql = """
+        SELECT image AS fileName, sort_order
+        FROM dbo.img_prod
+        WHERE PLUS_ARTIC = :pa
+        ORDER BY sort_order ASC, image ASC
+        """;
+        var params = new MapSqlParameterSource().addValue("pa", plusArtic);
+        return namedJdbc.query(sql, params, (rs,i) ->
+                new MsGalleryImage(rs.getString("fileName"), (Integer) rs.getObject("sort_order"))
+        );
+    }
+
+    /** Удобный обёртка-метод: сразу вернуть и main, и gallery для SKU. */
+    public record MsImagesBundle(
+            String sku,
+            @Nullable String mainFileName,
+            List<MsGalleryImage> gallery
+    ) {}
+
+    @Override
+    public MsImagesBundle findImagesBundleBySku(String sku) {
+        MsCardImages base = findCardImagesBySku(sku);
+        if (base == null) return new MsImagesBundle(sku, null, List.of());
+        List<MsGalleryImage> gal = findGalleryByPlusArtic(base.plusArtic());
+        return new MsImagesBundle(sku, base.mainFileName(), gal);
     }
 }

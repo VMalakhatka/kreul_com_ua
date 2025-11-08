@@ -25,6 +25,24 @@ public class LavkaLocationsClient {
         this.base = base.endsWith("/") ? base.substring(0, base.length()-1) : base;
     }
 
+
+    public record MediaLinkOnlyPayload(
+            long product_id,
+            String s3_key,
+            String url,
+            String mime,
+            boolean set_featured,
+            boolean add_to_gallery,
+            int gallery_position
+    ) {}
+
+    @SuppressWarnings("unchecked")
+    public Map<String,Object> mediaLinkOnly(MediaLinkOnlyPayload p) {
+        String url = base + "/media/link-only"; // base уже = .../wp-json/lavka/v1
+        return rt.postForObject(url, p, Map.class);
+    }
+
+
     public List<WooLocation> listLocations() {
         String url = base + "/locations";
         try {
