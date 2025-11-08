@@ -2,7 +2,6 @@ package org.example.proect.lavka.controller;
 
 
 import lombok.RequiredArgsConstructor;
-import org.example.proect.lavka.service.MediaSyncService;
 import org.example.proect.lavka.service.MsToWpImageSyncService;
 import org.example.proect.lavka.service.OvhS3MediaService;
 import org.example.proect.lavka.service.S3MediaIndexService;
