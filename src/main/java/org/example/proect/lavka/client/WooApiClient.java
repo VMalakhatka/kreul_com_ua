@@ -48,7 +48,7 @@ public class WooApiClient {
     ) {}
 
     public Map<String, Object> mediaLinkOnly(MediaLinkOnlyPayload p) {
-        String url = props.getBaseUrl() + "/lavka/v1/media/link-only";
+        String url = props.getBaseUrl() + "/media/link-only";
         return restTemplate.postForObject(url, p, Map.class); // restTemplate уже с auth
     }
 

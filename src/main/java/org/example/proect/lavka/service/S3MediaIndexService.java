@@ -78,8 +78,10 @@ public class S3MediaIndexService {
 
     /** Построить публичный URL (virtual-hosted). */
     public String toPublicUrl(String fullKey) {
-        // без доп. экранирования: у тебя уже такой формат
-        return "https://" + props.bucket() + ".s3.gra.io.cloud.ovh.net/" + fullKey;
+        // гарантируем один слэш между base и key
+        String base = props.publicBaseUrl();
+        if (!base.endsWith("/")) base += "/";
+        return base + fullKey.replaceFirst("^/+", "");
     }
 
     @Transactional

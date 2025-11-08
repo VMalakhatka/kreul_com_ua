@@ -5,6 +5,7 @@ public record ProductRef(
         Long   productId,
         String sku,
         String name,          // полное имя товара (то, что видит клиент)
+        String msNameArtic,
         String brand,         // опц.
         String lineOrColor,   // опц. «Серия/цвет»
         String volumeOrSize,  // опц. «50 мл», «23×33 см»

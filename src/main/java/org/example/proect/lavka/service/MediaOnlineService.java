@@ -34,7 +34,7 @@ public class MediaOnlineService {
                 mime,
                 true,   // set_featured
                 false,  // add_to_gallery
-                0
+                0,null,null
         ));
         long attId = ((Number)resp.get("attachment_id")).longValue();
 
@@ -70,7 +70,7 @@ public class MediaOnlineService {
                             (mime != null ? mime : "image/jpeg"),
                             false,   // set_featured
                             true,    // add_to_gallery
-                            pos++
+                            pos++,null,null
                     )
             );
 

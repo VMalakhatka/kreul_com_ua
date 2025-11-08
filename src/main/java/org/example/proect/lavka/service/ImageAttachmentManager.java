@@ -26,7 +26,12 @@ public class ImageAttachmentManager {
     @Transactional
     public void ensurePrimaryAttached(ProductRef p) {
         // 1) собрать объект картинки
-        ImageAttachment img = ImageAttachment.fromProduct(p, s3, factory.getNaming());
+        ImageAttachment img = ImageAttachment.fromProduct(
+                p,
+                s3dao,
+                s3,
+                factory.getNaming()
+        );
 
         // 2) ALT/TITLE + связь в наших таблицах
         // достаём имя файла из s3Key

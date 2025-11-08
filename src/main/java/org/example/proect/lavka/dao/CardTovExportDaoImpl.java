@@ -291,8 +291,9 @@ public List<CardTovExportDto> findBetweenExcluding(
 
     public record MsCardImages(
             String sku,
-            String mainFileName,   // из ALL_ARTC.S50
-            String plusArtic       // связь на галерею
+            String mainFileName,
+            String plusArtic,
+            String nameArtic
     ) {}
 
     public record MsGalleryImage(
@@ -304,8 +305,9 @@ public List<CardTovExportDto> findBetweenExcluding(
     @Override
     public @Nullable MsCardImages findCardImagesBySku(String sku) {
         String sql = """
-        SELECT a.COD_ARTIC AS sku,
-               b.S50       AS mainFileName,
+        SELECT a.COD_ARTIC  AS sku,
+               a.NAME_ARTIC AS nameArtic,
+               b.S50        AS mainFileName,
                b.PLUS_ARTIC AS plusArtic
         FROM dbo.SCL_ARTC a
         LEFT JOIN dbo.ALL_ARTC b ON b.COD_ARTIC = a.COD_ARTIC
@@ -317,7 +319,8 @@ public List<CardTovExportDto> findBetweenExcluding(
             return new MsCardImages(
                     rs.getString("sku"),
                     rs.getString("mainFileName"),
-                    rs.getString("plusArtic")
+                    rs.getString("plusArtic"),
+                    rs.getString("nameArtic")   // ← добавили
             );
         });
     }
@@ -341,6 +344,7 @@ public List<CardTovExportDto> findBetweenExcluding(
     /** Удобный обёртка-метод: сразу вернуть и main, и gallery для SKU. */
     public record MsImagesBundle(
             String sku,
+            String nameArtic,
             @Nullable String mainFileName,
             List<MsGalleryImage> gallery
     ) {}
@@ -348,8 +352,8 @@ public List<CardTovExportDto> findBetweenExcluding(
     @Override
     public MsImagesBundle findImagesBundleBySku(String sku) {
         MsCardImages base = findCardImagesBySku(sku);
-        if (base == null) return new MsImagesBundle(sku, null, List.of());
+        if (base == null) return new MsImagesBundle(sku, null,null, List.of());
         List<MsGalleryImage> gal = findGalleryByPlusArtic(base.plusArtic());
-        return new MsImagesBundle(sku, base.mainFileName(), gal);
+        return new MsImagesBundle(sku, base.nameArtic(), base.mainFileName(), gal);
     }
 }

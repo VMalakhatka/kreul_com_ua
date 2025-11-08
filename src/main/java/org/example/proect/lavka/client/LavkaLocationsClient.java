@@ -33,7 +33,9 @@ public class LavkaLocationsClient {
             String mime,
             boolean set_featured,
             boolean add_to_gallery,
-            int gallery_position
+            int gallery_position,
+            String alt,
+            String title
     ) {}
 
     @SuppressWarnings("unchecked")
