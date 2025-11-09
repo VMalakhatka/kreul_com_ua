@@ -69,7 +69,8 @@ public class WpProductDaoImpl extends AbstractRetryingDao implements WpProductDa
         }
 
         return withRetry("wp.listSkusBetween", () ->
-                wpNamedJdbc.query(sql, p, (rs, i) -> rs.getString("sku"));
+                wpNamedJdbc.query(sql, p, (rs, i) -> rs.getString("sku"))
+        );
     }
 
 
@@ -77,37 +78,37 @@ public class WpProductDaoImpl extends AbstractRetryingDao implements WpProductDa
     @Override
     public Long findAttachmentIdByS3KeyOrGuid(String s3Key, String guid) {
         // сначала по _wp_attached_file (надежнее)
-        Long id = jdbc.query(
+        Long id = withRetry("wp.findAttachmentIdByS3KeyOrGuid", () ->jdbc.query(
                 "SELECT post_id FROM wp_postmeta WHERE meta_key='_wp_attached_file' AND meta_value=? LIMIT 1",
                 ps -> ps.setString(1, s3Key),
-                rs -> rs.next() ? rs.getLong(1) : null
+                rs -> rs.next() ? rs.getLong(1) : null)
         );
         if (id != null) return id;
         // fallback по guid
-        return jdbc.query(
+        return withRetry("wp.findAttachmentIdByS3KeyOrGuid", () -> jdbc.query(
                 "SELECT ID FROM wp_posts WHERE post_type='attachment' AND guid=? LIMIT 1",
                 ps -> ps.setString(1, guid),
-                rs -> rs.next() ? rs.getLong(1) : null
+                rs -> rs.next() ? rs.getLong(1) : null)
         );
     }
 
     /** Текущий featured attachment для товара. */
     @Override
     public Long findFeaturedId(long productId) {
-        return jdbc.query(
+        return withRetry("wp.findFeaturedId", () -> jdbc.query(
                 "SELECT meta_value FROM wp_postmeta WHERE post_id=? AND meta_key='_thumbnail_id' LIMIT 1",
                 ps -> ps.setLong(1, productId),
-                rs -> rs.next() ? rs.getLong(1) : null
+                rs -> rs.next() ? rs.getLong(1) : null)
         );
     }
 
     /** Массив ID в галерее (в порядке). */
     @Override
     public List<Long> findGalleryIds(long productId) {
-        String csv = jdbc.query(
+        String csv = withRetry("wp.findGalleryIds", () ->jdbc.query(
                 "SELECT meta_value FROM wp_postmeta WHERE post_id=? AND meta_key='_product_image_gallery' LIMIT 1",
                 ps -> ps.setLong(1, productId),
-                rs -> rs.next() ? rs.getString(1) : null
+                rs -> rs.next() ? rs.getString(1) : null)
         );
         if (csv == null || csv.isBlank()) return List.of();
         String[] parts = csv.split(",");
@@ -147,11 +148,12 @@ public class WpProductDaoImpl extends AbstractRetryingDao implements WpProductDa
             sql = baseSql.replace("/**AFTER_COND**/", "");
         }
 
-        return wpNamedJdbc.query(sql, params, (rs, rowNum) -> new SeenItem(
+        return withRetry("wp.collectSeenWindow", () -> wpNamedJdbc.query(sql, params, (rs, rowNum) -> new SeenItem(
                 rs.getString("sku"),
                 rs.getString("hash"),
                 rs.getLong("post_id")
-        ));
+                ))
+        );
     }
 
     @Override
@@ -169,7 +171,8 @@ public class WpProductDaoImpl extends AbstractRetryingDao implements WpProductDa
 
         Map<String, Object> params = Map.of("skus", skus);
 
-        return wpNamedJdbc.query(sql, params, rs -> {
+        return withRetry("wp.findIdsBySkus", () ->
+                        wpNamedJdbc.query(sql, params, rs -> {
             Map<String, Long> map = new LinkedHashMap<>();
             while (rs.next()) {
                 String sku = rs.getString("sku");
@@ -178,8 +181,8 @@ public class WpProductDaoImpl extends AbstractRetryingDao implements WpProductDa
                     map.put(sku, id);
                 }
             }
-            return map;
-        });
+            return map;})
+        );
     }
 
 

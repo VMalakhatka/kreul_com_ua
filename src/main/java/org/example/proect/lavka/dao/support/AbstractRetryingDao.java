@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.retry.RetryCallback;
 import org.springframework.retry.RetryContext;
 import org.springframework.retry.RetryListener;
+import org.springframework.retry.RetryPolicy;
 import org.springframework.retry.backoff.ExponentialRandomBackOffPolicy;
 import org.springframework.retry.policy.ExceptionClassifierRetryPolicy;
 import org.springframework.retry.policy.SimpleRetryPolicy;
@@ -80,10 +81,28 @@ public abstract class AbstractRetryingDao {
         addIfPresent(retryables, "com.mysql.cj.exceptions.CJCommunicationsException");
         addIfPresent(retryables, "org.mariadb.jdbc.client.socket.impl.AbortedConnectionException");
 
-        SimpleRetryPolicy simple = new SimpleRetryPolicy(6, retryables, true); // traverse causes = true
-        ExceptionClassifierRetryPolicy classifier = new ExceptionClassifierRetryPolicy();
-        classifier.setPolicyMap(Map.of(Throwable.class, simple));
-        rt.setRetryPolicy(classifier);
+// -------- кастомная динамическая политика --------
+        RetryPolicy dynamicPolicy = new org.springframework.retry.policy.NeverRetryPolicy() {
+            @Override public boolean canRetry(RetryContext ctx) {
+                Throwable last = ctx.getLastThrowable();
+                if (last == null) return true; // первая попытка
+
+                // 1) по классам (стандартные транзиентные)
+                if (last instanceof org.springframework.dao.DataAccessResourceFailureException
+                        || last instanceof org.springframework.dao.CannotAcquireLockException
+                        || last instanceof org.springframework.dao.QueryTimeoutException
+                        || last instanceof org.springframework.dao.TransientDataAccessResourceException
+                        || last instanceof org.springframework.dao.ConcurrencyFailureException
+                        || last instanceof java.net.SocketException
+                        || last instanceof java.net.SocketTimeoutException)
+                    return true;
+
+                // 2) по SQLState
+                return isRetryableSql(last);
+            }
+        };
+
+        rt.setRetryPolicy(dynamicPolicy);
 
         // 2) Экспоненциальный бэк-офф с джиттером
         ExponentialRandomBackOffPolicy backoff = new ExponentialRandomBackOffPolicy();
@@ -114,5 +133,21 @@ public abstract class AbstractRetryingDao {
                 map.put((Class<? extends Throwable>) c, true);
             }
         } catch (ClassNotFoundException ignore) {}
+    }
+
+    private static boolean isRetryableSql(Throwable t) {
+        Throwable cur = t;
+        while (cur != null) {
+            if (cur instanceof java.sql.SQLException ex) {
+                String s = ex.getSQLState();
+                if (s != null) {
+                    if (s.startsWith("08")) return true;  // connection errors
+                    if (s.equals("40001")) return true;   // deadlock
+                    if (s.equals("HYT00") || s.equals("HYT01")) return true; // timeout
+                }
+            }
+            cur = cur.getCause();
+        }
+        return false;
     }
 }
