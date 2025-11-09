@@ -52,6 +52,7 @@ docker run -d --name $CONTAINER_NAME \
   --ulimit nofile=65535:65535 \
   --security-opt seccomp=unconfined \
   -e JAVA_TOOL_OPTIONS=\"$JAVA_OPTS\" \
+  -v /mnt/backup/backups_kreul/synck_logs:/mnt/backup/backups_kreul/synck_logs \
   $IMAGE_NAME
 echo '-> wait health (internal)'
 for i in {1..20}; do

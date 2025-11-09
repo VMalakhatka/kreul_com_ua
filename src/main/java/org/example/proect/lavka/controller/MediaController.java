@@ -22,6 +22,36 @@ public class MediaController {
     private final MsToWpImageSyncService mediaSync;
     public enum Mode { featured, gallery, both }
 
+
+    public record RangeSyncRequest(
+            String fromSku,
+            String toSku,
+            Integer chunkSize,
+            Mode mode,
+            Integer galleryStartPos,
+            Integer limitPerSku,
+            Boolean dry
+    ) {}
+
+    @PostMapping("/sync/range")
+    public ResponseEntity<Map<String, Object>> syncRange(@RequestBody RangeSyncRequest req) {
+        if (req.fromSku() == null || req.fromSku().isBlank()
+                || req.toSku() == null || req.toSku().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("ok", false, "error", "fromSku & toSku required"));
+        }
+        int chunk = (req.chunkSize() == null || req.chunkSize() < 1) ? 200 : Math.min(req.chunkSize(), 2000);
+        String mode = (req.mode() == null ? Mode.both : req.mode()).name();
+        int galPos = req.galleryStartPos() == null ? 0 : Math.max(0, req.galleryStartPos());
+        int limit = req.limitPerSku() == null ? 10 : Math.max(1, req.limitPerSku());
+        boolean dry = Boolean.TRUE.equals(req.dry());
+
+        Map<String, Object> res = mediaSync.syncRangeBySku(
+                req.fromSku().trim(), req.toSku().trim(), chunk, mode, galPos, limit, dry
+        );
+        return ResponseEntity.ok(res);
+    }
+
+
     public record SyncRequest(
             List<String> skus,
             Mode mode,                   // featured | gallery | both

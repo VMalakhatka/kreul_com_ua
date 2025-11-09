@@ -1,9 +1,11 @@
 package org.example.proect.lavka.dao.wp;
 
+import org.example.proect.lavka.utils.RetryLabel;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+@RetryLabel("WpAttachmentDao")
 @Repository
 public class WpAttachmentDao {
     private final JdbcTemplate jdbc;

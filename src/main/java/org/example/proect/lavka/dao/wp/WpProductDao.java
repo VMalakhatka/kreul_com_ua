@@ -24,4 +24,7 @@ public interface WpProductDao {
     public Long findFeaturedId(long productId);
 
     public List<Long> findGalleryIds(long productId);
+
+    List<String> listSkusBetween(String fromSku, String toSku, int limit, String afterExclusive);
+
 }

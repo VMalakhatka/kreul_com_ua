@@ -1,5 +1,6 @@
 package org.example.proect.lavka.dao.wp;
 
+import org.example.proect.lavka.utils.RetryLabel;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -12,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+@RetryLabel("S3MediaIndexDao")
 @Repository
 public class S3MediaIndexDao {
 

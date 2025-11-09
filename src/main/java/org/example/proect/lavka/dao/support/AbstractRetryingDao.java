@@ -4,11 +4,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.retry.RetryCallback;
 import org.springframework.retry.RetryContext;
 import org.springframework.retry.RetryListener;
-import org.springframework.retry.support.RetryTemplate;
-import org.springframework.retry.backoff.ExponentialBackOffPolicy;
+import org.springframework.retry.backoff.ExponentialRandomBackOffPolicy;
 import org.springframework.retry.policy.ExceptionClassifierRetryPolicy;
 import org.springframework.retry.policy.SimpleRetryPolicy;
+import org.springframework.retry.support.RetryTemplate;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Supplier;
 
@@ -29,19 +30,20 @@ public abstract class AbstractRetryingDao {
     protected <T> T withRetry(String opName, Supplier<T> action) {
         try {
             return retryTemplate.execute(
-                    (RetryCallback<T, RuntimeException>) context -> action.get(),
-                    context -> { // RecoveryCallback — вызывается после исчерпания попыток
-                        Throwable last = context.getLastThrowable();
+                    (RetryCallback<T, RuntimeException>) ctx -> {
+                        ctx.setAttribute(RetryContext.NAME, opName);
+                        return action.get();
+                    },
+                    ctx -> {
+                        Throwable last = ctx.getLastThrowable();
                         log.error("[sync.errors] recover after retries op={} attempts={} cause={}",
-                                opName, context.getRetryCount(),
+                                opName, ctx.getRetryCount(),
                                 last != null ? last.getMessage() : "unknown", last);
-                        // Ничего не маскируем — пробрасываем дальше, чтобы верхний слой понял, что это ошибка.
                         if (last instanceof RuntimeException re) throw re;
                         throw new RuntimeException(last);
                     }
             );
         } catch (RuntimeException ex) {
-            // Доп. страхующая запись (обычно уже залогировано в RecoveryCallback)
             log.error("[sync.errors] op={} failed beyond retries: {}", opName, ex.getMessage(), ex);
             throw ex;
         }
@@ -52,46 +54,65 @@ public abstract class AbstractRetryingDao {
         withRetry(opName, () -> { runnable.run(); return null; });
     }
 
-    /** База по умолчанию: maxAttempts=6, backoff 0.5s → 1s → 2s → 4s → 8s (cap 10s) */
+    // -------------------- internal --------------------
+
     private static RetryTemplate retryTemplateDefaults() {
         RetryTemplate rt = new RetryTemplate();
 
-        // 1) Политика исключений: ретраим только временные/сетевые JDBC-исключения
-        Map<Class<? extends Throwable>, Boolean> retryables = Map.of(
-                org.springframework.dao.DataAccessResourceFailureException.class, true,
-                org.springframework.dao.CannotAcquireLockException.class, true,
-                org.springframework.dao.QueryTimeoutException.class, true,
-                org.springframework.dao.TransientDataAccessResourceException.class, true,
-                org.springframework.dao.ConcurrencyFailureException.class, true,
-                java.net.SocketException.class, true,
-                java.net.SocketTimeoutException.class, true
-        );
-        SimpleRetryPolicy simple = new SimpleRetryPolicy(6, retryables, true); // maxAttempts=6
+        // 1) Кого ретраим (только временные/сетевые/коннектные)
+        Map<Class<? extends Throwable>, Boolean> retryables = new HashMap<>();
+        // Spring DAO
+        retryables.put(org.springframework.dao.DataAccessResourceFailureException.class, true);
+        retryables.put(org.springframework.dao.CannotAcquireLockException.class, true);
+        retryables.put(org.springframework.dao.QueryTimeoutException.class, true);
+        retryables.put(org.springframework.dao.TransientDataAccessResourceException.class, true);
+        retryables.put(org.springframework.dao.ConcurrencyFailureException.class, true);
+        // JDBC generic
+        retryables.put(java.sql.SQLTransientException.class, true);
+        retryables.put(java.sql.SQLTransientConnectionException.class, true);
+        retryables.put(java.sql.SQLRecoverableException.class, true);
+        retryables.put(java.sql.SQLNonTransientConnectionException.class, true);
+        // Сеть
+        retryables.put(java.net.SocketException.class, true);
+        retryables.put(java.net.SocketTimeoutException.class, true);
+        // Опциональные (если есть на classpath)
+        addIfPresent(retryables, "com.mysql.cj.jdbc.exceptions.CommunicationsException");
+        addIfPresent(retryables, "com.mysql.cj.exceptions.CJCommunicationsException");
+        addIfPresent(retryables, "org.mariadb.jdbc.client.socket.impl.AbortedConnectionException");
+
+        SimpleRetryPolicy simple = new SimpleRetryPolicy(6, retryables, true); // traverse causes = true
         ExceptionClassifierRetryPolicy classifier = new ExceptionClassifierRetryPolicy();
         classifier.setPolicyMap(Map.of(Throwable.class, simple));
         rt.setRetryPolicy(classifier);
 
-        // 2) Экспоненциальная задержка
-        ExponentialBackOffPolicy backoff = new ExponentialBackOffPolicy();
+        // 2) Экспоненциальный бэк-офф с джиттером
+        ExponentialRandomBackOffPolicy backoff = new ExponentialRandomBackOffPolicy();
         backoff.setInitialInterval(500);   // 0.5s
-        backoff.setMultiplier(2.0);        // x2
+        backoff.setMultiplier(2.0);        // 0.5 → 1 → 2 → 4 → 8 …
         backoff.setMaxInterval(10_000);    // cap 10s
         rt.setBackOffPolicy(backoff);
 
-        // 3) Листенер логирования попыток
+        // 3) Листенер попыток
         rt.registerListener(new RetryListener() {
-            @Override public <T, E extends Throwable> boolean open(RetryContext ctx,
-                                                                   RetryCallback<T, E> cb) { return true; }
-            @Override public <T, E extends Throwable> void close(RetryContext ctx,
-                                                                 RetryCallback<T, E> cb, Throwable t) {}
-            @Override public <T, E extends Throwable> void onError(RetryContext ctx,
-                                                                   RetryCallback<T, E> cb, Throwable t) {
-                log.warn("🔁 Retry attempt #{} for {} due to {}",
-                        ctx.getRetryCount(), ctx.getAttribute(RetryContext.NAME),
-                        t != null ? t.getClass().getSimpleName() + ": " + t.getMessage() : "unknown");
+            @Override public <T, E extends Throwable> void onError(
+                    RetryContext ctx, RetryCallback<T, E> cb, Throwable t) {
+                log.warn("🔁 retry #{} for {} due to {}",
+                        ctx.getRetryCount(),
+                        ctx.getAttribute(RetryContext.NAME),
+                        t != null ? (t.getClass().getSimpleName() + ": " + t.getMessage()) : "unknown");
             }
         });
 
         return rt;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void addIfPresent(Map<Class<? extends Throwable>, Boolean> map, String className) {
+        try {
+            Class<?> c = Class.forName(className);
+            if (Throwable.class.isAssignableFrom(c)) {
+                map.put((Class<? extends Throwable>) c, true);
+            }
+        } catch (ClassNotFoundException ignore) {}
     }
 }

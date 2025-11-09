@@ -1,6 +1,7 @@
 package org.example.proect.lavka.dao.wp;
 
 import lombok.RequiredArgsConstructor;
+import org.example.proect.lavka.dao.support.AbstractRetryingDao;
 import org.example.proect.lavka.dto.SeenItem;
 import org.example.proect.lavka.service.CardTovExportService;
 import org.example.proect.lavka.service.CardTovExportService.ItemHash;
@@ -20,27 +21,57 @@ import java.util.*;
 
 @RetryLabel("WpProductDaoImpl")
 @Repository
-@Retryable(
-        include = {
-                org.springframework.dao.DeadlockLoserDataAccessException.class,
-                org.springframework.dao.CannotAcquireLockException.class,
-                org.springframework.dao.QueryTimeoutException.class,
-                org.springframework.dao.TransientDataAccessResourceException.class
-        },
-        maxAttempts = 4,
-        backoff = @Backoff(delay = 200, multiplier = 2.0, maxDelay = 5000, random = true)
-)
-public class WpProductDaoImpl implements WpProductDao {
+public class WpProductDaoImpl extends AbstractRetryingDao implements WpProductDao{
 
     // оба коннекта у тебя уже сконфигурированы где-то как wpJdbcTemplate/wpNamedJdbc
     private final NamedParameterJdbcTemplate wpNamedJdbc;
     private final JdbcTemplate jdbc;
+
+    private final String POSTS = "wp_posts";
+    private final String PMETA = "wp_postmeta";
 
     public WpProductDaoImpl(@Qualifier("wpJdbcTemplate") JdbcTemplate jdbc
             , @Qualifier("wpNamedJdbc") NamedParameterJdbcTemplate wpNamedJdbc) {
         this.jdbc = jdbc;
         this.wpNamedJdbc = wpNamedJdbc;
     }
+
+
+    @Override
+    public List<String> listSkusBetween(String fromSku, String toSku, int limit, @Nullable String afterExclusive) {
+
+        String afterCond = (afterExclusive != null && !afterExclusive.isBlank())
+                ? "AND pm.meta_value > :afterSku"
+                : "";
+
+        // text block + placeholders
+        String sql = """
+            SELECT pm.meta_value AS sku
+            FROM %s pm
+            INNER JOIN %s p
+                ON p.ID = pm.post_id
+            WHERE pm.meta_key = '_sku'
+              AND p.post_type = 'product'
+              AND pm.meta_value >= :fromSku
+              AND pm.meta_value <= :toSku
+              %s
+            ORDER BY pm.meta_value ASC
+            LIMIT :lim
+            """.formatted(PMETA, POSTS, afterCond);
+
+        MapSqlParameterSource p = new MapSqlParameterSource()
+                .addValue("fromSku", fromSku)
+                .addValue("toSku", toSku)
+                .addValue("lim", limit);
+
+        if (!afterCond.isBlank()) {
+            p.addValue("afterSku", afterExclusive.trim());
+        }
+
+        return withRetry("wp.listSkusBetween", () ->
+                wpNamedJdbc.query(sql, p, (rs, i) -> rs.getString("sku"));
+    }
+
 
     /** ID attachment по s3_key (wp_postmeta._wp_attached_file) или по guid (URL). */
     @Override
