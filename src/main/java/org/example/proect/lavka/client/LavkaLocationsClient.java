@@ -1,5 +1,6 @@
 package org.example.proect.lavka.client;
 
+import org.example.proect.lavka.client.support.RetryingRestExecutor;
 import org.example.proect.lavka.dto.stock.LocMap;
 import org.example.proect.lavka.dto.stock.LocationsResponse;
 import org.example.proect.lavka.dto.stock.WooLocation;
@@ -18,11 +19,14 @@ public class LavkaLocationsClient {
 
     private final RestTemplate rt;
     private final String base;
+    private final RetryingRestExecutor rex;
 
     public LavkaLocationsClient(@Qualifier("lavkaRestTemplateBasic")RestTemplate lavkaRestTemplate,
-                                @Value("${lavka.apiBase}") String base) {
+                                @Value("${lavka.apiBase}") String base,
+                                RetryingRestExecutor rex) {
         this.rt = lavkaRestTemplate;
         this.base = base.endsWith("/") ? base.substring(0, base.length()-1) : base;
+        this.rex=rex;
     }
 
 
@@ -41,14 +45,18 @@ public class LavkaLocationsClient {
     @SuppressWarnings("unchecked")
     public Map<String,Object> mediaLinkOnly(MediaLinkOnlyPayload p) {
         String url = base + "/media/link-only"; // base уже = .../wp-json/lavka/v1
-        return rt.postForObject(url, p, Map.class);
+        return rex.execUnsafe("woo.findCategoryByNameAndParent", () ->
+                rt.postForObject(url, p, Map.class)
+        );
     }
 
 
     public List<WooLocation> listLocations() {
         String url = base + "/locations";
         try {
-            var resp = rt.getForEntity(url, LocationsResponse.class);
+            var resp = rex.execUnsafe("woo.findCategoryByNameAndParent", () ->
+                    rt.getForEntity(url, LocationsResponse.class)
+            );
             var body = resp.getBody();
             return (body == null || body.items() == null) ? List.of() : body.items();
         } catch (org.springframework.web.client.RestClientResponseException e) {
@@ -62,7 +70,9 @@ public class LavkaLocationsClient {
     public LocMap getMap() {
         String url = base + "/locations/map";
         try {
-            var resp = rt.getForEntity(url, LocMap.class);
+            var resp = rex.execUnsafe("woo.findCategoryByNameAndParent", () ->
+                    rt.getForEntity(url, LocMap.class)
+            );
             return resp.getBody() != null ? resp.getBody() : new LocMap(List.of());
         } catch (org.springframework.web.client.RestClientResponseException e) {
             throw new IllegalStateException("Lavka /locations/map failed: " + e.getRawStatusCode() + " " + e.getResponseBodyAsString(), e);
@@ -73,7 +83,11 @@ public class LavkaLocationsClient {
 
     public void saveMap(LocMap map) {
         var url = base + "/locations/map";
-        rt.put(url, map); // 2xx == OK
+        rex.execUnsafe("woo.findCategoryByNameAndParent", () ->{
+                rt.put(url, map);// 2xx == OK
+                return null;
+            }
+        );
     }
 
     public void pushCategoryDescriptionsBatch(Map<Long,String> catMap) {
@@ -104,7 +118,9 @@ public class LavkaLocationsClient {
 
         try {
             // lavkaRestTemplateBasic уже должен ставить Basic Auth заголовок
-            rt.postForEntity(url, payload, Void.class);
+            rex.execUnsafe("woo.findCategoryByNameAndParent", () ->
+                    rt.postForEntity(url, payload, Void.class)
+            );
         } catch (org.springframework.web.client.RestClientResponseException e) {
             // сюда попадёт 401, 403, 500 с телом
             throw new IllegalStateException(

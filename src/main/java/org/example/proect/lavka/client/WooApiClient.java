@@ -46,12 +46,6 @@ public class WooApiClient {
             boolean add_to_gallery,
             int gallery_position
     ) {}
-
-    public Map<String, Object> mediaLinkOnly(MediaLinkOnlyPayload p) {
-        String url = props.getBaseUrl() + "/media/link-only";
-        return restTemplate.postForObject(url, p, Map.class); // restTemplate уже с auth
-    }
-
     /**
      * Точный поиск по ИМЕНИ + РОДИТЕЛЮ (parent id).
      * Фильтруем на сервере по parent, а на клиенте — по точному совпадению имени.
@@ -69,8 +63,9 @@ public class WooApiClient {
                     .queryParam("per_page", perPage)
                     .queryParam("page", page);
 
-            ResponseEntity<WooCategory[]> resp =
-                    restTemplate.getForEntity(b.toUriString(), WooCategory[].class);
+            ResponseEntity<WooCategory[]> resp =rex.execUnsafe("woo.findCategoryByNameAndParent", () ->
+                    restTemplate.getForEntity(b.toUriString(), WooCategory[].class)
+            );
 
             WooCategory[] arr = resp.getBody();
             if (arr == null || arr.length == 0) return null;
@@ -109,8 +104,9 @@ public class WooApiClient {
                 .queryParam("parent", parent)
                 .queryParam("per_page", props.getPerPage());
 
-        ResponseEntity<WooCategory[]> resp =
-                restTemplate.getForEntity(b.toUriString(), WooCategory[].class);
+        ResponseEntity<WooCategory[]> resp =rex.execUnsafe("woo.findCategoryBySlugAndParent", () ->
+                restTemplate.getForEntity(b.toUriString(), WooCategory[].class)
+        );
 
         WooCategory[] arr = resp.getBody();
         if (arr == null || arr.length == 0) return null;
@@ -131,7 +127,9 @@ public class WooApiClient {
         if (id == null) return null;
         String url = props.getBaseUrl() + "/products/categories/" + id;
         try {
-            return restTemplate.getForObject(url, WooCategory.class);
+            return rex.execUnsafe("woo.getCategoryById", () ->
+                    restTemplate.getForObject(url, WooCategory.class)
+            );
         } catch (Exception ignore) {
             return null;
         }
@@ -146,7 +144,9 @@ public class WooApiClient {
         payload.setName(name);
         payload.setSlug(slug);
         payload.setParent(parentId == null ? 0L : parentId);
-        return restTemplate.postForObject(url, payload, WooCategory.class);
+        return rex.execUnsafe("woo.createCategory", () ->
+                restTemplate.postForObject(url, payload, WooCategory.class)
+        );
     }
 
     public WooCategory findCategoryBySlug(String slug) {
@@ -155,8 +155,9 @@ public class WooApiClient {
                 .queryParam("slug", slug)
                 .queryParam("per_page", 100)
                 .queryParam("page", 1);
-        ResponseEntity<WooCategory[]> resp =
-                restTemplate.getForEntity(b.toUriString(), WooCategory[].class);
+        ResponseEntity<WooCategory[]> resp =rex.execUnsafe("woo.findCategoryBySlug", () ->
+                restTemplate.getForEntity(b.toUriString(), WooCategory[].class)
+        );
         WooCategory[] arr = resp.getBody();
         if (arr == null || arr.length == 0) return null;
         // slug в пределах taxonomy уникален — вернётся 1 шт (на всякий — берём первый)
@@ -251,7 +252,8 @@ public class WooApiClient {
         String url = props.getBaseUrl() + "/products/batch";
 
         @SuppressWarnings("unchecked")
-        ResponseEntity<Map> resp = restTemplate.postForEntity(url, payload, Map.class);
+        ResponseEntity<Map> resp = rex.execUnsafe("woo.products.batch", () ->
+                restTemplate.postForEntity(url, payload, Map.class));
 
         Map body = resp.getBody();
         if (body == null) {

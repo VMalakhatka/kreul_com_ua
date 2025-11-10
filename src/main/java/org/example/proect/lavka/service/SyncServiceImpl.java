@@ -2,6 +2,7 @@ package org.example.proect.lavka.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.example.proect.lavka.property.WooProperties;
 import org.slf4j.MDC;
 import org.slf4j.Marker;
 import org.slf4j.MarkerFactory;
@@ -30,10 +31,9 @@ public class SyncServiceImpl implements SyncService {
     private final CardTovExportService cardTovExportService;
     private final WooApiClient wooApiClient;
     private final LavkaLocationsClient lavkaLocationsClient;
-    private final S3MediaIndexService s3Media;
+    private final WooProperties props;
 
     private static final Marker OPS = MarkerFactory.getMarker("OPS");
-    private final boolean touchImagesOnUpdate = true;
 
     @Override
     public SyncRunResponse runOneBatch(
@@ -157,7 +157,7 @@ public class SyncServiceImpl implements SyncService {
                         Map<String, Object> batchPayload = buildWooBatchPayload(
                                 toUpdateFull, toCreateFull, toDelete, existingIdsBySku
                         );
-                        List<Map<String, Object>> subPayloads = splitBatchPayload(batchPayload, 50); // 50–100 ок
+                        List<Map<String, Object>> subPayloads = splitBatchPayload(batchPayload, props.getMaxBatchSize());
                         if (firstIterationForThisWindow) {
                             totalDrafted += batchDel;  // намерение заdraftить
                             totalUpdated += batchUpd;

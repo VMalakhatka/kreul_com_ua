@@ -15,4 +15,5 @@ public class WooProperties {
     private String lang;
     private int perPage = 100;
     private int timeoutMs = 15000;
+    private int maxBatchSize =25;
 }
