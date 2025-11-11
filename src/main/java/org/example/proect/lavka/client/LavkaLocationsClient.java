@@ -83,10 +83,8 @@ public class LavkaLocationsClient {
 
     public void saveMap(LocMap map) {
         var url = base + "/locations/map";
-        rex.execUnsafe("woo.findCategoryByNameAndParent", () ->{
-                rt.put(url, map);// 2xx == OK
-                return null;
-            }
+        rex.execUnsafeVoid("woo.findCategoryByNameAndParent", () ->
+                rt.put(url, map) // 2xx == OK
         );
     }
 

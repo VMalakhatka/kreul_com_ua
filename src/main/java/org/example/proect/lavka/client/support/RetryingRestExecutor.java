@@ -31,6 +31,15 @@ public class RetryingRestExecutor {
         return unsafeRt.execute(ctx -> call.get(), recover(op));
     }
 
+    // Void-версии
+    public void execSafeVoid(String op, Runnable r){
+        safeRt.execute(ctx->{r.run(); return null;},recover(op));
+    }
+
+    public void execUnsafeVoid(String op, Runnable r) {
+        unsafeRt.execute(ctx -> { r.run(); return null; }, recover(op));
+    }
+
     private static RetryTemplate buildSafeTemplate() {
         RetryTemplate rt = new RetryTemplate();
         rt.setRetryPolicy(new SimpleRetryPolicy(
