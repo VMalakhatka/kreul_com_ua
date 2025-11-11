@@ -188,7 +188,7 @@ public class CardTovExportService {
                     .toList();
 
             if (!toUpdateFull.isEmpty()) {
-                List<String> sampleUp = toUpdateFull.size() > 20 ? toUpdateFull.subList(0, 20) : toUpdateFull;
+                List<CardTovExportOutDto> sampleUp = toUpdateFull.size() > 20 ? toUpdateFull.subList(0, 20) : toUpdateFull;
                 List<String> sampleUpSkus = sampleUp.stream().map(CardTovExportOutDto::sku).toList();
                 log.warn(MISMATCH, "[export.diff] toUpdate count={} sampleSkus={}", toUpdateFull.size(), sampleUpSkus);
             }
