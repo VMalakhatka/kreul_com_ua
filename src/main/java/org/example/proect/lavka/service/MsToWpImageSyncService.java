@@ -23,6 +23,7 @@ import java.util.*;
 public class MsToWpImageSyncService {
 
     private static final Marker OPS = MarkerFactory.getMarker("OPS");
+    private static final Marker MISMATCH = MarkerFactory.getMarker("MISMATCH");
 
     private final CardTovExportDaoImpl msDao;
     private final WpProductDao wp;
@@ -66,7 +67,7 @@ public class MsToWpImageSyncService {
                         allWarnings.add("sku=" + sku + " " + w);
                         totalWarn++;
                         // WARN → sync-errors.log
-                        log.warn("[sync.errors] img-sync product_not_found sku={}", sku);
+                        log.warn(MISMATCH, "[sync.mismatch] img-sync product_not_found sku={}", sku);
                         out.add(one);
                         MDC.remove("pid");
                         MDC.remove("sku");
@@ -104,7 +105,7 @@ public class MsToWpImageSyncService {
                             allWarnings.add("sku=" + sku + " " + msg);
                             totalWarn++;
                             // WARN → sync-errors.log
-                            log.warn("[sync.errors] featured_failed sku={} pid={} msg={}", sku, pid, e.getMessage(), e);
+                            log.warn(MISMATCH, "[sync.mismatch] featured_failed sku={} pid={} msg={}", sku, pid, e.getMessage());
                         }
                     }
 
@@ -129,8 +130,8 @@ public class MsToWpImageSyncService {
                                 warnings.add(w);
                                 allWarnings.add("sku=" + sku + " " + w);
                                 totalWarn++;
-                                log.warn("[sync.errors] gallery_failed sku={} pid={} file={} msg={}",
-                                        sku, pid, g.fileName(), e.getMessage(), e);
+                                log.warn(MISMATCH, "[sync.mismatch] gallery_failed sku={} pid={} file={} msg={}",
+                                        sku, pid, g.fileName(), e.getMessage());
                             }
                         }
                     }
@@ -233,7 +234,7 @@ public class MsToWpImageSyncService {
         for (int i = 0; i < lines.size(); i += chunkSize) {
             int end = Math.min(i + chunkSize, lines.size());
             String part = String.join(System.lineSeparator(), lines.subList(i, end));
-            log.warn("[sync.errors] img-sync warnings {}/{}:\n{}", end, lines.size(), part);
+            log.warn(MISMATCH, "[sync.mismatch] img-sync warnings {}/{}:\n{}", end, lines.size(), part);
         }
     }
 }

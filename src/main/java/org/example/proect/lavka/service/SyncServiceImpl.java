@@ -34,6 +34,7 @@ public class SyncServiceImpl implements SyncService {
     private final WooProperties props;
 
     private static final Marker OPS = MarkerFactory.getMarker("OPS");
+    private static final Marker MISMATCH = MarkerFactory.getMarker("MISMATCH");
 
     @Override
     public SyncRunResponse runOneBatch(
@@ -559,11 +560,11 @@ public class SyncServiceImpl implements SyncService {
             String skus = extractSkusFromBatch(sub);
             // если уже слишком мелко — логируем и сдаёмся
             int total = countItems(sub);
-            log.warn("[sync.errors] woo_batch_failed size={} skus={} msg={}", total, skus, e.getMessage());
+            log.warn(MISMATCH, "[sync.mismatch] woo_batch_failed size={} skus={} msg={}", total, skus);
             if (total <= minSize) {
                 allErrors.add("woo_batch_failed(final "+total+"): " + e.getMessage()
                         + " skus=[" + skus + "]");
-                log.error("[sync.errors] final-fail size={} skus={} err", total, skus, e);
+                log.warn(MISMATCH, "[sync.mismatch] final-fail size={} skus={} err", total, skus);
                 return new WooApiClient.WooBatchResult(0,0);
             }
             // делим пополам
