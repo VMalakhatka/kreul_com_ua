@@ -18,7 +18,7 @@ Content-Type: application/json
 ```json
 {
   "externalRequestId": "7ec24df3-b03d-4a3d-a104-d459658451b7",
-  "documentNumber": "WEB-2026-00001",
+  "documentNumber": "123456831",
   "documentDate": "2026-07-21T15:30:00",
   "warehouseId": 1,
   "operationType": "СЧЕТ",
@@ -33,6 +33,8 @@ Content-Type: application/json
   ]
 }
 ```
+
+Важно: в текущей базе ФОЛИО `SCL_NAKL.N_PLAT_POR` имеет тип `float NOT NULL`, поэтому `documentNumber` сейчас должен быть числовым. Номер вида `WEB-2026-00001` нельзя писать в это поле напрямую; для внешнего текстового номера нужно отдельное подтверждённое поле или интеграционная таблица.
 
 Текущий ответ реализации:
 
@@ -67,6 +69,75 @@ HTTP/1.1 201 Created
 ```
 
 Примечание: финальное ТЗ хочет имена `success`, `id`, `lineId`, `status`, `totalQuantity`, `warnings` и stock-блок. Это ещё не приведено к финальному контракту, чтобы не ломать уже проверенный GET без отдельного решения.
+
+## 1.1. Реквизиты шапки, которые нужно добавить в расширенный JS-контракт
+
+По Excel-снимку `/Volumes/BackUp/Nakl_field.xls` счёт, созданный минимальным API (`753538`), записался в SQL, но не появился в реестре ФОЛИО. Видимый счёт (`753529`) и новый ручной счёт (`753546`) имеют намного более полную шапку `SCL_NAKL`.
+
+Следующий вариант request нужно расширять не “всеми колонками подряд”, а подтверждёнными бизнес-реквизитами:
+
+```json
+{
+  "externalRequestId": "7ec24df3-b03d-4a3d-a104-d459658451b7",
+  "documentNumber": "123456831",
+  "documentDate": "2026-07-22T00:00:00",
+  "controlDate": "2026-07-27",
+  "warehouseId": 7,
+  "operationType": "СЧЕТ",
+  "folioOperationKind": "*ПРЕДОПЛАТ",
+  "payerName": "Баевская Людмила Александровна",
+  "receiverName": "CLASSIC",
+  "payerShortName": "БАЕВСКАЯ",
+  "folioUser": "coboss",
+  "sourceInfo": "КиОПТ сборка",
+  "additionalInfo": "Инф Тест",
+  "priceContractType": "20%",
+  "notCash": true,
+  "accountingEnabled": true,
+  "returnFlag": false,
+  "comment": "тест",
+  "items": [
+    {
+      "sku": "ABC-001",
+      "quantity": 2,
+      "price": 10.0
+    }
+  ]
+}
+```
+
+Предварительное соответствие полей:
+
+| JS-поле | SCL_NAKL | Зачем |
+|---|---|---|
+| `controlDate` | `CONTRLDATE` | контрольный срок счёта |
+| `folioOperationKind` | `VID_DOC` | тип операции из справочника ФОЛИО; не фиксировать константой |
+| `payerName` | `ORGANIZNKL` | плательщик/организация в реестре и форме |
+| `receiverName` | `MY_ORGANIZ` | получатель/моя организация |
+| `payerShortName` | `BRIEFORG` | краткое имя/источник |
+| `folioUser` | `FAMILY`, возможно `WHO_CORR` | пользователь/автор ФОЛИО |
+| `sourceInfo` | `L_CP1_PLAT` | источник информации |
+| `additionalInfo` | `L_CP2_PLAT` | дополнительная информация |
+| `priceContractType` | `CONTR_POR` | вид контракта цены из справочника |
+| `notCash` | `NOT_NAL` | признак безнала/наличности |
+| `accountingEnabled` | `STND_UCHET` | влияет на учётность/резервирование |
+| `returnFlag` | `VOZVRAT_PR` | признак возврата, обычно `0` |
+
+Поля, которые лучше держать в конфигурации backend, а не просить у JS каждый раз:
+
+- `TYPE_DOC = 'С'` — кириллическая `С`;
+- `NALOG_POR = 'НДС'`;
+- `PRCNT_POR = 20`;
+- `VALUTROUBL = 1`;
+- `COD_VALUT = 4`, если валюта всегда та же;
+- `PRCN2_POR = 0`;
+- `OPLATA_SCH = 0`;
+- `CHAST_OPLT = 0`;
+- `OTMETKA = 0`;
+- `IS_NALPROD = 138`;
+- `NDS_TORGN = 0`;
+- `CREATEDATE = now()`;
+- `ID_SCLAD = warehouseId`.
 
 ## 2. Получить счёт
 
@@ -220,7 +291,9 @@ POST /admin/folio/accounts/{unicumNum}/cancel
 
 - `externalRequestId` обязателен и должен быть стабильным при повторе запроса.
 - Денежные значения отправлять числом или строкой, без `double`-логики на стороне Java.
+- `documentNumber` сейчас должен быть числовым, потому что в ФОЛИО это `SCL_NAKL.N_PLAT_POR float`.
 - Для создания использовать только `operationType: "СЧЕТ"`.
 - В ФОЛИО `SCL_NAKL.TYPE_DOC` для счёта пишется как подтверждённая константа `С` — кириллическая буква Es `U+0421`, не латинская `C`; JS её не передаёт.
-- В строках ФОЛИО `SCL_MOVE.TYPDOCM_PR` тоже пишется как кириллическая `С`, а `SCL_MOVE.VID_DOC` — как подтверждённая константа `*РАЗОВАЯ`; JS их не передаёт.
+- В строках ФОЛИО `SCL_MOVE.TYPDOCM_PR` тоже пишется как кириллическая `С`.
+- `VID_DOC` — это не технический тип документа, а вид операции из справочника ФОЛИО. Его нельзя безопасно фиксировать как `*РАЗОВАЯ`: в проверенных счетах встречаются `*РАЗОВАЯ`, `*ПЕРЕМЕЩЕНИЕ`, `*ПРЕДОПЛАТ`.
 - После `409 INSUFFICIENT_AVAILABLE_STOCK` не повторять тот же запрос без изменения количества/остатков.
