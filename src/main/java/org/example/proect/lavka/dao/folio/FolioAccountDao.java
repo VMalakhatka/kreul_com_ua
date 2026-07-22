@@ -138,8 +138,7 @@ public class FolioAccountDao {
         );
     }
 
-    public void insertLine(long recno,
-                           long documentId,
+    public long insertLine(long documentId,
                            int lineNumber,
                            String sku,
                            int warehouseId,
@@ -150,12 +149,11 @@ public class FolioAccountDao {
         BigDecimal amount = price.multiply(quantity);
         jdbc.update("""
                 INSERT INTO dbo.SCL_MOVE
-                    (RECNO, UNICUM_NUM, NUM_PREDMT, NAME_PREDM, ID_SCLAD,
+                    (UNICUM_NUM, NUM_PREDMT, NAME_PREDM, ID_SCLAD,
                      DATE_PREDM, TYPDOCM_PR, VID_DOC, KOLTREB_PR, KOLC_PREDM,
                      CENA_PREDM, SUM_PREDM, STND_UCHET)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 """,
-                recno,
                 documentId,
                 lineNumber,
                 sku,
@@ -168,6 +166,11 @@ public class FolioAccountDao {
                 price,
                 amount
         );
+        Number recno = jdbc.queryForObject("SELECT CAST(SCOPE_IDENTITY() AS numeric(18,0))", Number.class);
+        if (recno == null) {
+            throw new IllegalStateException("Cannot read generated SCL_MOVE.RECNO");
+        }
+        return recno.longValue();
     }
 
     public int reserveIfAvailable(String sku, int warehouseId, BigDecimal quantity) {

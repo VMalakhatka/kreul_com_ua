@@ -23,7 +23,7 @@
 
 | API-поле | Таблица | Колонка | Правило | Подтверждение |
 |---|---|---|---|---|
-| `lineId` | `SCL_MOVE` | `RECNO` | allocator | PK строки, docs |
+| `lineId` | `SCL_MOVE` | `RECNO` | генерируется SQL Server IDENTITY, читается через `SCOPE_IDENTITY()` | live schema/runtime: explicit RECNO insert rejected because IDENTITY_INSERT is OFF |
 | `id` | `SCL_MOVE` | `UNICUM_NUM` | ссылка на `SCL_NAKL.UNICUM_NUM` | FK по docs |
 | line number | `SCL_MOVE` | `NUM_PREDMT` | следующий номер строки внутри документа | docs: поле строки, требует снимка |
 | `sku` | `SCL_MOVE` | `NAME_PREDM` | напрямую | FK: `SCL_ARTC.COD_ARTIC` |

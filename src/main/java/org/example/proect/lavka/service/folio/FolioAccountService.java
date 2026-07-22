@@ -74,7 +74,6 @@ public class FolioAccountService {
             String sku = item.sku().trim();
             assertStockAvailable(sku, request.warehouseId(), item.quantity(), true);
             dao.insertLine(
-                    allocator.nextMovementId(),
                     documentId,
                     lineNumber++,
                     sku,
@@ -139,7 +138,6 @@ public class FolioAccountService {
         assertStockAvailable(sku, warehouseId, request.quantity(), true);
         int lineNumber = dao.nextLineNumber(documentId);
         dao.insertLine(
-                allocator.nextMovementId(),
                 documentId,
                 lineNumber,
                 sku,
