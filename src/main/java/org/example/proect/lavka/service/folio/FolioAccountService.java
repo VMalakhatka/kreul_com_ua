@@ -79,7 +79,8 @@ public class FolioAccountService {
                     sku,
                     request.warehouseId(),
                     request.documentDate(),
-                    properties.getDocumentType(),
+                    properties.getTypeDoc(),
+                    properties.getMovementVidDoc(),
                     item.quantity(),
                     item.price()
             );
@@ -143,7 +144,8 @@ public class FolioAccountService {
                 sku,
                 warehouseId,
                 account.documentDate(),
-                properties.getDocumentType(),
+                properties.getTypeDoc(),
+                properties.getMovementVidDoc(),
                 request.quantity(),
                 request.price()
         );

@@ -29,8 +29,8 @@
 | `sku` | `SCL_MOVE` | `NAME_PREDM` | напрямую | FK: `SCL_ARTC.COD_ARTIC` |
 | `warehouseId` | `SCL_MOVE` | `ID_SCLAD` | напрямую | FK: `SCL_ARTC.ID_SCLAD` |
 | `documentDate` | `SCL_MOVE` | `DATE_PREDM` | дата документа | существующий mapper читает поле движения |
-| `operationType` | `SCL_MOVE` | `TYPDOCM_PR` | константа/тип `СЧЕТ` | требует снимка реального счёта |
-| `operationType` | `SCL_MOVE` | `VID_DOC` | константа/тип `СЧЕТ` | требует снимка реального счёта |
+| account type | `SCL_MOVE` | `TYPDOCM_PR` | константа `C`, должна совпадать с `SCL_NAKL.TYPE_DOC` | docs: `Scl_Move.Typdocm_Pr = Scl_Nakl.Type_Doc`; live schema: `varchar(1)`; live account rows have `C` |
+| movement kind | `SCL_MOVE` | `VID_DOC` | константа `*РАЗОВАЯ` для тестового счёта | live account rows for `UNICUM_NUM=753524` |
 | `quantity` | `SCL_MOVE` | `KOLTREB_PR` | напрямую | docs: требуемое количество; требует снимка |
 | `quantity` | `SCL_MOVE` | `KOLC_PREDM` | напрямую | эксперимент: резерв уменьшается на количество |
 | `price` | `SCL_MOVE` | `CENA_PREDM` | напрямую, `BigDecimal` | docs: цена строки; точность требует проверки |
@@ -59,7 +59,6 @@
 
 - обязательные `NOT NULL` поля `SCL_NAKL`, если они есть в конкретной базе и не перечислены выше;
 - обязательные `NOT NULL` поля `SCL_MOVE`, если они есть в конкретной базе и не перечислены выше;
-- точные значения `TYPDOCM_PR` и `VID_DOC` для документа типа `СЧЕТ`;
 - поля партии, срока, налогов и служебных идентификаторов строки;
 - связь с партнёром/контрагентом `partnerId`;
 - необходимость и обязательный набор полей `SCL_ADDN`;

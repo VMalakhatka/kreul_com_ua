@@ -506,6 +506,9 @@ docs/
   - Документ определяется полем `UNICUM_NUM`.
   - Связь с `SCL_ARTC` осуществляется по `(NAME_PREDM, ID_SCLAD)`.
   - Для тестового счёта, прочитанного через Swagger GET, строки содержали `RECNO`, `NUM_PREDMT`, `NAME_PREDM`, `ID_SCLAD`, `KOLC_PREDM`, `CENA_PREDM`, `SUM_PREDM`.
+  - `TYPDOCM_PR` имеет тип `varchar(1) NOT NULL`; для счёта подтверждено значение `C`.
+  - По документации `SCL_MOVE.TYPDOCM_PR = SCL_NAKL.TYPE_DOC` для строк с тем же `UNICUM_NUM`, кроме особых случаев.
+  - `VID_DOC` имеет тип `varchar(20) NULL`; для существующего счёта `UNICUM_NUM = 753524` подтверждено значение `*РАЗОВАЯ`.
 - **SQL-проверки:**
   ```sql
   SELECT *

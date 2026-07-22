@@ -143,7 +143,8 @@ public class FolioAccountDao {
                            String sku,
                            int warehouseId,
                            LocalDateTime documentDate,
-                           String operationType,
+                           String typeDoc,
+                           String movementVidDoc,
                            BigDecimal quantity,
                            BigDecimal price) {
         BigDecimal amount = price.multiply(quantity);
@@ -159,8 +160,8 @@ public class FolioAccountDao {
                 sku,
                 warehouseId,
                 Timestamp.valueOf(documentDate),
-                operationType,
-                operationType,
+                typeDoc,
+                movementVidDoc,
                 quantity,
                 quantity,
                 price,
