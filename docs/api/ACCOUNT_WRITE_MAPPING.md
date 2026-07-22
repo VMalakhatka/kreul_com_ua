@@ -13,7 +13,7 @@
 |---|---|---|---|---|
 | `id` | `SCL_NAKL` | `UNICUM_NUM` | allocator | PK, docs: `SCL_NAKL.UNICUM_NUM` |
 | `documentNumber` | `SCL_NAKL` | `N_PLAT_POR` | числовой номер, bind как `BigDecimal`; значения `WEB-...` сюда писать нельзя | live schema: `N_PLAT_POR float NOT NULL` |
-| account type | `SCL_NAKL` | `TYPE_DOC` | константа `C` для счёта | live snapshot: existing accounts with `N_PLAT_POR=123456829/123456830` have `TYPE_DOC=C` |
+| account type | `SCL_NAKL` | `TYPE_DOC` | константа `С` для счёта, кириллическая буква Es `U+0421`, не латинская `C` | live snapshot: existing accounts with `N_PLAT_POR=123456829/123456830` have `TYPE_DOC=С` |
 | `documentDate` | `SCL_NAKL` | `DATE_P_POR` | напрямую | docs: поле даты документа, требуется подтверждение снимком |
 | `totalAmount` | `SCL_NAKL` | `SUM_POR` | сумма строк `SUM_PREDM` | docs: сумма документа, точность требует проверки на ФОЛИО |
 | `comment` | `SCL_NAKL` | `DOPN_SCHET` | напрямую | docs: поле присутствует; бизнес-смысл требует подтверждения снимком |
@@ -29,7 +29,7 @@
 | `sku` | `SCL_MOVE` | `NAME_PREDM` | напрямую | FK: `SCL_ARTC.COD_ARTIC` |
 | `warehouseId` | `SCL_MOVE` | `ID_SCLAD` | напрямую | FK: `SCL_ARTC.ID_SCLAD` |
 | `documentDate` | `SCL_MOVE` | `DATE_PREDM` | дата документа | существующий mapper читает поле движения |
-| account type | `SCL_MOVE` | `TYPDOCM_PR` | константа `C`, должна совпадать с `SCL_NAKL.TYPE_DOC` | docs: `Scl_Move.Typdocm_Pr = Scl_Nakl.Type_Doc`; live schema: `varchar(1)`; live account rows have `C` |
+| account type | `SCL_MOVE` | `TYPDOCM_PR` | константа `С`, кириллическая `U+0421`; должна совпадать с `SCL_NAKL.TYPE_DOC` | docs: `Scl_Move.Typdocm_Pr = Scl_Nakl.Type_Doc`; live schema: `varchar(1)`; live account rows have `С` |
 | movement kind | `SCL_MOVE` | `VID_DOC` | константа `*РАЗОВАЯ` для тестового счёта | live account rows for `UNICUM_NUM=753524` |
 | `quantity` | `SCL_MOVE` | `KOLTREB_PR` | напрямую | docs: требуемое количество; требует снимка |
 | `quantity` | `SCL_MOVE` | `KOLC_PREDM` | напрямую | эксперимент: резерв уменьшается на количество |

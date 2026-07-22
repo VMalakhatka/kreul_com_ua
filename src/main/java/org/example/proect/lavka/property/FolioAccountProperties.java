@@ -9,7 +9,7 @@ public class FolioAccountProperties {
 
     private List<String> allowedOperationTypes = List.of("СЧЕТ");
     private String documentType = "СЧЕТ";
-    private String typeDoc = "C";
+    private String typeDoc = "С";
     private String movementVidDoc = "*РАЗОВАЯ";
 
     public List<String> getAllowedOperationTypes() {
