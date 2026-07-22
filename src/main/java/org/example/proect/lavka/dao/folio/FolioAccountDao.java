@@ -4,10 +4,12 @@ import org.example.proect.lavka.dto.folio.FolioAccountItemResponse;
 import org.example.proect.lavka.dto.folio.FolioAccountResponse;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -148,30 +150,43 @@ public class FolioAccountDao {
                            BigDecimal quantity,
                            BigDecimal price) {
         BigDecimal amount = price.multiply(quantity);
-        jdbc.update("""
+        return jdbc.execute((ConnectionCallback<Long>) con -> {
+            try (var ps = con.prepareStatement("""
                 INSERT INTO dbo.SCL_MOVE
                     (UNICUM_NUM, NUM_PREDMT, NAME_PREDM, ID_SCLAD,
                      DATE_PREDM, TYPDOCM_PR, VID_DOC, KOLTREB_PR, KOLC_PREDM,
                      CENA_PREDM, SUM_PREDM, STND_UCHET)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-                """,
-                documentId,
-                lineNumber,
-                sku,
-                warehouseId,
-                Timestamp.valueOf(documentDate),
-                typeDoc,
-                movementVidDoc,
-                quantity,
-                quantity,
-                price,
-                amount
-        );
-        Number recno = jdbc.queryForObject("SELECT CAST(SCOPE_IDENTITY() AS numeric(18,0))", Number.class);
-        if (recno == null) {
+                """, Statement.RETURN_GENERATED_KEYS)) {
+                ps.setLong(1, documentId);
+                ps.setInt(2, lineNumber);
+                ps.setString(3, sku);
+                ps.setInt(4, warehouseId);
+                ps.setTimestamp(5, Timestamp.valueOf(documentDate));
+                ps.setString(6, typeDoc);
+                ps.setString(7, movementVidDoc);
+                ps.setBigDecimal(8, quantity);
+                ps.setBigDecimal(9, quantity);
+                ps.setBigDecimal(10, price);
+                ps.setBigDecimal(11, amount);
+                ps.executeUpdate();
+
+                try (var keys = ps.getGeneratedKeys()) {
+                    if (keys.next()) {
+                        return keys.getLong(1);
+                    }
+                }
+            }
+
+            try (var st = con.createStatement();
+                 var rs = st.executeQuery("SELECT CAST(@@IDENTITY AS numeric(18,0))")) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+            }
+
             throw new IllegalStateException("Cannot read generated SCL_MOVE.RECNO");
-        }
-        return recno.longValue();
+        });
     }
 
     public int reserveIfAvailable(String sku, int warehouseId, BigDecimal quantity) {
