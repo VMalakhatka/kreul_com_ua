@@ -11,6 +11,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 import org.springframework.web.servlet.config.annotation.ViewResolverRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -96,6 +98,12 @@ public class SpringConfig implements WebMvcConfigurer {
     @Bean(name = "folioNamedJdbc")
     public NamedParameterJdbcTemplate namedJdbcTemplate(@Qualifier("folioDataSource") DataSource dataSource) {
         return new NamedParameterJdbcTemplate(dataSource);
+    }
+
+    @Bean(name = "mssqlTransactionManager")
+    @Primary
+    public PlatformTransactionManager mssqlTransactionManager(@Qualifier("folioDataSource") DataSource dataSource) {
+        return new DataSourceTransactionManager(dataSource);
     }
 
     @Bean

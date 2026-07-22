@@ -2,6 +2,8 @@ package org.example.proect.lavka.exception;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
+import org.example.proect.lavka.service.folio.FolioAccountConflictException;
+import org.example.proect.lavka.service.folio.FolioAccountNotFoundException;
 import org.slf4j.MDC;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
@@ -85,6 +87,23 @@ public class GlobalExceptionHandler {
         log.warn("[sync.errors] constraint-violation uri={} details={}", r.getRequestURI(), details);
         return problem(r, HttpStatus.BAD_REQUEST, "Constraint violation", Map.of(
                 "details", truncate(details, 1000)
+        ));
+    }
+
+    @ExceptionHandler(FolioAccountConflictException.class)
+    public ResponseEntity<Map<String, Object>> handleFolioAccountConflict(FolioAccountConflictException e, HttpServletRequest r) {
+        log.warn("[folio.account] conflict uri={} code={} msg={}", r.getRequestURI(), e.getCode(), e.getMessage());
+        return problem(r, HttpStatus.CONFLICT, "Folio account conflict", Map.of(
+                "code", e.getCode(),
+                "message", truncate(e.getMessage(), 1000)
+        ));
+    }
+
+    @ExceptionHandler(FolioAccountNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleFolioAccountNotFound(FolioAccountNotFoundException e, HttpServletRequest r) {
+        log.warn("[folio.account] not-found uri={} msg={}", r.getRequestURI(), e.getMessage());
+        return problem(r, HttpStatus.NOT_FOUND, "Folio account not found", Map.of(
+                "message", truncate(e.getMessage(), 1000)
         ));
     }
 

@@ -36,6 +36,15 @@ public class StockController {
         return ResponseEntity.ok(out);
     }
 
+    // TODO:
+// Folio stores DATE_PREDM without time (00:00:00 for all rows),
+// therefore incremental synchronization currently works
+// with whole-day granularity.
+//
+// In the future this endpoint should use the document
+// timestamp/history table instead of DATE_PREDM to support
+// true incremental synchronization.
+
     // StockController.java (фрагмент)
     @PostMapping("/stock/no-movement")
     public StockNoMovementResponsePage noMovement(@RequestBody @Valid StockNoMovementRequest req) {

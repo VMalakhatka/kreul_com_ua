@@ -177,8 +177,16 @@ public class SyncServiceImpl implements SyncService {
 
                                 var res = postWithBisect(sub, 1, allErrors);
 
-                                log.info(OPS, "[sync.ops] upsert batch done created={} updated={} size={} skus={}",
-                                        res.createdCount(), res.updatedCount(), countItems(sub), skus);
+                                String skusCreated = extractSkusFromSection(sub, "create");
+                                String skusUpdated = extractSkusFromSection(sub, "update");
+                                String skusDeleted = extractSkusFromSection(sub, "delete");
+
+                                log.info(OPS,
+                                        "[sync.ops] upsert batch done created={} [{}] updated={} [{}] deleted={} [{}] size={}",
+                                        res.createdCount(), skusCreated,
+                                        res.updatedCount(), skusUpdated,
+                                        res.deletedCount(), skusDeleted,
+                                        countItems(sub));
 
                                 if (log.isDebugEnabled()) {
                                     debugListOps(sub);
@@ -343,28 +351,31 @@ public class SyncServiceImpl implements SyncService {
             updateList.add(prod);
         }
 
-        // 2b. "удаления": принудительно ставим draft
+        // 2b. удаления: формируем delete[] (force=true). Если id неизвестен — отправим update со статусом trash
+        java.util.List<java.util.Map<String,Object>> deleteList = new java.util.ArrayList<>();
         for (String sku : toDelete) {
             if (sku == null || sku.isBlank()) continue;
 
             Long knownId = existingIdsBySku.get(sku.trim());
-
-            java.util.Map<String,Object> prodDraft = new java.util.HashMap<>();
-            if (knownId != null) {
-                // Woo любит update по id
-                prodDraft.put("id", knownId);
+            if (knownId != null && knownId > 0) {
+                java.util.Map<String,Object> del = new java.util.HashMap<>();
+                del.put("id", knownId);
+                del.put("force", true); // без корзины, сразу удалить
+                deleteList.add(del);
             } else {
-                // fallback если по какой-то причине мы не знаем id
-                prodDraft.put("sku", sku.trim());
+                // fallback: если нет id в текущем окне, попробуем пометить в корзину по sku
+                java.util.Map<String,Object> trash = new java.util.HashMap<>();
+                trash.put("sku", sku.trim());
+                trash.put("status", "trash");
+                updateList.add(trash);
             }
-            prodDraft.put("status", "draft");
-
-            updateList.add(prodDraft);
         }
 
         java.util.Map<String,Object> payload = new java.util.HashMap<>();
         if (!createList.isEmpty()) payload.put("create", createList);
         if (!updateList.isEmpty()) payload.put("update", updateList);
+        // добавляем delete[], если есть что удалять
+        if (!deleteList.isEmpty()) payload.put("delete", deleteList);
 
         return payload;
     }
@@ -509,47 +520,50 @@ public class SyncServiceImpl implements SyncService {
      *   → вернёт список из 2 подпакаетов (100 и 50 элементов)
      */
     private List<Map<String, Object>> splitBatchPayload(Map<String, Object> payload, int maxBatchSize) {
-        if (payload == null || payload.isEmpty()) {
-            return List.of();
-        }
-        // исходные списки
+        if (payload == null || payload.isEmpty()) return List.of();
+
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> createList = (List<Map<String, Object>>) payload.getOrDefault("create", List.of());
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> updateList = (List<Map<String, Object>>) payload.getOrDefault("update", List.of());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> deleteList = (List<Map<String, Object>>) payload.getOrDefault("delete", List.of());
 
         List<Map<String, Object>> result = new ArrayList<>();
 
-        // Объединяем create и update в одну "очередь", но помним тип
+        // объединяем всё в единую очередь с пометкой типа
         List<Map.Entry<String, Map<String, Object>>> all = new ArrayList<>();
         createList.forEach(m -> all.add(Map.entry("create", m)));
         updateList.forEach(m -> all.add(Map.entry("update", m)));
+        deleteList.forEach(m -> all.add(Map.entry("delete", m)));
 
-        // Режем на чанки по maxBatchSize
         for (int i = 0; i < all.size(); i += maxBatchSize) {
             int end = Math.min(i + maxBatchSize, all.size());
             List<Map.Entry<String, Map<String, Object>>> sub = all.subList(i, end);
 
-            // восстанавливаем структуру {create:[..], update:[..]}
             Map<String, Object> subPayload = new HashMap<>();
             List<Map<String, Object>> subCreate = new ArrayList<>();
             List<Map<String, Object>> subUpdate = new ArrayList<>();
+            List<Map<String, Object>> subDelete = new ArrayList<>();
 
             for (var e : sub) {
-                if (e.getKey().equals("create")) {
-                    subCreate.add(e.getValue());
-                } else {
-                    subUpdate.add(e.getValue());
+                switch (e.getKey()) {
+                    case "create" -> subCreate.add(e.getValue());
+                    case "update" -> subUpdate.add(e.getValue());
+                    case "delete" -> subDelete.add(e.getValue());
                 }
             }
 
             if (!subCreate.isEmpty()) subPayload.put("create", subCreate);
             if (!subUpdate.isEmpty()) subPayload.put("update", subUpdate);
+            if (!subDelete.isEmpty()) subPayload.put("delete", subDelete);
+
             result.add(subPayload);
         }
 
         return result;
     }
+
 
     private WooApiClient.WooBatchResult postWithBisect(Map<String,Object> sub, int minSize,
                                                        List<String> allErrors) {
@@ -565,14 +579,14 @@ public class SyncServiceImpl implements SyncService {
                 allErrors.add("woo_batch_failed(final "+total+"): " + e.getMessage()
                         + " skus=[" + skus + "]");
                 log.warn(MISMATCH, "[sync.mismatch] final-fail size={} skus={} err", total, skus);
-                return new WooApiClient.WooBatchResult(0,0);
+                return new WooApiClient.WooBatchResult(0,0,0);
             }
             // делим пополам
             var halves = splitInHalf(sub);
             var r1 = postWithBisect(halves.get(0), minSize, allErrors);
             var r2 = postWithBisect(halves.get(1), minSize, allErrors);
             return new WooApiClient.WooBatchResult(r1.createdCount()+r2.createdCount(),
-                    r1.updatedCount()+r2.updatedCount());
+                    r1.updatedCount()+r2.updatedCount(), r1.deletedCount()+ r2.deletedCount());
         }
     }
 
@@ -580,27 +594,41 @@ public class SyncServiceImpl implements SyncService {
     private String extractSkusFromBatch(Map<String,Object> payload){
         List<Map<String,Object>> c = (List<Map<String,Object>>) payload.getOrDefault("create", List.of());
         List<Map<String,Object>> u = (List<Map<String,Object>>) payload.getOrDefault("update", List.of());
+        List<Map<String,Object>> d = (List<Map<String,Object>>) payload.getOrDefault("delete", List.of());
         List<String> out = new ArrayList<>();
 
-        // доступ к id->sku из ThreadLocal
         Map<Long,String> id2sku = org.example.proect.lavka.utils.LogCtx.ID2SKU.get();
 
         for (var m: c) {
             String sku = valAsString(m.get("sku"));
-            if (sku == null) {
-                sku = skuFromIdMap(m.get("id"), id2sku);
-            }
+            if (sku == null) sku = skuFromIdMap(m.get("id"), id2sku);
             out.add(sku != null ? sku : valAsString(m.get("id")));
         }
         for (var m: u) {
             String sku = valAsString(m.get("sku"));
-            if (sku == null) {
-                sku = skuFromIdMap(m.get("id"), id2sku);
-            }
+            if (sku == null) sku = skuFromIdMap(m.get("id"), id2sku);
+            out.add(sku != null ? sku : valAsString(m.get("id")));
+        }
+        for (var m: d) {
+            String sku = skuFromIdMap(m.get("id"), id2sku); // в delete у нас id обязателен (когда есть)
             out.add(sku != null ? sku : valAsString(m.get("id")));
         }
         return String.join(",", out);
     }
+
+    @SuppressWarnings("unchecked")
+    private String extractSkusFromSection(Map<String, Object> payload, String section) {
+        List<Map<String, Object>> list = (List<Map<String, Object>>) payload.getOrDefault(section, List.of());
+        List<String> out = new ArrayList<>();
+        Map<Long, String> id2sku = org.example.proect.lavka.utils.LogCtx.ID2SKU.get();
+        for (var m : list) {
+            String sku = valAsString(m.get("sku"));
+            if (sku == null) sku = skuFromIdMap(m.get("id"), id2sku);
+            out.add(sku != null ? sku : valAsString(m.get("id")));
+        }
+        return String.join(",", out);
+    }
+
 
     private static String valAsString(Object o){
         return (o == null) ? null : String.valueOf(o);
@@ -618,7 +646,8 @@ public class SyncServiceImpl implements SyncService {
     @SuppressWarnings("unchecked")
     private int countItems(Map<String,Object> payload){
         return ((List<?>)payload.getOrDefault("create", List.of())).size()
-                + ((List<?>)payload.getOrDefault("update", List.of())).size();
+                + ((List<?>)payload.getOrDefault("update", List.of())).size()
+                + ((List<?>)payload.getOrDefault("delete", List.of())).size();
     }
 
     @SuppressWarnings("unchecked")
@@ -628,6 +657,9 @@ public class SyncServiceImpl implements SyncService {
                 .forEach(m -> all.add(Map.entry("create", m)));
         ((List<Map<String,Object>>)payload.getOrDefault("update", List.of()))
                 .forEach(m -> all.add(Map.entry("update", m)));
+        ((List<Map<String,Object>>)payload.getOrDefault("delete", List.of()))
+                .forEach(m -> all.add(Map.entry("delete", m)));
+
         int mid = Math.max(1, all.size()/2);
         return List.of(rebuildPayload(all.subList(0, mid)),
                 rebuildPayload(all.subList(mid, all.size())));
@@ -635,10 +667,17 @@ public class SyncServiceImpl implements SyncService {
 
     private Map<String,Object> rebuildPayload(List<Map.Entry<String, Map<String,Object>>> items){
         Map<String,Object> p = new HashMap<>();
-        List<Map<String,Object>> c = new ArrayList<>(), u = new ArrayList<>();
-        for (var e: items) if ("create".equals(e.getKey())) c.add(e.getValue()); else u.add(e.getValue());
+        List<Map<String,Object>> c = new ArrayList<>(), u = new ArrayList<>(), d = new ArrayList<>();
+        for (var e: items) {
+            switch (e.getKey()) {
+                case "create" -> c.add(e.getValue());
+                case "update" -> u.add(e.getValue());
+                case "delete" -> d.add(e.getValue());
+            }
+        }
         if (!c.isEmpty()) p.put("create", c);
         if (!u.isEmpty()) p.put("update", u);
+        if (!d.isEmpty()) p.put("delete", d);
         return p;
     }
 
@@ -647,12 +686,15 @@ public class SyncServiceImpl implements SyncService {
         try {
             List<Map<String,Object>> c = (List<Map<String,Object>>) sub.getOrDefault("create", List.of());
             List<Map<String,Object>> u = (List<Map<String,Object>>) sub.getOrDefault("update", List.of());
+            List<Map<String,Object>> d = (List<Map<String,Object>>) sub.getOrDefault("delete", List.of());
             for (var m: c) log.debug(OPS, "[sync.ops] CREATE sku={} id?={}", m.get("sku"), m.get("id"));
             for (var m: u) {
                 String st = String.valueOf(m.getOrDefault("status", ""));
-                if ("draft".equals(st)) log.debug(OPS, "[sync.ops] DRAFT sku/id={}/{}", m.get("sku"), m.get("id"));
-                else                    log.debug(OPS, "[sync.ops] UPDATE sku/id={}/{}", m.get("sku"), m.get("id"));
+                if ("draft".equals(st)) log.debug(OPS, "[sync.ops] DRAFT  sku/id={}/{}", m.get("sku"), m.get("id"));
+                else if ("trash".equals(st)) log.debug(OPS, "[sync.ops] TRASH  sku/id={}/{}", m.get("sku"), m.get("id"));
+                else                         log.debug(OPS, "[sync.ops] UPDATE sku/id={}/{}", m.get("sku"), m.get("id"));
             }
+            for (var m: d) log.debug(OPS, "[sync.ops] DELETE id={}", m.get("id"));
         } catch (Exception ignore) {}
     }
 }

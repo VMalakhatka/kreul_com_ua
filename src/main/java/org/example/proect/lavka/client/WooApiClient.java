@@ -239,14 +239,14 @@ public class WooApiClient {
 
     public record WooBatchResult(
             int createdCount,
-            int updatedCount
-            // можно добавить ещё детали, если надо
+            int updatedCount,
+            int deletedCount
     ) {}
 
     public WooBatchResult upsertProductsBatch(Map<String,Object> payload) {
-        // если нет ни create ни update — просто ничего не делаем
+
         if (payload == null || payload.isEmpty()) {
-            return new WooBatchResult(0,0);
+            return new WooBatchResult(0, 0, 0);
         }
 
         String url = props.getBaseUrl() + "/products/batch";
@@ -257,23 +257,18 @@ public class WooApiClient {
 
         Map body = resp.getBody();
         if (body == null) {
-            return new WooBatchResult(0,0);
+            return new WooBatchResult(0, 0, 0);
         }
+
         if (resp.getStatusCode().is2xxSuccessful()) {
-            // Woo отвечает примерно:
-            // {
-            //   "create": [ {id:..., sku:"..."}, ... ],
-            //   "update": [ {id:..., sku:"..."}, ... ],
-            //   "delete": [...]
-            // }
+
             int c = 0;
             int u = 0;
+            int d = 0;
 
             Object createdArr = body.get("create");
             if (createdArr instanceof List<?> listC) {
                 c = listC.size();
-                // при желании можно тут прочитать id/sku и обновить локальную карту knownPostId
-                // (завести Map<String,Long> sku->id и вернуть наружу)
             }
 
             Object updatedArr = body.get("update");
@@ -281,11 +276,15 @@ public class WooApiClient {
                 u = listU.size();
             }
 
-            return new WooBatchResult(c, u);
-        }else{
-            // ошибка - считаем всё как 0, логируем
-            // log.error("Woo batch failed {}", code);
-            return new WooBatchResult(0,0);
+            Object deletedArr = body.get("delete");
+            if (deletedArr instanceof List<?> listD) {
+                d = listD.size();
+            }
+
+            return new WooBatchResult(c, u, d);
+
+        } else {
+            return new WooBatchResult(0, 0, 0);
         }
     }
 
