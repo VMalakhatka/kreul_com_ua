@@ -93,6 +93,30 @@
 | `price` | `SCL_MOVE` | `CENA_PREDM` | напрямую, `BigDecimal` | docs: цена строки; точность требует проверки |
 | `amount` | `SCL_MOVE` | `SUM_PREDM` | `price * quantity` | docs: сумма строки; точность требует проверки |
 | active/status | `SCL_MOVE` | `STND_UCHET` | `1` для активной строки, `0` при мягкой отмене всего счёта | требует проверки удаления/архива |
+| organization short name | `SCL_MOVE` | `ORG_PREDM` | перенос из `SCL_NAKL.BRIEFORG` | Структура7.doc: `Scl_Move.Org_Predm = Scl_Nakl.BriefOrg` |
+| document number | `SCL_MOVE` | `NUMDOCM_PR` | перенос из `SCL_NAKL.N_PLAT_POR` | Структура7.doc |
+| document suffix | `SCL_MOVE` | `NUMDCM_DOP` | перенос из `SCL_NAKL.DOPN_SCHET` | Структура7.doc |
+| payment kind | `SCL_MOVE` | `NOT_NAL` | перенос из `SCL_NAKL.NOT_NAL` | Структура7.doc |
+| contract | `SCL_MOVE` | `CONTRACT_N` | перенос из `SCL_NAKL.CONTR_POR` | Структура7.doc |
+| currency price | `SCL_MOVE` | `VALUT_CENA` | `item.currencyPrice`, по умолчанию `0` | Структура7.doc |
+| currency code | `SCL_MOVE` | `COD_VALUT` | конфигурация/справочник валют | Структура7.doc; `VALUTCOD` |
+| currency amount | `SCL_MOVE` | `SUM_VALUT` | `item.currencyAmount`, по умолчанию `0` | Структура7.doc: `VALUT_CENA * KOLC_PREDM` |
+| ruble/currency flag | `SCL_MOVE` | `VALUTROUBL` | перенос из `SCL_NAKL.VALUTROUBL` | Структура7.doc |
+| retail amount | `SCL_MOVE` | `SUM_ROZN` | `item.retailAmount`, по умолчанию `price * quantity` | Excel/comment: розничная сумма |
+| ball sums | `SCL_MOVE` | `BALL1..BALL5` | `SCL_ARTC.BALL1..BALL5 * quantity` | Структура7.doc: в `SCL_MOVE` это суммы баллов; `SCL_ARTC` хранит баллы товара |
+
+## Справочные значения API
+
+| API-поле | Справочник/таблица ФОЛИО | Правило |
+|---|---|---|
+| `warehouseId` | `SCLAD_R` | должен существовать; также используется для поиска товара в `SCL_ARTC` |
+| `sku` | `SCL_ARTC` | пара `sku + warehouseId` должна существовать |
+| `folioOperationKind` | `VID_OPER` | тип операции; пишется в `VID_DOC` шапки и строк |
+| `priceContractType` | `_KONTRCT` | контракт/тип цены; переносится в `SCL_MOVE.CONTRACT_N` |
+| `payerName` / `payerShortName` | `_PARTNER` | организация и краткое имя внешней организации |
+| `sourceInfo` | `_RECLAMA` | источник информации |
+| `additionalInfo` | `DOP_INF` | дополнительная информация |
+| `folioUser` | пользователи ФОЛИО | автор/корректор документа |
 
 ## SCL_ARTC
 

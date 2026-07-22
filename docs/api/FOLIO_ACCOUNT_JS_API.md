@@ -28,7 +28,10 @@ Content-Type: application/json
     {
       "sku": "ABC-001",
       "quantity": 2,
-      "price": 10.0
+      "price": 10.0,
+      "currencyPrice": 0,
+      "currencyAmount": 0,
+      "retailAmount": 20.0
     }
   ]
 }
@@ -155,6 +158,55 @@ Required для Swagger/валидации:
 | `deliveryInfo` | `G_POL_POR` | информация доставки/получателя |
 
 Технические поля `SCL_ADDN.D_PR_DOC`, `SCL_ADDN.POLSC_DATE`, `SCL_ADDN.NLG_REG` заполняются backend по образцу ручного счёта.
+
+## 1.2. Какие поля являются справочными
+
+Часть значений JS передаёт как выбранные пользователем бизнес-реквизиты, но сами значения должны существовать или быть согласованы со справочниками ФОЛИО.
+
+| JS-поле | Таблица/справочник ФОЛИО | Как используется |
+|---|---|---|
+| `warehouseId` | `SCLAD_R.ID_SCLAD` | проверяется как существующий склад; пишется в `SCL_NAKL.ID_SCLAD`, `SCL_MOVE.ID_SCLAD`, используется для поиска `SCL_ARTC` |
+| `sku` | `SCL_ARTC.COD_ARTIC` + `SCL_ARTC.ID_SCLAD` | товарная строка должна существовать на складе |
+| `folioOperationKind` | `VID_OPER`, поле `VID_DOC` | пишется в `SCL_NAKL.VID_DOC` и `SCL_MOVE.VID_DOC`; ФОЛИО может добавлять значение вручную, но для API лучше передавать справочное значение |
+| `priceContractType` | `_KONTRCT`, поле `CONTR_POR`/`CONTRACT_N` | пишется в `SCL_NAKL.CONTR_POR` и переносится в `SCL_MOVE.CONTRACT_N` |
+| `payerName` | `_PARTNER`, полное имя внешней организации | пишется в `SCL_NAKL.ORGANIZNKL` |
+| `payerShortName` | `_PARTNER`, краткое имя внешней организации | пишется в `SCL_NAKL.BRIEFORG`, переносится в `SCL_MOVE.ORG_PREDM` |
+| `receiverName` | справочник моих организаций/получателей ФОЛИО | пишется в `SCL_NAKL.MY_ORGANIZ` |
+| `sourceInfo` | `_RECLAMA`, источник информации | пишется в `SCL_NAKL.L_CP1_PLAT` и `SCL_ADDN.L_CP1_PLAT` |
+| `additionalInfo` | `DOP_INF`, дополнительная информация | пишется в `SCL_NAKL.L_CP2_PLAT` и `SCL_ADDN.L_CP2_PLAT` |
+| `folioUser` | пользователи ФОЛИО | пишется в `SCL_NAKL.FAMILY` и `SCL_NAKL.WHO_CORR` |
+
+Поля строки, которые JS не передаёт и backend берёт из `SCL_ARTC`:
+
+| SCL_MOVE | Источник | Правило |
+|---|---|---|
+| `BALL1` | `SCL_ARTC.BALL1` | `SCL_ARTC.BALL1 * quantity` |
+| `BALL2` | `SCL_ARTC.BALL2` | `SCL_ARTC.BALL2 * quantity` |
+| `BALL3` | `SCL_ARTC.BALL3` | `SCL_ARTC.BALL3 * quantity` |
+| `BALL4` | `SCL_ARTC.BALL4` | `SCL_ARTC.BALL4 * quantity` |
+| `BALL5` | `SCL_ARTC.BALL5` | `SCL_ARTC.BALL5 * quantity` |
+
+Поля строки, которые backend переносит из шапки:
+
+| SCL_MOVE | Источник |
+|---|---|
+| `ORG_PREDM` | `SCL_NAKL.BRIEFORG` |
+| `NUMDOCM_PR` | `SCL_NAKL.N_PLAT_POR` |
+| `NUMDCM_DOP` | `SCL_NAKL.DOPN_SCHET` |
+| `NOT_NAL` | `SCL_NAKL.NOT_NAL` |
+| `CONTRACT_N` | `SCL_NAKL.CONTR_POR` |
+| `VALUTROUBL` | `SCL_NAKL.VALUTROUBL` |
+| `OPLATA_SCH` | `SCL_NAKL.OPLATA_SCH` |
+| `VOZVRAT_PR` | `SCL_NAKL.VOZVRAT_PR` |
+| `OTMETKA` | `SCL_NAKL.OTMETKA` |
+
+Поля строки, которые можно передать на уровне item:
+
+| Item-поле | SCL_MOVE | Примечание |
+|---|---|---|
+| `currencyPrice` | `VALUT_CENA` | если не передано — `0` |
+| `currencyAmount` | `SUM_VALUT` | если не передано — `0` |
+| `retailAmount` | `SUM_ROZN` | если не передано — `price * quantity` |
 
 Ограничения длины строк в текущей базе `Paint_Ua`:
 

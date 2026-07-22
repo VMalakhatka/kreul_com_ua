@@ -533,6 +533,9 @@ SCL_MOVE.TYPDOCM_PR = SCL_NAKL.TYPE_DOC
   - `TYPDOCM_PR` имеет тип `varchar(1) NOT NULL`; для счёта подтверждено значение `С` — кириллическая буква Es `U+0421`, не латинская `C`.
   - По документации `SCL_MOVE.TYPDOCM_PR = SCL_NAKL.TYPE_DOC` для строк с тем же `UNICUM_NUM`, кроме особых случаев.
   - `VID_DOC` имеет тип `varchar(20) NULL`; для существующего счёта `UNICUM_NUM = 753524` подтверждено значение `*РАЗОВАЯ`.
+  - По `Структура7.doc` часть полей строки переносится из шапки документа: `ORG_PREDM = SCL_NAKL.BRIEFORG`, `NUMDOCM_PR = SCL_NAKL.N_PLAT_POR`, `NUMDCM_DOP = SCL_NAKL.DOPN_SCHET`, `NOT_NAL = SCL_NAKL.NOT_NAL`, `CONTRACT_N = SCL_NAKL.CONTR_POR`, `VALUTROUBL = SCL_NAKL.VALUTROUBL`.
+  - `BALL1..BALL5` в `SCL_MOVE` — это суммы баллов строки. Они рассчитываются из `SCL_ARTC.BALL1..BALL5 * KOLC_PREDM`, а не передаются из JavaScript.
+  - `VALUT_CENA`, `SUM_VALUT`, `SUM_ROZN` являются строковыми суммовыми полями. Для API они могут передаваться на уровне item; если не переданы, backend пишет безопасные значения `0` для валюты и `price * quantity` для розничной суммы.
 - **SQL-проверки:**
   ```sql
   SELECT *
@@ -725,6 +728,7 @@ SCL_MOVE.TYPDOCM_PR = SCL_NAKL.TYPE_DOC
   - Удаление строки полностью освобождает резерв.
   - Резерв суммируется по всем активным документам.
   - При попытке создать счёт с товаром `CR-CE0900056045` на складе `7` и `REZ_KOLCH = 0.0` API корректно вернул конфликт недостаточного свободного остатка.
+  - `BALL1..BALL5` в карточке товара используются как базовые значения для расчёта сумм `SCL_MOVE.BALL1..BALL5`.
 - **SQL-проверки:**
   ```sql
   SELECT KON_KOLCH,

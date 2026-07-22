@@ -37,7 +37,9 @@ public class FolioAccountDao {
     public Optional<StockRow> findStock(String sku, int warehouseId) {
         try {
             return Optional.ofNullable(jdbc.queryForObject("""
-                    SELECT COD_ARTIC, ID_SCLAD, KON_KOLCH, REZ_KOLCH
+                    SELECT COD_ARTIC, ID_SCLAD, KON_KOLCH, REZ_KOLCH,
+                           CENA_ARTIC, CENA_VALT, COD_VALT,
+                           BALL1, BALL2, BALL3, BALL4, BALL5
                     FROM dbo.SCL_ARTC
                     WHERE COD_ARTIC = ?
                       AND ID_SCLAD = ?
@@ -45,7 +47,15 @@ public class FolioAccountDao {
                     rs.getString("COD_ARTIC").stripTrailing(),
                     rs.getInt("ID_SCLAD"),
                     rs.getBigDecimal("KON_KOLCH"),
-                    rs.getBigDecimal("REZ_KOLCH")
+                    rs.getBigDecimal("REZ_KOLCH"),
+                    rs.getBigDecimal("CENA_ARTIC"),
+                    rs.getBigDecimal("CENA_VALT"),
+                    trimToNull(rs.getString("COD_VALT")),
+                    rs.getBigDecimal("BALL1"),
+                    rs.getBigDecimal("BALL2"),
+                    rs.getBigDecimal("BALL3"),
+                    rs.getBigDecimal("BALL4"),
+                    rs.getBigDecimal("BALL5")
             ), sku, warehouseId));
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
@@ -55,7 +65,9 @@ public class FolioAccountDao {
     public Optional<StockRow> lockStock(String sku, int warehouseId) {
         try {
             return Optional.ofNullable(jdbc.queryForObject("""
-                    SELECT COD_ARTIC, ID_SCLAD, KON_KOLCH, REZ_KOLCH
+                    SELECT COD_ARTIC, ID_SCLAD, KON_KOLCH, REZ_KOLCH,
+                           CENA_ARTIC, CENA_VALT, COD_VALT,
+                           BALL1, BALL2, BALL3, BALL4, BALL5
                     FROM dbo.SCL_ARTC WITH (UPDLOCK, HOLDLOCK)
                     WHERE COD_ARTIC = ?
                       AND ID_SCLAD = ?
@@ -63,7 +75,15 @@ public class FolioAccountDao {
                     rs.getString("COD_ARTIC").stripTrailing(),
                     rs.getInt("ID_SCLAD"),
                     rs.getBigDecimal("KON_KOLCH"),
-                    rs.getBigDecimal("REZ_KOLCH")
+                    rs.getBigDecimal("REZ_KOLCH"),
+                    rs.getBigDecimal("CENA_ARTIC"),
+                    rs.getBigDecimal("CENA_VALT"),
+                    trimToNull(rs.getString("COD_VALT")),
+                    rs.getBigDecimal("BALL1"),
+                    rs.getBigDecimal("BALL2"),
+                    rs.getBigDecimal("BALL3"),
+                    rs.getBigDecimal("BALL4"),
+                    rs.getBigDecimal("BALL5")
             ), sku, warehouseId));
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
@@ -192,37 +212,56 @@ public class FolioAccountDao {
         );
     }
 
-    public long insertLine(long documentId,
-                           int lineNumber,
-                           String sku,
-                           int warehouseId,
-                           LocalDateTime documentDate,
-                           String typeDoc,
-                           String movementVidDoc,
-                           BigDecimal quantity,
-                           BigDecimal price,
-                           boolean accountingEnabled) {
-        BigDecimal amount = price.multiply(quantity);
+    public long insertLine(LineWrite line) {
+        BigDecimal amount = line.price().multiply(line.quantity());
         return jdbc.execute((ConnectionCallback<Long>) con -> {
             try (var ps = con.prepareStatement("""
                 INSERT INTO dbo.SCL_MOVE
                     (UNICUM_NUM, NUM_PREDMT, NAME_PREDM, ID_SCLAD,
-                     DATE_PREDM, TYPDOCM_PR, VID_DOC, KOLTREB_PR, KOLC_PREDM,
-                     CENA_PREDM, SUM_PREDM, STND_UCHET)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ORG_PREDM, DATE_PREDM, NUMDOCM_PR, NUMDCM_DOP, TYPDOCM_PR,
+                     STND_UCHET, NOT_NAL, CONTRACT_N, VALUT_CENA, COD_VALUT, SUM_VALUT,
+                     NACENKA, VALUTROUBL, OPLATA_SCH, NALOGMONEY, NALOGVALUT, VOZVRAT_PR,
+                     SUM_UCHET, SUM_UCVAL, KOLC_OPL, SUM_OPL, SUMVAL_OPL, SUM_ROZN,
+                     OTMETKA, VID_DOC, KOLTREB_PR, KOLC_PREDM,
+                     CENA_PREDM, SUM_PREDM, BALL1, BALL2, BALL3, BALL4, BALL5)
+                VALUES (?, ?, ?, ?,
+                        ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?,
+                        0, ?, ?, 0, 0, ?,
+                        0, 0, 0, 0, 0, ?,
+                        ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?)
                 """, Statement.RETURN_GENERATED_KEYS)) {
-                ps.setLong(1, documentId);
-                ps.setInt(2, lineNumber);
-                ps.setString(3, sku);
-                ps.setInt(4, warehouseId);
-                ps.setTimestamp(5, Timestamp.valueOf(documentDate));
-                ps.setString(6, typeDoc);
-                ps.setString(7, movementVidDoc);
-                ps.setBigDecimal(8, quantity);
-                ps.setBigDecimal(9, quantity);
-                ps.setBigDecimal(10, price);
-                ps.setBigDecimal(11, amount);
-                ps.setInt(12, bit(accountingEnabled));
+                ps.setLong(1, line.documentId());
+                ps.setInt(2, line.lineNumber());
+                ps.setString(3, line.sku());
+                ps.setInt(4, line.warehouseId());
+                ps.setString(5, line.organizationShortName());
+                ps.setTimestamp(6, Timestamp.valueOf(line.documentDate()));
+                ps.setBigDecimal(7, line.documentNumber());
+                ps.setString(8, line.documentNumberSuffix());
+                ps.setString(9, line.typeDoc());
+                ps.setInt(10, bit(line.accountingEnabled()));
+                ps.setInt(11, bit(line.notCash()));
+                ps.setString(12, line.priceContractType());
+                ps.setBigDecimal(13, line.currencyPrice());
+                ps.setString(14, line.currencyCode());
+                ps.setBigDecimal(15, line.currencyAmount());
+                ps.setInt(16, bit(line.valutaRouble()));
+                ps.setInt(17, line.paymentFlag());
+                ps.setInt(18, bit(line.returnFlag()));
+                ps.setBigDecimal(19, line.retailAmount());
+                ps.setInt(20, line.markFlag());
+                ps.setString(21, line.movementVidDoc());
+                ps.setBigDecimal(22, line.quantity());
+                ps.setBigDecimal(23, line.quantity());
+                ps.setBigDecimal(24, line.price());
+                ps.setBigDecimal(25, amount);
+                ps.setBigDecimal(26, multiply(line.productBall1(), line.quantity()));
+                ps.setBigDecimal(27, multiply(line.productBall2(), line.quantity()));
+                ps.setBigDecimal(28, multiply(line.productBall3(), line.quantity()));
+                ps.setBigDecimal(29, multiply(line.productBall4(), line.quantity()));
+                ps.setBigDecimal(30, multiply(line.productBall5(), line.quantity()));
                 ps.executeUpdate();
 
                 try (var keys = ps.getGeneratedKeys()) {
@@ -407,7 +446,18 @@ public class FolioAccountDao {
                 """, documentId, documentId);
     }
 
-    public record StockRow(String sku, int warehouseId, BigDecimal actualQuantity, BigDecimal freeQuantity) {
+    public record StockRow(String sku,
+                           int warehouseId,
+                           BigDecimal actualQuantity,
+                           BigDecimal freeQuantity,
+                           BigDecimal retailPrice,
+                           BigDecimal currencyPrice,
+                           String currencyCode,
+                           BigDecimal ball1,
+                           BigDecimal ball2,
+                           BigDecimal ball3,
+                           BigDecimal ball4,
+                           BigDecimal ball5) {
     }
 
     public record MoveRow(long recno,
@@ -476,6 +526,36 @@ public class FolioAccountDao {
                             int taxRegistrationFlag) {
     }
 
+    public record LineWrite(long documentId,
+                            int lineNumber,
+                            String sku,
+                            int warehouseId,
+                            String organizationShortName,
+                            LocalDateTime documentDate,
+                            BigDecimal documentNumber,
+                            String documentNumberSuffix,
+                            String typeDoc,
+                            boolean accountingEnabled,
+                            boolean notCash,
+                            String priceContractType,
+                            BigDecimal currencyPrice,
+                            String currencyCode,
+                            BigDecimal currencyAmount,
+                            boolean valutaRouble,
+                            int paymentFlag,
+                            boolean returnFlag,
+                            BigDecimal retailAmount,
+                            int markFlag,
+                            String movementVidDoc,
+                            BigDecimal quantity,
+                            BigDecimal price,
+                            BigDecimal productBall1,
+                            BigDecimal productBall2,
+                            BigDecimal productBall3,
+                            BigDecimal productBall4,
+                            BigDecimal productBall5) {
+    }
+
     private static String formatFolioFloat(double value) {
         if (Math.rint(value) == value) {
             return BigDecimal.valueOf(value).toBigInteger().toString();
@@ -485,5 +565,20 @@ public class FolioAccountDao {
 
     private static int bit(boolean value) {
         return value ? 1 : 0;
+    }
+
+    private static BigDecimal multiply(BigDecimal value, BigDecimal quantity) {
+        if (value == null) {
+            return null;
+        }
+        return value.multiply(quantity);
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

@@ -124,21 +124,48 @@ public class FolioAccountService {
         int lineNumber = 1;
         for (var item : request.items()) {
             String sku = item.sku().trim();
+            FolioAccountDao.StockRow product = accountingEnabled
+                    ? lockStockOrThrow(sku, request.warehouseId(), item.quantity())
+                    : dao.findStock(sku, request.warehouseId())
+                            .orElseThrow(() -> new FolioAccountConflictException("stock_not_found",
+                                    "Stock row not found: " + sku + " warehouse=" + request.warehouseId()));
+            BigDecimal lineAmount = item.price().multiply(item.quantity());
+            BigDecimal lineRetailAmount = item.retailAmount() == null ? lineAmount : item.retailAmount();
+            BigDecimal lineCurrencyAmount = item.currencyAmount() == null ? BigDecimal.ZERO : item.currencyAmount();
+            BigDecimal lineCurrencyPrice = item.currencyPrice() == null ? BigDecimal.ZERO : item.currencyPrice();
             if (accountingEnabled) {
-                assertStockAvailable(sku, request.warehouseId(), item.quantity(), true);
+                assertStockAvailable(product, item.quantity());
             }
-            dao.insertLine(
+            dao.insertLine(new FolioAccountDao.LineWrite(
                     documentId,
                     lineNumber++,
                     sku,
                     request.warehouseId(),
+                    blankToNull(request.payerShortName()),
                     folioDocumentDate,
+                    folioDocumentNumber,
+                    request.comment(),
                     properties.getTypeDoc(),
+                    accountingEnabled,
+                    notCash,
+                    blankToNull(request.priceContractType()),
+                    lineCurrencyPrice,
+                    String.valueOf(properties.getCurrencyCode()),
+                    lineCurrencyAmount,
+                    properties.isValutaRouble(),
+                    properties.getPaymentFlag(),
+                    returnFlag,
+                    lineRetailAmount,
+                    properties.getMarkFlag(),
                     folioOperationKind,
                     item.quantity(),
                     item.price(),
-                    accountingEnabled
-            );
+                    product.ball1(),
+                    product.ball2(),
+                    product.ball3(),
+                    product.ball4(),
+                    product.ball5()
+            ));
             if (accountingEnabled) {
                 reserveOrThrow(sku, request.warehouseId(), item.quantity());
             }
@@ -195,18 +222,37 @@ public class FolioAccountService {
 
         assertStockAvailable(sku, warehouseId, request.quantity(), true);
         int lineNumber = dao.nextLineNumber(documentId);
-        dao.insertLine(
+        var product = lockStockOrThrow(sku, warehouseId, request.quantity());
+        dao.insertLine(new FolioAccountDao.LineWrite(
                 documentId,
                 lineNumber,
                 sku,
                 warehouseId,
+                null,
                 account.documentDate(),
+                parseFolioDocumentNumber(account.documentNumber()),
+                null,
                 properties.getTypeDoc(),
+                true,
+                true,
+                null,
+                BigDecimal.ZERO,
+                String.valueOf(properties.getCurrencyCode()),
+                BigDecimal.ZERO,
+                properties.isValutaRouble(),
+                properties.getPaymentFlag(),
+                false,
+                request.price().multiply(request.quantity()),
+                properties.getMarkFlag(),
                 properties.getMovementVidDoc(),
                 request.quantity(),
                 request.price(),
-                true
-        );
+                product.ball1(),
+                product.ball2(),
+                product.ball3(),
+                product.ball4(),
+                product.ball5()
+        ));
         reserveOrThrow(sku, warehouseId, request.quantity());
         dao.refreshHeaderTotal(documentId);
         return get(documentId);
@@ -295,11 +341,23 @@ public class FolioAccountService {
                 .orElseThrow(() -> new FolioAccountConflictException("stock_not_found",
                         "Stock row not found: " + sku + " warehouse=" + warehouseId));
 
+        assertStockAvailable(stock, quantity);
+    }
+
+    private FolioAccountDao.StockRow lockStockOrThrow(String sku, int warehouseId, BigDecimal quantity) {
+        var stock = dao.lockStock(sku, warehouseId)
+                .orElseThrow(() -> new FolioAccountConflictException("stock_not_found",
+                        "Stock row not found: " + sku + " warehouse=" + warehouseId));
+        assertStockAvailable(stock, quantity);
+        return stock;
+    }
+
+    private void assertStockAvailable(FolioAccountDao.StockRow stock, BigDecimal quantity) {
         if (stock.freeQuantity().compareTo(quantity) < 0) {
             throw new FolioAccountConflictException("insufficient_stock",
-                    "Insufficient free stock for " + sku + ": requested=" + quantity
+                    "Insufficient free stock for " + stock.sku() + ": requested=" + quantity
                             + ", free=" + stock.freeQuantity()
-                            + ", warehouse=" + warehouseId);
+                            + ", warehouse=" + stock.warehouseId());
         }
     }
 
