@@ -70,11 +70,11 @@ HTTP/1.1 201 Created
 
 Примечание: финальное ТЗ хочет имена `success`, `id`, `lineId`, `status`, `totalQuantity`, `warnings` и stock-блок. Это ещё не приведено к финальному контракту, чтобы не ломать уже проверенный GET без отдельного решения.
 
-## 1.1. Реквизиты шапки, которые нужно добавить в расширенный JS-контракт
+## 1.1. Расширенные реквизиты шапки
 
 По Excel-снимку `/Volumes/BackUp/Nakl_field.xls` счёт, созданный минимальным API (`753538`), записался в SQL, но не появился в реестре ФОЛИО. Видимый счёт (`753529`) и новый ручной счёт (`753546`) имеют намного более полную шапку `SCL_NAKL`.
 
-Следующий вариант request нужно расширять не “всеми колонками подряд”, а подтверждёнными бизнес-реквизитами:
+Текущий request расширен не “всеми колонками подряд”, а подтверждёнными бизнес-реквизитами:
 
 ```json
 {
@@ -95,6 +95,11 @@ HTTP/1.1 201 Created
   "notCash": true,
   "accountingEnabled": true,
   "returnFlag": false,
+  "payerCity": "Чернигов",
+  "directorName": "Дир Тест",
+  "accountantName": "Гл бух Теые",
+  "payerPhone": "+380636020525",
+  "deliveryInfo": "НП,Чернигов,отд.14, Укринстумент 30731947,оплата безнал, тел.0636020525",
   "comment": "тест",
   "items": [
     {
@@ -105,6 +110,20 @@ HTTP/1.1 201 Created
   ]
 }
 ```
+
+Required для Swagger/валидации:
+
+- `controlDate`
+- `folioOperationKind`
+- `payerName`
+- `receiverName`
+- `payerShortName`
+- `folioUser`
+- `sourceInfo`
+- `additionalInfo`
+- `notCash`
+- `accountingEnabled`
+- `returnFlag`
 
 Предварительное соответствие полей:
 
@@ -122,6 +141,39 @@ HTTP/1.1 201 Created
 | `notCash` | `NOT_NAL` | признак безнала/наличности |
 | `accountingEnabled` | `STND_UCHET` | влияет на учётность/резервирование |
 | `returnFlag` | `VOZVRAT_PR` | признак возврата, обычно `0` |
+
+Дополнительные реквизиты `SCL_ADDN` создаются в той же транзакции:
+
+| JS-поле | SCL_ADDN | Зачем |
+|---|---|---|
+| `payerCity` | `L_TOWN_POR` | город плательщика |
+| `directorName` | `DIRCT_POR` | директор |
+| `accountantName` | `FINDIR_POR` | главный бухгалтер |
+| `payerPhone` | `L_TEL1_PLA` | телефон плательщика |
+| `sourceInfo` | `L_CP1_PLAT` | дублируется в `SCL_ADDN` как в ручном счёте |
+| `additionalInfo` | `L_CP2_PLAT` | дублируется в `SCL_ADDN` как в ручном счёте |
+| `deliveryInfo` | `G_POL_POR` | информация доставки/получателя |
+
+Технические поля `SCL_ADDN.D_PR_DOC`, `SCL_ADDN.POLSC_DATE`, `SCL_ADDN.NLG_REG` заполняются backend по образцу ручного счёта.
+
+Ограничения длины строк в текущей базе `Paint_Ua`:
+
+| JS-поле | SCL_NAKL | Максимум |
+|---|---|---:|
+| `comment` | `DOPN_SCHET` | 5 |
+| `folioOperationKind` | `VID_DOC` | 20 |
+| `payerName` | `ORGANIZNKL` | 50 |
+| `receiverName` | `MY_ORGANIZ` | 50 |
+| `payerShortName` | `BRIEFORG` | 8 |
+| `folioUser` | `FAMILY`, `WHO_CORR` | 20 |
+| `sourceInfo` | `L_CP1_PLAT` | 30 |
+| `additionalInfo` | `L_CP2_PLAT` | 30 |
+| `priceContractType` | `CONTR_POR` | 10 |
+| `payerCity` | `SCL_ADDN.L_TOWN_POR` | 28 |
+| `directorName` | `SCL_ADDN.DIRCT_POR` | 75 |
+| `accountantName` | `SCL_ADDN.FINDIR_POR` | 75 |
+| `payerPhone` | `SCL_ADDN.L_TEL1_PLA` | 20 |
+| `deliveryInfo` | `SCL_ADDN.G_POL_POR` | 150 |
 
 Поля, которые лучше держать в конфигурации backend, а не просить у JS каждый раз:
 
@@ -292,6 +344,7 @@ POST /admin/folio/accounts/{unicumNum}/cancel
 - `externalRequestId` обязателен и должен быть стабильным при повторе запроса.
 - Денежные значения отправлять числом или строкой, без `double`-логики на стороне Java.
 - `documentNumber` сейчас должен быть числовым, потому что в ФОЛИО это `SCL_NAKL.N_PLAT_POR float`.
+- `documentDate` можно передавать как `LocalDateTime`, но при записи в ФОЛИО время нормализуется до `00:00:00`. Реестр ФОЛИО для отбора по дню ориентируется на дату без времени.
 - Для создания использовать только `operationType: "СЧЕТ"`.
 - В ФОЛИО `SCL_NAKL.TYPE_DOC` для счёта пишется как подтверждённая константа `С` — кириллическая буква Es `U+0421`, не латинская `C`; JS её не передаёт.
 - В строках ФОЛИО `SCL_MOVE.TYPDOCM_PR` тоже пишется как кириллическая `С`.

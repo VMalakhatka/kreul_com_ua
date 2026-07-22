@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.regex.Pattern;
 import java.util.HashSet;
 import java.util.List;
@@ -50,8 +51,15 @@ public class FolioAccountService {
                     "Warehouse not found: " + request.warehouseId());
         }
 
-        for (var item : request.items()) {
-            assertStockAvailable(item.sku().trim(), request.warehouseId(), item.quantity(), false);
+        String folioOperationKind = valueOrDefault(request.folioOperationKind(), properties.getMovementVidDoc());
+        boolean accountingEnabled = valueOrDefault(request.accountingEnabled(), true);
+        boolean notCash = valueOrDefault(request.notCash(), true);
+        boolean returnFlag = valueOrDefault(request.returnFlag(), false);
+
+        if (accountingEnabled) {
+            for (var item : request.items()) {
+                assertStockAvailable(item.sku().trim(), request.warehouseId(), item.quantity(), false);
+            }
         }
 
         long documentId = allocator.nextDocumentId();
@@ -59,32 +67,81 @@ public class FolioAccountService {
                 .map(i -> i.price().multiply(i.quantity()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal folioDocumentNumber = parseFolioDocumentNumber(request.documentNumber());
+        LocalDateTime folioDocumentDate = request.documentDate().toLocalDate().atStartOfDay();
 
-        dao.insertHeader(
+        BigDecimal retailAmount = request.retailAmount() == null ? total : request.retailAmount();
+        BigDecimal currencyAmount = request.currencyAmount() == null ? BigDecimal.ZERO : request.currencyAmount();
+        LocalDateTime createdDate = LocalDateTime.now();
+
+        dao.insertHeader(new FolioAccountDao.HeaderWrite(
                 documentId,
                 folioDocumentNumber,
-                request.documentDate(),
+                folioDocumentDate,
                 total,
                 request.comment(),
-                properties.getTypeDoc()
-        );
+                properties.getTypeDoc(),
+                accountingEnabled,
+                properties.getTaxName(),
+                properties.getTaxPercent(),
+                blankToNull(request.sourceInfo()),
+                blankToNull(request.additionalInfo()),
+                properties.getPaymentFlag(),
+                blankToNull(request.priceContractType()),
+                notCash,
+                properties.isValutaRouble(),
+                properties.getCurrencyCode(),
+                currencyAmount,
+                properties.getSecondTaxPercent(),
+                returnFlag,
+                properties.getPartialPaymentFlag(),
+                blankToNull(request.payerName()),
+                blankToNull(request.receiverName()),
+                request.controlDate(),
+                blankToNull(request.folioUser()),
+                retailAmount,
+                properties.getMarkFlag(),
+                folioOperationKind,
+                blankToNull(request.payerShortName()),
+                request.warehouseId(),
+                createdDate,
+                blankToNull(request.folioUser()),
+                properties.getCashProductType(),
+                properties.getTradeVatFlag()
+        ));
+        dao.insertAddn(new FolioAccountDao.AddnWrite(
+                documentId,
+                folioDocumentDate,
+                blankToNull(request.payerCity()),
+                blankToNull(request.directorName()),
+                blankToNull(request.accountantName()),
+                blankToNull(request.payerPhone()),
+                blankToNull(request.sourceInfo()),
+                blankToNull(request.additionalInfo()),
+                blankToNull(request.deliveryInfo()),
+                0
+        ));
 
         int lineNumber = 1;
         for (var item : request.items()) {
             String sku = item.sku().trim();
-            assertStockAvailable(sku, request.warehouseId(), item.quantity(), true);
+            if (accountingEnabled) {
+                assertStockAvailable(sku, request.warehouseId(), item.quantity(), true);
+            }
             dao.insertLine(
                     documentId,
                     lineNumber++,
                     sku,
                     request.warehouseId(),
-                    request.documentDate(),
+                    folioDocumentDate,
                     properties.getTypeDoc(),
-                    properties.getMovementVidDoc(),
+                    folioOperationKind,
                     item.quantity(),
-                    item.price()
+                    item.price(),
+                    accountingEnabled
             );
-            reserveOrThrow(sku, request.warehouseId(), item.quantity());
+            if (accountingEnabled) {
+                reserveOrThrow(sku, request.warehouseId(), item.quantity());
+            }
         }
 
         dao.rememberExternalRequest(request.externalRequestId().trim(), documentId);
@@ -147,7 +204,8 @@ public class FolioAccountService {
                 properties.getTypeDoc(),
                 properties.getMovementVidDoc(),
                 request.quantity(),
-                request.price()
+                request.price(),
+                true
         );
         reserveOrThrow(sku, warehouseId, request.quantity());
         dao.refreshHeaderTotal(documentId);
@@ -213,6 +271,23 @@ public class FolioAccountService {
                     "SCL_NAKL.N_PLAT_POR is float in Folio, documentNumber must be numeric: " + documentNumber);
         }
         return new BigDecimal(value);
+    }
+
+    private static String valueOrDefault(String value, String defaultValue) {
+        String normalized = blankToNull(value);
+        return normalized == null ? defaultValue : normalized;
+    }
+
+    private static boolean valueOrDefault(Boolean value, boolean defaultValue) {
+        return value == null ? defaultValue : value;
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private void assertStockAvailable(String sku, int warehouseId, BigDecimal quantity, boolean lock) {
