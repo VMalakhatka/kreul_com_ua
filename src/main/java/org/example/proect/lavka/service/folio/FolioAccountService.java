@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.regex.Pattern;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -19,6 +20,8 @@ import java.util.Set;
 
 @Service
 public class FolioAccountService {
+
+    private static final Pattern FOLIO_NUMERIC_DOCUMENT_NUMBER = Pattern.compile("\\d+(?:\\.\\d+)?");
 
     private final FolioAccountDao dao;
     private final FolioNumberAllocator allocator;
@@ -55,13 +58,15 @@ public class FolioAccountService {
         BigDecimal total = request.items().stream()
                 .map(i -> i.price().multiply(i.quantity()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal folioDocumentNumber = parseFolioDocumentNumber(request.documentNumber());
 
         dao.insertHeader(
                 documentId,
-                request.documentNumber().trim(),
+                folioDocumentNumber,
                 request.documentDate(),
                 total,
-                request.comment()
+                request.comment(),
+                properties.getTypeDoc()
         );
 
         int lineNumber = 1;
@@ -199,6 +204,15 @@ public class FolioAccountService {
             throw new FolioAccountConflictException("operation_type_not_allowed",
                     "Operation type is not allowed for this API: " + operationType);
         }
+    }
+
+    private BigDecimal parseFolioDocumentNumber(String documentNumber) {
+        String value = documentNumber.trim();
+        if (!FOLIO_NUMERIC_DOCUMENT_NUMBER.matcher(value).matches()) {
+            throw new FolioAccountValidationException("document_number_not_numeric",
+                    "SCL_NAKL.N_PLAT_POR is float in Folio, documentNumber must be numeric: " + documentNumber);
+        }
+        return new BigDecimal(value);
     }
 
     private void assertStockAvailable(String sku, int warehouseId, BigDecimal quantity, boolean lock) {

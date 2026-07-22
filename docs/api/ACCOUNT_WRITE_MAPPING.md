@@ -12,7 +12,8 @@
 | API-поле | Таблица | Колонка | Правило | Подтверждение |
 |---|---|---|---|---|
 | `id` | `SCL_NAKL` | `UNICUM_NUM` | allocator | PK, docs: `SCL_NAKL.UNICUM_NUM` |
-| `documentNumber` | `SCL_NAKL` | `N_PLAT_POR` | напрямую | docs: пользовательский номер, не технический ID |
+| `documentNumber` | `SCL_NAKL` | `N_PLAT_POR` | числовой номер, bind как `BigDecimal`; значения `WEB-...` сюда писать нельзя | live schema: `N_PLAT_POR float NOT NULL` |
+| account type | `SCL_NAKL` | `TYPE_DOC` | константа `C` для счёта | live snapshot: existing accounts with `N_PLAT_POR=123456829/123456830` have `TYPE_DOC=C` |
 | `documentDate` | `SCL_NAKL` | `DATE_P_POR` | напрямую | docs: поле даты документа, требуется подтверждение снимком |
 | `totalAmount` | `SCL_NAKL` | `SUM_POR` | сумма строк `SUM_PREDM` | docs: сумма документа, точность требует проверки на ФОЛИО |
 | `comment` | `SCL_NAKL` | `DOPN_SCHET` | напрямую | docs: поле присутствует; бизнес-смысл требует подтверждения снимком |

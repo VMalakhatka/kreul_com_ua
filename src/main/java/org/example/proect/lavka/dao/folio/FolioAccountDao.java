@@ -119,17 +119,19 @@ public class FolioAccountDao {
     }
 
     public void insertHeader(long documentId,
-                             String documentNumber,
+                             BigDecimal documentNumber,
                              LocalDateTime documentDate,
                              BigDecimal totalAmount,
-                             String comment) {
+                             String comment,
+                             String typeDoc) {
         jdbc.update("""
                 INSERT INTO dbo.SCL_NAKL
-                    (UNICUM_NUM, N_PLAT_POR, DATE_P_POR, SUM_POR, DOPN_SCHET, STND_UCHET)
-                VALUES (?, ?, ?, ?, ?, 1)
+                    (UNICUM_NUM, N_PLAT_POR, TYPE_DOC, DATE_P_POR, SUM_POR, DOPN_SCHET, STND_UCHET)
+                VALUES (?, ?, ?, ?, ?, ?, 1)
                 """,
                 documentId,
                 documentNumber,
+                typeDoc,
                 Timestamp.valueOf(documentDate),
                 totalAmount,
                 comment
@@ -277,7 +279,7 @@ public class FolioAccountDao {
                     WHERE UNICUM_NUM = ?
                     """, (rs, i) -> new HeaderRow(
                     rs.getLong("UNICUM_NUM"),
-                    rs.getString("N_PLAT_POR"),
+                    formatFolioFloat(rs.getDouble("N_PLAT_POR")),
                     rs.getTimestamp("DATE_P_POR").toLocalDateTime(),
                     rs.getBigDecimal("SUM_POR"),
                     rs.getInt("STND_UCHET") != 0
@@ -352,5 +354,12 @@ public class FolioAccountDao {
                              LocalDateTime documentDate,
                              BigDecimal totalAmount,
                              boolean active) {
+    }
+
+    private static String formatFolioFloat(double value) {
+        if (Math.rint(value) == value) {
+            return BigDecimal.valueOf(value).toBigInteger().toString();
+        }
+        return BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
     }
 }

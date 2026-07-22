@@ -9,6 +9,7 @@ public class FolioAccountProperties {
 
     private List<String> allowedOperationTypes = List.of("СЧЕТ");
     private String documentType = "СЧЕТ";
+    private String typeDoc = "C";
 
     public List<String> getAllowedOperationTypes() {
         return allowedOperationTypes;
@@ -24,5 +25,13 @@ public class FolioAccountProperties {
 
     public void setDocumentType(String documentType) {
         this.documentType = documentType;
+    }
+
+    public String getTypeDoc() {
+        return typeDoc;
+    }
+
+    public void setTypeDoc(String typeDoc) {
+        this.typeDoc = typeDoc;
     }
 }
