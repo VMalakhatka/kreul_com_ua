@@ -5,6 +5,7 @@ import org.example.proect.lavka.dto.folio.AddFolioAccountItemRequest;
 import org.example.proect.lavka.dto.folio.CreateFolioAccountItemRequest;
 import org.example.proect.lavka.dto.folio.CreateFolioAccountRequest;
 import org.example.proect.lavka.dto.folio.FolioAccountResponse;
+import org.example.proect.lavka.dto.folio.FolioAccountSummaryResponse;
 import org.example.proect.lavka.dto.folio.UpdateFolioAccountItemQuantityRequest;
 import org.example.proect.lavka.property.FolioAccountProperties;
 import org.springframework.stereotype.Service;
@@ -12,6 +13,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.regex.Pattern;
 import java.util.HashSet;
@@ -180,6 +182,15 @@ public class FolioAccountService {
     public FolioAccountResponse get(long documentId) {
         return dao.findAccount(documentId, properties.getDocumentType())
                 .orElseThrow(() -> new FolioAccountNotFoundException("Folio account not found: " + documentId));
+    }
+
+    @Transactional(transactionManager = "mssqlTransactionManager", readOnly = true)
+    public List<FolioAccountSummaryResponse> list(LocalDate dateFrom,
+                                                  LocalDate dateTo,
+                                                  String payerName,
+                                                  List<Integer> warehouseIds) {
+        return dao.findAccounts(dateFrom, dateTo, payerName, warehouseIds,
+                properties.getTypeDoc(), properties.getDocumentType());
     }
 
     @Transactional(transactionManager = "mssqlTransactionManager")

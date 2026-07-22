@@ -9,6 +9,23 @@ public record FolioAccountItemResponse(
         Integer warehouseId,
         BigDecimal quantity,
         BigDecimal price,
-        BigDecimal amount
+        BigDecimal amount,
+        String organizationShortName,
+        String documentNumber,
+        String documentNumberSuffix,
+        String typeDoc,
+        Boolean notCash,
+        String priceContractType,
+        BigDecimal currencyPrice,
+        String currencyCode,
+        BigDecimal currencyAmount,
+        Boolean valutaRouble,
+        BigDecimal retailAmount,
+        String folioOperationKind,
+        BigDecimal ball1,
+        BigDecimal ball2,
+        BigDecimal ball3,
+        BigDecimal ball4,
+        BigDecimal ball5
 ) {
 }

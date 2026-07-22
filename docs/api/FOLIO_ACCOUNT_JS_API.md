@@ -249,29 +249,108 @@ Required для Swagger/валидации:
 GET /admin/folio/accounts/{unicumNum}
 ```
 
-Текущий ответ:
+Ответ возвращает расширенный объект счёта: шапку `SCL_NAKL`, дополнительные реквизиты `SCL_ADDN` и строки `SCL_MOVE`. Он должен содержать не меньше данных, чем передаётся при создании.
 
 ```json
 {
   "documentId": 752328,
-  "documentNumber": "WEB-2026-00001",
-  "documentDate": "2026-07-21T15:30:00",
+  "documentNumber": "123456839",
+  "documentDate": "2026-07-22T00:00:00",
   "operationType": "СЧЕТ",
-  "warehouseId": 1,
-  "totalAmount": 20.0,
+  "warehouseId": 7,
+  "totalAmount": 130.0,
+  "comment": "TEST",
+  "controlDate": "2026-07-27",
+  "folioOperationKind": "*ПРЕДОПЛАТ",
+  "payerName": "БАЕВСКАЯ",
+  "receiverName": "CLASSIC",
+  "payerShortName": "БАЕВСКАЯ",
+  "folioUser": "coboss",
+  "sourceInfo": "КиОПТ",
+  "additionalInfo": "Тест",
+  "priceContractType": "ПАРТНЁР",
+  "notCash": true,
+  "accountingEnabled": true,
+  "returnFlag": false,
+  "currencyAmount": 0.0,
+  "retailAmount": 130.0,
+  "payerCity": "Чернигов",
+  "directorName": "Дир Тест",
+  "accountantName": "Гл бух Теые",
+  "payerPhone": "+380636020525",
+  "deliveryInfo": "НП,Чернигов,отд.14...",
+  "createdDate": "2026-07-22T15:46:20.030",
+  "correctionDate": null,
+  "correctedBy": "coboss",
   "active": true,
   "items": [
     {
-      "recno": 105501,
+      "recno": 8991059,
       "lineNumber": 1,
-      "sku": "ABC-001",
-      "warehouseId": 1,
-      "quantity": 2,
-      "price": 10.0,
-      "amount": 20.0
+      "sku": "CR-CE0900056027",
+      "warehouseId": 7,
+      "quantity": 1,
+      "price": 130.0,
+      "amount": 130.0,
+      "organizationShortName": "БАЕВСКАЯ",
+      "documentNumber": "123456839",
+      "documentNumberSuffix": "TEST",
+      "typeDoc": "С",
+      "notCash": true,
+      "priceContractType": "ПАРТНЁР",
+      "currencyPrice": 0.871,
+      "currencyCode": "4",
+      "currencyAmount": 0.87,
+      "valutaRouble": true,
+      "retailAmount": 130.0,
+      "folioOperationKind": "*ПРЕДОПЛАТ",
+      "ball1": 34070000.0,
+      "ball2": 2.0,
+      "ball3": 56.0,
+      "ball4": 0.0,
+      "ball5": 1.0
     }
   ]
 }
+```
+
+## 2.1. Список счетов
+
+```http
+GET /admin/folio/accounts?dateFrom=2026-07-22&dateTo=2026-07-22&payerName=БАЕВСКАЯ&warehouseIds=7
+```
+
+Фильтры:
+
+| Query param | Обяз. | Значение |
+|---|---:|---|
+| `dateFrom` | нет | дата документа с, формат `YYYY-MM-DD` |
+| `dateTo` | нет | дата документа по, формат `YYYY-MM-DD`; backend ищет до следующего дня, чтобы не терять записи со временем |
+| `payerName` | нет | поиск по `SCL_NAKL.ORGANIZNKL` или `SCL_NAKL.BRIEFORG` |
+| `warehouseIds` | нет | один или несколько складов; в Swagger можно передавать `warehouseIds=7&warehouseIds=8` или `warehouseIds=7,8` |
+
+Ответ — краткие карточки для списка:
+
+```json
+[
+  {
+    "documentId": 753568,
+    "documentNumber": "123456839",
+    "documentDate": "2026-07-22T00:00:00",
+    "operationType": "СЧЕТ",
+    "warehouseId": 7,
+    "totalAmount": 130.0,
+    "payerName": "БАЕВСКАЯ",
+    "receiverName": "CLASSIC",
+    "payerShortName": "БАЕВСКАЯ",
+    "sourceInfo": "КиОПТ",
+    "additionalInfo": "Тест",
+    "folioOperationKind": "*ПРЕДОПЛАТ",
+    "controlDate": "2026-07-27",
+    "active": true,
+    "createdDate": "2026-07-22T15:46:20.030"
+  }
+]
 ```
 
 ## 3. Изменить количество строки
