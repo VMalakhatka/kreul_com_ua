@@ -168,6 +168,8 @@ Current implementation reads only `_PARTNER`. Until `_PARTNER_PL` relationship i
 - `phone`
 - `city`
 
+TODO: confirm `_PARTNER_PL` links and map phone/city without changing the existing response field names.
+
 Bank fields are filled from `_PARTNER`:
 
 - `bankName` = `BANK_USER`

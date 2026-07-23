@@ -81,6 +81,7 @@ public class FolioPartnerDao {
                     emptyIfNull(trimToNull(rs.getString("SCT_B_USER"))),
                     emptyIfNull(trimToNull(rs.getString("COD_B_USER"))),
                     emptyIfNull(trimToNull(rs.getString("TOWNB_USER"))),
+                    // TODO: Fill phone/city from _PARTNER_PL after the relationship is confirmed.
                     "",
                     "",
                     raw
