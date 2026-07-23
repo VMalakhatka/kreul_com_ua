@@ -397,7 +397,6 @@ public class FolioOrderAccountService {
         requireText(header.payerShortName(), "folio_account_header.payerShortName");
         requireText(header.folioUser(), "folio_account_header.folioUser");
         requireText(header.sourceInfo(), "folio_account_header.sourceInfo");
-        requireText(header.additionalInfo(), "folio_account_header.additionalInfo");
         if (header.documentDate() == null) {
             throw new FolioAccountValidationException("missing_document_date", "Missing folio_account_header.documentDate");
         }

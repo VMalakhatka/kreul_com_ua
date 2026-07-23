@@ -40,7 +40,7 @@ public record FolioOrderAccountRequest(
             @NotBlank String payerShortName,
             @NotBlank String folioUser,
             @NotBlank String sourceInfo,
-            @NotBlank String additionalInfo,
+            String additionalInfo,
             String priceContractType,
             Boolean notCash,
             Boolean accountingEnabled,
