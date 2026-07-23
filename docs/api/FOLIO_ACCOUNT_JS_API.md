@@ -163,6 +163,19 @@ Required для Swagger/валидации:
 
 Часть значений JS передаёт как выбранные пользователем бизнес-реквизиты, но сами значения должны существовать или быть согласованы со справочниками ФОЛИО.
 
+Для выбора клиента WooCommerce использовать:
+
+```http
+GET /admin/folio/partners?q=баев&types=П,Д,К&limit=50&offset=0
+```
+
+Из выбранного партнёра брать:
+
+- `shortName` -> `payerShortName`
+- `name` -> `payerName`
+- `id` -> `partnerId` / Woo user meta `_folio_partner_id`
+- `type` -> Woo user meta `_folio_partner_type`
+
 | JS-поле | Таблица/справочник ФОЛИО | Как используется |
 |---|---|---|
 | `warehouseId` | `SCLAD_R.ID_SCLAD` | проверяется как существующий склад; пишется в `SCL_NAKL.ID_SCLAD`, `SCL_MOVE.ID_SCLAD`, используется для поиска `SCL_ARTC` |
