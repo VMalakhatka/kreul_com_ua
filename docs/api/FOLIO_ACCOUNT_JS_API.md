@@ -256,10 +256,12 @@ GET /admin/folio/partners?q=баев&types=П,Д,К&limit=50&offset=0
 
 Из выбранного партнёра брать:
 
+- `id` -> Woo user meta `_folio_partner_id`
 - `shortName` -> `payerShortName`
 - `name` -> `payerName`
-- `id` -> `partnerId` / Woo user meta `_folio_partner_id`
 - `type` -> Woo user meta `_folio_partner_type`
+
+Важно: для `_PARTNER` поле `id` и `shortName` в нашем API сейчас оба равны `_PARTNER.N_USER`. По документации ФОЛИО это уникальное краткое имя организации, которое переносится в `SCL_NAKL.BRIEFORG` и `SCL_MOVE.ORG_PREDM`. Поле `_PARTNER.NAMEP_USER` — имя для платежных документов; оно может быть пустым и не используется как `payerShortName`.
 
 | JS-поле | Таблица/справочник ФОЛИО | Как используется |
 |---|---|---|
@@ -267,8 +269,8 @@ GET /admin/folio/partners?q=баев&types=П,Д,К&limit=50&offset=0
 | `sku` | `SCL_ARTC.COD_ARTIC` + `SCL_ARTC.ID_SCLAD` | товарная строка должна существовать на складе |
 | `folioOperationKind` | `VID_OPER`, поле `VID_DOC` | пишется в `SCL_NAKL.VID_DOC` и `SCL_MOVE.VID_DOC`; ФОЛИО может добавлять значение вручную, но для API лучше передавать справочное значение |
 | `priceContractType` | `_KONTRCT`, поле `CONTR_POR`/`CONTRACT_N` | пишется в `SCL_NAKL.CONTR_POR` и переносится в `SCL_MOVE.CONTRACT_N` |
-| `payerName` | `_PARTNER`, полное имя внешней организации | пишется в `SCL_NAKL.ORGANIZNKL` |
-| `payerShortName` | `_PARTNER`, краткое имя внешней организации | пишется в `SCL_NAKL.BRIEFORG`, переносится в `SCL_MOVE.ORG_PREDM` |
+| `payerName` | `_PARTNER.NAME_USER`, полное имя внешней организации | пишется в `SCL_NAKL.ORGANIZNKL` |
+| `payerShortName` | `_PARTNER.N_USER`, краткое уникальное имя внешней организации | пишется в `SCL_NAKL.BRIEFORG`, переносится в `SCL_MOVE.ORG_PREDM` |
 | `receiverName` | справочник моих организаций/получателей ФОЛИО | пишется в `SCL_NAKL.MY_ORGANIZ` |
 | `sourceInfo` | `_RECLAMA`, источник информации | пишется в `SCL_NAKL.L_CP1_PLAT` и `SCL_ADDN.L_CP1_PLAT` |
 | `additionalInfo` | `DOP_INF`, дополнительная информация | пишется в `SCL_NAKL.L_CP2_PLAT` и `SCL_ADDN.L_CP2_PLAT` |

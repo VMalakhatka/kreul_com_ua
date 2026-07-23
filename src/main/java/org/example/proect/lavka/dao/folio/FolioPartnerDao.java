@@ -13,7 +13,7 @@ import java.util.Map;
 @Repository
 public class FolioPartnerDao {
 
-    private static final String ORDER_BY = " ORDER BY ISNULL(NAMEP_USER, ''), ISNULL(NAME_USER, ''), N_USER";
+    private static final String ORDER_BY = " ORDER BY N_USER, ISNULL(NAME_USER, ''), ISNULL(NAMEP_USER, '')";
 
     private final JdbcTemplate jdbc;
 
@@ -28,7 +28,7 @@ public class FolioPartnerDao {
                 Long.class,
                 parts.params().toArray()
         );
-        return total == null ? 0 : total;
+        return total;
     }
 
     public List<FolioPartnerItemResponse> find(String q, List<String> types, int limit, int offset) {
@@ -54,9 +54,9 @@ public class FolioPartnerDao {
                     """);
             QueryParts subParts = buildWhere("p2", q, types);
             sql.append(subParts.whereSql());
-            sql.append(ORDER_BY.replace("NAMEP_USER", "p2.NAMEP_USER")
+            sql.append(ORDER_BY.replace("N_USER", "p2.N_USER")
                     .replace("NAME_USER", "p2.NAME_USER")
-                    .replace("N_USER", "p2.N_USER"));
+                    .replace("NAMEP_USER", "p2.NAMEP_USER"));
             sql.append(")");
             params.addAll(subParts.params());
         }
@@ -65,15 +65,16 @@ public class FolioPartnerDao {
 
         return jdbc.query(sql.toString(), (rs, rowNum) -> {
             String id = trimToNull(rs.getString("N_USER"));
-            String shortName = trimToNull(rs.getString("NAMEP_USER"));
             String name = trimToNull(rs.getString("NAME_USER"));
             String type = trimToNull(rs.getString("MY_ORGANIZ"));
+            String paymentName = trimToNull(rs.getString("NAMEP_USER"));
             Map<String, Object> raw = new LinkedHashMap<>();
             raw.put("nUser", id);
+            raw.put("namePUser", paymentName);
 
             return new FolioPartnerItemResponse(
                     id,
-                    shortName,
+                    id,
                     name,
                     type,
                     typeLabel(type),

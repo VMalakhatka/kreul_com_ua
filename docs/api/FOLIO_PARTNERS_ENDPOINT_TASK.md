@@ -130,7 +130,7 @@ limit max: 200
 offset default: 0
 ```
 
-Implementation note: SQL Server 2000 does not support `OFFSET/FETCH` or `ROW_NUMBER()`, so pagination is implemented with bounded `TOP` queries and stable ordering by `_PARTNER.NAMEP_USER`, `_PARTNER.NAME_USER`, `_PARTNER.N_USER`.
+Implementation note: SQL Server 2000 does not support `OFFSET/FETCH` or `ROW_NUMBER()`, so pagination is implemented with bounded `TOP` queries and stable ordering by `_PARTNER.N_USER`, `_PARTNER.NAME_USER`, `_PARTNER.NAMEP_USER`.
 
 ## Response
 
@@ -141,9 +141,9 @@ Suggested JSON:
   "ok": true,
   "items": [
     {
-      "id": "123",
-      "shortName": "БАЕВСКАЯ",
-      "name": "Баевская Людмила Александровна",
+      "id": "БОНД АНН",
+      "shortName": "БОНД АНН",
+      "name": "Бондаренко Ганна Ігорівна ФОП",
       "type": "К",
       "typeLabel": "Покупатель",
       "bankName": "",
@@ -153,7 +153,8 @@ Suggested JSON:
       "phone": "",
       "city": "",
       "raw": {
-        "nUser": "123"
+        "nUser": "БОНД АНН",
+        "namePUser": ""
       }
     }
   ],
@@ -177,15 +178,24 @@ Bank fields are filled from `_PARTNER`:
 - `bankCode` = `COD_B_USER`
 - `bankCity` = `TOWNB_USER`
 
+Partner identity fields are filled from `_PARTNER` as follows:
+
+- `id` = `N_USER`
+- `shortName` = `N_USER`
+- `name` = `NAME_USER`
+- `raw.namePUser` = `NAMEP_USER`
+
+Important: according to `Структура7.doc`, `_PARTNER.N_USER` is the unique short organization name and is copied by Folio into `SCL_NAKL.BRIEFORG` and `SCL_MOVE.ORG_PREDM`. `_PARTNER.NAME_USER` is the full organization name for `SCL_NAKL.ORGANIZNKL` / printed and screen forms. `_PARTNER.NAMEP_USER` is the payment-document name and may be empty; it is not the short name.
+
 ## Minimum Required Fields
 
 For the first Woo integration step, each item must contain:
 
 ```json
 {
-  "id": "stable Folio primary key",
-  "shortName": "short client name for BRIEFORG / payerShortName",
-  "name": "full client name for ORGANIZNKL / payerName",
+  "id": "_PARTNER.N_USER, stable Folio short organization key",
+  "shortName": "_PARTNER.N_USER for BRIEFORG / payerShortName",
+  "name": "_PARTNER.NAME_USER, full client name for ORGANIZNKL / payerName",
   "type": "MY_ORGANIZ",
   "typeLabel": "human-readable type label"
 }
