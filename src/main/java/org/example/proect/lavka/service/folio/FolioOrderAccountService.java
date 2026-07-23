@@ -51,10 +51,11 @@ public class FolioOrderAccountService {
 
         List<FolioOrderAccountResponse.Document> documents = new ArrayList<>();
         List<FolioOrderAccountResponse.ApiMessage> warnings = new ArrayList<>(allocation.warnings());
+        PreviewNumberAllocator previewNumbers = previewOnly ? previewNumberAllocator(header) : null;
 
         for (var group : allocation.accountingGroups().values()) {
             documents.add(previewOnly
-                    ? previewDocument(group, header, accountingEnabled, orderMode.documentType())
+                    ? previewDocument(group, accountingEnabled, orderMode.documentType(), previewNumbers.next())
                     : createDocument(request, group, accountingEnabled, orderMode.documentType()));
         }
 
@@ -69,7 +70,7 @@ public class FolioOrderAccountService {
                     allocation.missingItems()
             );
             documents.add(previewOnly
-                    ? previewDocument(missingGroup, header, false, "missing_stock_account")
+                    ? previewDocument(missingGroup, false, "missing_stock_account", previewNumbers.next())
                     : createDocument(request, missingGroup, false, "missing_stock_account"));
         }
 
@@ -223,13 +224,13 @@ public class FolioOrderAccountService {
     }
 
     private FolioOrderAccountResponse.Document previewDocument(DocumentGroup group,
-                                                               FolioOrderAccountRequest.Header header,
                                                                boolean accountingEnabled,
-                                                               String documentType) {
+                                                               String documentType,
+                                                               PreviewNumber previewNumber) {
         List<AllocatedItem> mergedItems = mergeItems(group.items());
         return new FolioOrderAccountResponse.Document(
-                null,
-                documentNumberOrPreview(header.documentNumber()),
+                previewNumber.documentId(),
+                previewNumber.documentNumber(),
                 documentType,
                 "preview",
                 group.warehouseId(),
@@ -341,11 +342,23 @@ public class FolioOrderAccountService {
         return accountDao.nextVisibleDocumentNumber(properties.getTypeDoc()).stripTrailingZeros().toPlainString();
     }
 
-    private String documentNumberOrPreview(String documentNumber) {
-        if (documentNumber != null && !documentNumber.trim().isEmpty()) {
-            return documentNumber.trim();
+    private PreviewNumberAllocator previewNumberAllocator(FolioOrderAccountRequest.Header header) {
+        return new PreviewNumberAllocator(
+                accountDao.peekNextDocumentId(),
+                previewStartDocumentNumber(header.documentNumber())
+        );
+    }
+
+    private BigDecimal previewStartDocumentNumber(String documentNumber) {
+        if (documentNumber == null || documentNumber.trim().isEmpty()) {
+            return accountDao.peekNextVisibleDocumentNumber(properties.getTypeDoc());
         }
-        return "AUTO";
+        try {
+            return new BigDecimal(documentNumber.trim());
+        } catch (NumberFormatException e) {
+            throw new FolioAccountValidationException("document_number_not_numeric",
+                    "SCL_NAKL.N_PLAT_POR is float in Folio, documentNumber must be numeric: " + documentNumber);
+        }
     }
 
     private String missingAdditionalInfo(String value, DocumentGroup group, boolean accountingEnabled) {
@@ -418,6 +431,30 @@ public class FolioOrderAccountService {
 
     private record OrderMode(boolean accountingEnabled,
                              String documentType) {
+    }
+
+    private record PreviewNumber(long documentId,
+                                 String documentNumber) {
+    }
+
+    private static class PreviewNumberAllocator {
+        private long nextDocumentId;
+        private BigDecimal nextDocumentNumber;
+
+        private PreviewNumberAllocator(long nextDocumentId, BigDecimal nextDocumentNumber) {
+            this.nextDocumentId = nextDocumentId;
+            this.nextDocumentNumber = nextDocumentNumber;
+        }
+
+        private PreviewNumber next() {
+            PreviewNumber result = new PreviewNumber(
+                    nextDocumentId,
+                    nextDocumentNumber.stripTrailingZeros().toPlainString()
+            );
+            nextDocumentId++;
+            nextDocumentNumber = nextDocumentNumber.add(BigDecimal.ONE);
+            return result;
+        }
     }
 
     private record DocumentGroup(int warehouseId,

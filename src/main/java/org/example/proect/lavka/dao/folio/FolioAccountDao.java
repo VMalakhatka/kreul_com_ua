@@ -123,6 +123,17 @@ public class FolioAccountDao {
         return next;
     }
 
+    public long peekNextDocumentId() {
+        Long next = jdbc.queryForObject("""
+                SELECT ISNULL(MAX(UNICUM_NUM), 0) + 1
+                FROM dbo.SCL_NAKL
+                """, Long.class);
+        if (next == null) {
+            throw new IllegalStateException("Cannot preview SCL_NAKL.UNICUM_NUM");
+        }
+        return next;
+    }
+
     public BigDecimal nextVisibleDocumentNumber(String typeDoc) {
         BigDecimal next = jdbc.queryForObject("""
                 SELECT ISNULL(MAX(N_PLAT_POR), 0) + 1
@@ -131,6 +142,18 @@ public class FolioAccountDao {
                 """, BigDecimal.class, typeDoc);
         if (next == null) {
             throw new IllegalStateException("Cannot allocate SCL_NAKL.N_PLAT_POR");
+        }
+        return next;
+    }
+
+    public BigDecimal peekNextVisibleDocumentNumber(String typeDoc) {
+        BigDecimal next = jdbc.queryForObject("""
+                SELECT ISNULL(MAX(N_PLAT_POR), 0) + 1
+                FROM dbo.SCL_NAKL
+                WHERE TYPE_DOC = ?
+                """, BigDecimal.class, typeDoc);
+        if (next == null) {
+            throw new IllegalStateException("Cannot preview SCL_NAKL.N_PLAT_POR");
         }
         return next;
     }
