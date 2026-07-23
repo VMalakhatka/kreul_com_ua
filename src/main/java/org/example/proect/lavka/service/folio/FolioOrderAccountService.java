@@ -46,7 +46,7 @@ public class FolioOrderAccountService {
         OrderMode orderMode = orderMode(request);
         boolean accountingEnabled = orderMode.accountingEnabled();
         AllocationResult allocation = accountingEnabled
-                ? allocateAccounting(request)
+                ? allocateAccounting(request, !previewOnly)
                 : allocateSingleNonAccounting(request, "non_accounting");
 
         List<FolioOrderAccountResponse.Document> documents = new ArrayList<>();
@@ -83,7 +83,7 @@ public class FolioOrderAccountService {
         );
     }
 
-    private AllocationResult allocateAccounting(FolioOrderAccountRequest request) {
+    private AllocationResult allocateAccounting(FolioOrderAccountRequest request, boolean lockStockRows) {
         Map<Integer, DocumentGroup> groups = new LinkedHashMap<>();
         List<AllocatedItem> missing = new ArrayList<>();
         List<FolioOrderAccountResponse.ApiMessage> warnings = new ArrayList<>();
@@ -102,7 +102,9 @@ public class FolioOrderAccountService {
                     int warehouseId = parseWarehouseId(candidate.id(), sku);
                     String stockKey = sku + "\u0000" + warehouseId;
                     BigDecimal available = availableCache.computeIfAbsent(stockKey,
-                            k -> lockOrReadStock(sku, warehouseId).map(FolioAccountDao.StockRow::freeQuantity).orElse(BigDecimal.ZERO));
+                            k -> readStock(sku, warehouseId, lockStockRows)
+                                    .map(FolioAccountDao.StockRow::freeQuantity)
+                                    .orElse(BigDecimal.ZERO));
                     if (available.compareTo(BigDecimal.ZERO) <= 0) {
                         continue;
                     }
@@ -277,8 +279,8 @@ public class FolioOrderAccountService {
         return new ArrayList<>(merged.values());
     }
 
-    private Optional<FolioAccountDao.StockRow> lockOrReadStock(String sku, int warehouseId) {
-        return accountDao.lockStock(sku, warehouseId);
+    private Optional<FolioAccountDao.StockRow> readStock(String sku, int warehouseId, boolean lockStockRows) {
+        return lockStockRows ? accountDao.lockStock(sku, warehouseId) : accountDao.findStock(sku, warehouseId);
     }
 
     private List<FolioOrderAccountRequest.WarehouseCandidate> sortedWarehouses(
