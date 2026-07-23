@@ -103,14 +103,17 @@ Content-Type: application/json
 |---|---|
 | `preview_only=true` | только расчет split-а и ответа, без записи в ФОЛИО |
 | `preview_only=false` | создание документов через проверенный низкоуровневый `POST /admin/folio/accounts` |
-| `folio_account_header.accountingEnabled=true` | учитываемые счета, резерв уменьшается |
-| `folio_account_header.accountingEnabled=false` | один неучитываемый счет на приоритетном складе, резерв не меняется |
+| `woo_order.status=processing` | обычный учитываемый счет, резерв уменьшается |
+| `woo_order.status=pc-draft` | один неучитываемый счет на приоритетном складе, резерв не меняется |
+| `woo_order.status=completed` | сейчас отклоняется: это расходная накладная, а endpoint создает только счета |
+
+Поле `folio_account_header.accountingEnabled` оставлено для совместимости с существующим JSON, но при наличии `woo_order.status` режим определяется статусом Woo order.
 
 Важные правила текущей реализации:
 
 - поддерживается `schema_version = "folio-order-preview/v1"`;
 - входные root-поля принимаются в snake_case как в Woo-контракте;
-- `folio_account_header` использует уже существующие camelCase-поля `CreateFolioAccountRequest`;
+- `folio_account_header` повторяет Woo-контракт и не содержит `items[]`; товарные строки берутся только из root `items[]`;
 - для реальных учитываемых счетов остаток распределяется по складам-кандидатам от меньшего `priority` к большему;
 - одинаковый SKU внутри одного складского счета объединяется в одну строку, если цена совпадает;
 - одинаковый SKU с разной ценой в одном складском счете сейчас отклоняется как `duplicate_sku_different_price`;

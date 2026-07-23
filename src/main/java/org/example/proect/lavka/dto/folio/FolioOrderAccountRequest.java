@@ -8,6 +8,8 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 public record FolioOrderAccountRequest(
@@ -16,13 +18,43 @@ public record FolioOrderAccountRequest(
         String source,
         String intent,
         @JsonProperty("split_strategy") String splitStrategy,
-        @JsonProperty("folio_account_header") @NotNull CreateFolioAccountRequest folioAccountHeader,
+        @JsonProperty("folio_account_header") @NotNull @Valid Header folioAccountHeader,
         @JsonProperty("woo_order") @NotNull @Valid WooOrder wooOrder,
         @JsonProperty("folio_client") @Valid FolioClient folioClient,
         @JsonProperty("folio_document_link") @Valid FolioDocumentLink folioDocumentLink,
         @Valid Billing billing,
         @NotEmpty List<@Valid Item> items
 ) {
+    public record Header(
+            @NotBlank String externalRequestId,
+            String documentNumber,
+            @NotNull LocalDateTime documentDate,
+            Integer warehouseId,
+            @NotBlank String operationType,
+            Integer partnerId,
+            String comment,
+            @NotNull LocalDate controlDate,
+            @NotBlank String folioOperationKind,
+            @NotBlank String payerName,
+            @NotBlank String receiverName,
+            @NotBlank String payerShortName,
+            @NotBlank String folioUser,
+            @NotBlank String sourceInfo,
+            @NotBlank String additionalInfo,
+            String priceContractType,
+            Boolean notCash,
+            Boolean accountingEnabled,
+            Boolean returnFlag,
+            BigDecimal currencyAmount,
+            BigDecimal retailAmount,
+            String payerCity,
+            String directorName,
+            String accountantName,
+            String payerPhone,
+            String deliveryInfo
+    ) {
+    }
+
     public record WooOrder(
             @NotNull Long id,
             String number,

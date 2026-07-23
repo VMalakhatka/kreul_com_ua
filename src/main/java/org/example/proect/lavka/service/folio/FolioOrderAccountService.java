@@ -42,8 +42,9 @@ public class FolioOrderAccountService {
         boolean previewOnly = Boolean.TRUE.equals(request.previewOnly());
         validateRequest(request);
 
-        CreateFolioAccountRequest header = request.folioAccountHeader();
-        boolean accountingEnabled = valueOrDefault(header.accountingEnabled(), true);
+        FolioOrderAccountRequest.Header header = request.folioAccountHeader();
+        OrderMode orderMode = orderMode(request);
+        boolean accountingEnabled = orderMode.accountingEnabled();
         AllocationResult allocation = accountingEnabled
                 ? allocateAccounting(request)
                 : allocateSingleNonAccounting(request, "non_accounting");
@@ -53,9 +54,8 @@ public class FolioOrderAccountService {
 
         for (var group : allocation.accountingGroups().values()) {
             documents.add(previewOnly
-                    ? previewDocument(group, header, accountingEnabled)
-                    : createDocument(request, group, accountingEnabled,
-                            accountingEnabled ? "account" : "non_accounting_account"));
+                    ? previewDocument(group, header, accountingEnabled, orderMode.documentType())
+                    : createDocument(request, group, accountingEnabled, orderMode.documentType()));
         }
 
         if (!allocation.missingItems().isEmpty()) {
@@ -69,7 +69,7 @@ public class FolioOrderAccountService {
                     allocation.missingItems()
             );
             documents.add(previewOnly
-                    ? previewDocument(missingGroup, header, false)
+                    ? previewDocument(missingGroup, header, false, "missing_stock_account")
                     : createDocument(request, missingGroup, false, "missing_stock_account"));
         }
 
@@ -161,7 +161,7 @@ public class FolioOrderAccountService {
                                                              DocumentGroup group,
                                                              boolean accountingEnabled,
                                                              String documentType) {
-        CreateFolioAccountRequest base = source.folioAccountHeader();
+        FolioOrderAccountRequest.Header base = source.folioAccountHeader();
         List<AllocatedItem> mergedItems = mergeItems(group.items());
         CreateFolioAccountRequest request = new CreateFolioAccountRequest(
                 group.externalRequestId(),
@@ -172,14 +172,14 @@ public class FolioOrderAccountService {
                 base.partnerId(),
                 truncate(base.comment(), 5),
                 base.controlDate(),
-                base.folioOperationKind(),
-                base.payerName(),
-                base.receiverName(),
-                base.payerShortName(),
-                base.folioUser(),
-                base.sourceInfo(),
-                missingAdditionalInfo(base.additionalInfo(), group, accountingEnabled),
-                base.priceContractType(),
+                truncate(base.folioOperationKind(), 20),
+                truncate(base.payerName(), 50),
+                truncate(base.receiverName(), 50),
+                truncate(base.payerShortName(), 8),
+                truncate(base.folioUser(), 20),
+                truncate(base.sourceInfo(), 30),
+                truncate(missingAdditionalInfo(base.additionalInfo(), group, accountingEnabled), 30),
+                truncate(base.priceContractType(), 10),
                 base.notCash(),
                 accountingEnabled,
                 base.returnFlag(),
@@ -189,11 +189,11 @@ public class FolioOrderAccountService {
                 mergedItems.stream()
                         .map(AllocatedItem::amount)
                         .reduce(BigDecimal.ZERO, BigDecimal::add),
-                base.payerCity(),
-                base.directorName(),
-                base.accountantName(),
-                base.payerPhone(),
-                base.deliveryInfo(),
+                truncate(base.payerCity(), 28),
+                truncate(base.directorName(), 75),
+                truncate(base.accountantName(), 75),
+                truncate(base.payerPhone(), 20),
+                truncate(base.deliveryInfo(), 150),
                 mergedItems.stream()
                         .map(i -> new CreateFolioAccountItemRequest(
                                 i.sku(),
@@ -221,13 +221,14 @@ public class FolioOrderAccountService {
     }
 
     private FolioOrderAccountResponse.Document previewDocument(DocumentGroup group,
-                                                               CreateFolioAccountRequest header,
-                                                               boolean accountingEnabled) {
+                                                               FolioOrderAccountRequest.Header header,
+                                                               boolean accountingEnabled,
+                                                               String documentType) {
         List<AllocatedItem> mergedItems = mergeItems(group.items());
         return new FolioOrderAccountResponse.Document(
                 null,
                 documentNumberOrPreview(header.documentNumber()),
-                accountingEnabled ? "account" : "missing_stock_account",
+                documentType,
                 "preview",
                 group.warehouseId(),
                 accountingEnabled,
@@ -305,6 +306,23 @@ public class FolioOrderAccountService {
                 .findFirst();
     }
 
+    private OrderMode orderMode(FolioOrderAccountRequest request) {
+        String status = normalize(request.wooOrder().status());
+        if ("processing".equals(status)) {
+            return new OrderMode(true, "account");
+        }
+        if ("pc-draft".equals(status)) {
+            return new OrderMode(false, "non_accounting_account");
+        }
+        if ("completed".equals(status)) {
+            throw new FolioAccountValidationException(
+                    "unsupported_woo_order_status",
+                    "Woo status completed is расходная накладная, not account. This endpoint creates only Folio accounts."
+            );
+        }
+        return new OrderMode(valueOrDefault(request.folioAccountHeader().accountingEnabled(), true), "account");
+    }
+
     private int parseWarehouseId(String value, String sku) {
         try {
             return Integer.parseInt(value.trim());
@@ -359,12 +377,16 @@ public class FolioOrderAccountService {
         return value == null ? defaultValue : value;
     }
 
+    private String normalize(String value) {
+        return value == null ? "" : value.trim().toLowerCase();
+    }
+
     private void validateRequest(FolioOrderAccountRequest request) {
         if (!SUPPORTED_SCHEMA.equals(request.schemaVersion())) {
             throw new FolioAccountValidationException("unsupported_schema_version",
                     "Unsupported Folio order schema: " + request.schemaVersion());
         }
-        CreateFolioAccountRequest header = request.folioAccountHeader();
+        FolioOrderAccountRequest.Header header = request.folioAccountHeader();
         requireText(header.externalRequestId(), "folio_account_header.externalRequestId");
         requireText(header.operationType(), "folio_account_header.operationType");
         requireText(header.folioOperationKind(), "folio_account_header.folioOperationKind");
@@ -391,6 +413,10 @@ public class FolioOrderAccountService {
     private record AllocationResult(Map<Integer, DocumentGroup> accountingGroups,
                                     List<AllocatedItem> missingItems,
                                     List<FolioOrderAccountResponse.ApiMessage> warnings) {
+    }
+
+    private record OrderMode(boolean accountingEnabled,
+                             String documentType) {
     }
 
     private record DocumentGroup(int warehouseId,
