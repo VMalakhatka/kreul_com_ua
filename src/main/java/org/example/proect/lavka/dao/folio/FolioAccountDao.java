@@ -123,6 +123,18 @@ public class FolioAccountDao {
         return next;
     }
 
+    public BigDecimal nextVisibleDocumentNumber(String typeDoc) {
+        BigDecimal next = jdbc.queryForObject("""
+                SELECT ISNULL(MAX(N_PLAT_POR), 0) + 1
+                FROM dbo.SCL_NAKL WITH (TABLOCKX, HOLDLOCK)
+                WHERE TYPE_DOC = ?
+                """, BigDecimal.class, typeDoc);
+        if (next == null) {
+            throw new IllegalStateException("Cannot allocate SCL_NAKL.N_PLAT_POR");
+        }
+        return next;
+    }
+
     public long nextMovementId() {
         Long next = jdbc.queryForObject("""
                 SELECT ISNULL(MAX(RECNO), 0) + 1

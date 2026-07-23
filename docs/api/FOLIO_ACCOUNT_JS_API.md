@@ -73,6 +73,91 @@ HTTP/1.1 201 Created
 
 Примечание: финальное ТЗ хочет имена `success`, `id`, `lineId`, `status`, `totalQuantity`, `warnings` и stock-блок. Это ещё не приведено к финальному контракту, чтобы не ломать уже проверенный GET без отдельного решения.
 
+## 1.0.1. Создать счета из Woo order с распределением по складам
+
+Высокоуровневый endpoint для payload-а из WooCommerce:
+
+```http
+POST /admin/folio/order-accounts
+Content-Type: application/json
+```
+
+Источник входного контракта Woo:
+
+```text
+/Users/admin/Local Sites/paint/app/public/docs/FOLIO_ORDER_JSON_CONTRACT.md
+```
+
+Назначение:
+
+- Java принимает один Woo order;
+- Woo не разбивает заказ на несколько документов сам;
+- Java распределяет строки по `items[].allocations[].folio_warehouses` с учетом `priority`;
+- для каждого выбранного склада создается отдельный счет ФОЛИО;
+- если свободного остатка не хватило, недостающее количество попадает в отдельный неучитываемый счет;
+- если `folio_account_header.documentNumber` пустой, Java генерирует следующий числовой `SCL_NAKL.N_PLAT_POR`.
+
+Режимы:
+
+| Поле | Поведение |
+|---|---|
+| `preview_only=true` | только расчет split-а и ответа, без записи в ФОЛИО |
+| `preview_only=false` | создание документов через проверенный низкоуровневый `POST /admin/folio/accounts` |
+| `folio_account_header.accountingEnabled=true` | учитываемые счета, резерв уменьшается |
+| `folio_account_header.accountingEnabled=false` | один неучитываемый счет на приоритетном складе, резерв не меняется |
+
+Важные правила текущей реализации:
+
+- поддерживается `schema_version = "folio-order-preview/v1"`;
+- входные root-поля принимаются в snake_case как в Woo-контракте;
+- `folio_account_header` использует уже существующие camelCase-поля `CreateFolioAccountRequest`;
+- для реальных учитываемых счетов остаток распределяется по складам-кандидатам от меньшего `priority` к большему;
+- одинаковый SKU внутри одного складского счета объединяется в одну строку, если цена совпадает;
+- одинаковый SKU с разной ценой в одном складском счете сейчас отклоняется как `duplicate_sku_different_price`;
+- длинный `folio_account_header.comment` обрезается до 5 символов, потому что он пишется в короткое поле `SCL_NAKL.DOPN_SCHET`; подробный текст заказа нужно передавать через `additionalInfo` / `deliveryInfo`.
+
+Минимальный ответ:
+
+```json
+{
+  "ok": true,
+  "preview_only": false,
+  "woo_order_id": 116873,
+  "documents": [
+    {
+      "document_id": 753600,
+      "document_number": "123456840",
+      "document_type": "account",
+      "document_status": "created",
+      "folio_warehouse_id": 7,
+      "accounting_enabled": true,
+      "source_external_request_id": "woo-116873:wh:7",
+      "document_created_at": "2026-07-23T12:34:56",
+      "items": [
+        {
+          "order_item_id": 2477,
+          "sku": "CR-CE0900056027",
+          "quantity": 1,
+          "price": 130.0,
+          "amount": 130.0,
+          "folio_warehouse_id": 7,
+          "allocation_status": "allocated"
+        }
+      ]
+    }
+  ],
+  "warnings": [],
+  "errors": []
+}
+```
+
+Если часть товара не хватило:
+
+- учитываемые документы создаются только на реально доступное количество;
+- остаток создается отдельным документом `document_type = "missing_stock_account"`;
+- у этого документа `accounting_enabled = false`;
+- в `warnings` добавляется `INSUFFICIENT_AVAILABLE_STOCK`.
+
 ## 1.1. Расширенные реквизиты шапки
 
 По Excel-снимку `/Volumes/BackUp/Nakl_field.xls` счёт, созданный минимальным API (`753538`), записался в SQL, но не появился в реестре ФОЛИО. Видимый счёт (`753529`) и новый ручной счёт (`753546`) имеют намного более полную шапку `SCL_NAKL`.
