@@ -103,7 +103,7 @@ Content-Type: application/json
 | Поле | Поведение |
 |---|---|
 | `preview_only=true` | только расчет split-а и ответа, без записи в ФОЛИО; возвращает прогнозные `document_id` / `document_number`, но не резервирует их |
-| `preview_only=false` | создание документов через проверенный низкоуровневый `POST /admin/folio/accounts` |
+| `preview_only=false` | создание документов через проверенный низкоуровневый `POST /admin/folio/accounts`; HTTP `201 Created` |
 | `woo_order.status=processing` / `on-hold` | обычный учитываемый счет, резерв уменьшается |
 | `woo_order.status=pc-draft` | один неучитываемый счет на приоритетном складе, резерв не меняется |
 | `woo_order.status=completed` | сейчас отклоняется: это расходная накладная, а endpoint создает только счета |
@@ -120,7 +120,47 @@ Content-Type: application/json
 - одинаковый SKU с разной ценой в одном складском счете сейчас отклоняется как `duplicate_sku_different_price`;
 - длинный `folio_account_header.comment` обрезается до 5 символов, потому что он пишется в короткое поле `SCL_NAKL.DOPN_SCHET`; подробный текст заказа нужно передавать через `additionalInfo` / `deliveryInfo`.
 
-Минимальный ответ:
+### Ответ для JS
+
+Поля верхнего уровня:
+
+| Поле | Тип | Значение |
+|---|---|---|
+| `ok` | boolean | общий результат обработки запроса |
+| `preview_only` | boolean | повторяет режим запроса |
+| `woo_order_id` | number | `woo_order.id` из запроса |
+| `documents` | array | один или несколько созданных/рассчитанных документов |
+| `warnings` | array | предупреждения, например недостающий остаток |
+| `errors` | array | сейчас обычно пустой; ошибки валидации идут стандартным error-response проекта |
+
+Поля `documents[]`:
+
+| Поле | Тип | Значение |
+|---|---|---|
+| `document_id` | number | `SCL_NAKL.UNICUM_NUM`; в preview это прогнозный ID |
+| `document_number` | string | видимый номер `SCL_NAKL.N_PLAT_POR`; в preview это прогнозный номер |
+| `document_type` | string | `account`, `non_accounting_account` или `missing_stock_account` |
+| `document_status` | string | `preview`, `created`, `non_accounting` или `missing_stock` |
+| `folio_warehouse_id` | number | склад ФОЛИО для документа |
+| `accounting_enabled` | boolean | влияет на `STND_UCHET` и резервирование |
+| `source_external_request_id` | string | idempotency-key конкретного Folio-документа |
+| `document_date` | string | дата документа, ISO `YYYY-MM-DDTHH:mm:ss` |
+| `document_created_at` | string | дата создания в Java/ФОЛИО, ISO `YYYY-MM-DDTHH:mm:ss.SSS` |
+| `items` | array | строки документа |
+
+Поля `documents[].items[]`:
+
+| Поле | Тип | Значение |
+|---|---|---|
+| `order_item_id` | number | Woo order item ID |
+| `sku` | string | артикул |
+| `quantity` | number | количество в этом Folio-документе |
+| `price` | number | цена за единицу |
+| `amount` | number | сумма строки |
+| `folio_warehouse_id` | number | склад строки |
+| `allocation_status` | string | `allocated`, `missing_stock` или `non_accounting` |
+
+Пример успешного ответа с одним учитываемым счетом:
 
 ```json
 {
@@ -136,7 +176,8 @@ Content-Type: application/json
       "folio_warehouse_id": 7,
       "accounting_enabled": true,
       "source_external_request_id": "woo-116873:wh:7",
-      "document_created_at": "2026-07-23T12:34:56",
+      "document_date": "2026-07-23T00:00:00",
+      "document_created_at": "2026-07-23T12:34:56.123",
       "items": [
         {
           "order_item_id": 2477,
@@ -159,8 +200,37 @@ Content-Type: application/json
 
 - учитываемые документы создаются только на реально доступное количество;
 - остаток создается отдельным документом `document_type = "missing_stock_account"`;
+- у этого документа `document_status = "missing_stock"`;
 - у этого документа `accounting_enabled = false`;
+- в ФОЛИО физически создаются `SCL_NAKL`, `SCL_ADDN`, `SCL_MOVE`, но резерв/остатки не изменяются;
 - в `warnings` добавляется `INSUFFICIENT_AVAILABLE_STOCK`.
+
+Пример блока недостающего товара:
+
+```json
+{
+  "document_id": 753695,
+  "document_number": "1000000174",
+  "document_type": "missing_stock_account",
+  "document_status": "missing_stock",
+  "folio_warehouse_id": 5,
+  "accounting_enabled": false,
+  "source_external_request_id": "woo-113252:missing",
+  "document_date": "2026-07-24T00:00:00",
+  "document_created_at": "2026-07-25T09:41:53.63",
+  "items": [
+    {
+      "order_item_id": 2246,
+      "sku": "РСУ-6011",
+      "quantity": 1,
+      "price": 269,
+      "amount": 269,
+      "folio_warehouse_id": 5,
+      "allocation_status": "missing_stock"
+    }
+  ]
+}
+```
 
 ## 1.1. Расширенные реквизиты шапки
 
