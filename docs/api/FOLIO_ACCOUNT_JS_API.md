@@ -104,7 +104,7 @@ Content-Type: application/json
 |---|---|
 | `preview_only=true` | только расчет split-а и ответа, без записи в ФОЛИО; возвращает прогнозные `document_id` / `document_number`, но не резервирует их |
 | `preview_only=false` | создание документов через проверенный низкоуровневый `POST /admin/folio/accounts` |
-| `woo_order.status=processing` | обычный учитываемый счет, резерв уменьшается |
+| `woo_order.status=processing` / `on-hold` | обычный учитываемый счет, резерв уменьшается |
 | `woo_order.status=pc-draft` | один неучитываемый счет на приоритетном складе, резерв не меняется |
 | `woo_order.status=completed` | сейчас отклоняется: это расходная накладная, а endpoint создает только счета |
 

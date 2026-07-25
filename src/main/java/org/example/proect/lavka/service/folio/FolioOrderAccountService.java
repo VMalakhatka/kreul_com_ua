@@ -55,7 +55,7 @@ public class FolioOrderAccountService {
 
         for (var group : allocation.accountingGroups().values()) {
             documents.add(previewOnly
-                    ? previewDocument(group, accountingEnabled, orderMode.documentType(), previewNumbers.next())
+                    ? previewDocument(group, header.documentDate(), accountingEnabled, orderMode.documentType(), previewNumbers.next())
                     : createDocument(request, group, accountingEnabled, orderMode.documentType()));
         }
 
@@ -70,7 +70,7 @@ public class FolioOrderAccountService {
                     allocation.missingItems()
             );
             documents.add(previewOnly
-                    ? previewDocument(missingGroup, false, "missing_stock_account", previewNumbers.next())
+                    ? previewDocument(missingGroup, header.documentDate(), false, "missing_stock_account", previewNumbers.next())
                     : createDocument(request, missingGroup, false, "missing_stock_account"));
         }
 
@@ -218,12 +218,14 @@ public class FolioOrderAccountService {
                 group.warehouseId(),
                 accountingEnabled,
                 group.externalRequestId(),
+                account.documentDate(),
                 account.createdDate(),
                 toResponseItems(mergedItems)
         );
     }
 
     private FolioOrderAccountResponse.Document previewDocument(DocumentGroup group,
+                                                               LocalDateTime documentDate,
                                                                boolean accountingEnabled,
                                                                String documentType,
                                                                PreviewNumber previewNumber) {
@@ -236,6 +238,7 @@ public class FolioOrderAccountService {
                 group.warehouseId(),
                 accountingEnabled,
                 group.externalRequestId(),
+                documentDate,
                 LocalDateTime.now(),
                 toResponseItems(mergedItems)
         );
@@ -311,7 +314,7 @@ public class FolioOrderAccountService {
 
     private OrderMode orderMode(FolioOrderAccountRequest request) {
         String status = normalize(request.wooOrder().status());
-        if ("processing".equals(status)) {
+        if ("processing".equals(status) || "on-hold".equals(status)) {
             return new OrderMode(true, "account");
         }
         if ("pc-draft".equals(status)) {

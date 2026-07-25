@@ -1,5 +1,6 @@
 package org.example.proect.lavka.dto.folio;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.math.BigDecimal;
@@ -23,7 +24,12 @@ public record FolioOrderAccountResponse(
             @JsonProperty("folio_warehouse_id") Integer folioWarehouseId,
             @JsonProperty("accounting_enabled") boolean accountingEnabled,
             @JsonProperty("source_external_request_id") String sourceExternalRequestId,
-            @JsonProperty("document_created_at") LocalDateTime documentCreatedAt,
+            @JsonProperty("document_date")
+            @JsonFormat(shape = JsonFormat.Shape.STRING)
+            LocalDateTime documentDate,
+            @JsonProperty("document_created_at")
+            @JsonFormat(shape = JsonFormat.Shape.STRING)
+            LocalDateTime documentCreatedAt,
             List<Item> items
     ) {
     }
