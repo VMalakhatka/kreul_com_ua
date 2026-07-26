@@ -203,6 +203,7 @@ Content-Type: application/json
 - у этого документа `document_status = "missing_stock"`;
 - у этого документа `accounting_enabled = false`;
 - в ФОЛИО физически создаются `SCL_NAKL`, `SCL_ADDN`, `SCL_MOVE`, но резерв/остатки не изменяются;
+- для такого документа `Источник информации` / `L_CP1_PLAT` пишется как `нет на складе`;
 - в `warnings` добавляется `INSUFFICIENT_AVAILABLE_STOCK`.
 
 Пример блока недостающего товара:

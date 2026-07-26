@@ -180,7 +180,7 @@ public class FolioOrderAccountService {
                 truncate(base.receiverName(), 50),
                 truncate(base.payerShortName(), 8),
                 truncate(base.folioUser(), 20),
-                truncate(base.sourceInfo(), 30),
+                truncate(sourceInfoForDocument(base.sourceInfo(), documentType), 30),
                 truncate(missingAdditionalInfo(base.additionalInfo(), group, accountingEnabled), 30),
                 truncate(base.priceContractType(), 10),
                 base.notCash(),
@@ -374,6 +374,13 @@ public class FolioOrderAccountService {
         }
         String result = value.trim() + " / " + marker;
         return result.length() > 30 ? result.substring(0, 30) : result;
+    }
+
+    private String sourceInfoForDocument(String value, String documentType) {
+        if ("missing_stock_account".equals(documentType)) {
+            return "нет на складе";
+        }
+        return value;
     }
 
     private String truncate(String value, int maxLength) {
