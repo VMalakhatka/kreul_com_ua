@@ -135,25 +135,45 @@ public class FolioAccountDao {
     }
 
     public BigDecimal nextVisibleDocumentNumber(String typeDoc) {
+        return nextVisibleDocumentNumber(FolioDocumentCounterCode.ACCOUNT_ACCOUNTED);
+    }
+
+    public BigDecimal nextVisibleDocumentNumber(FolioDocumentCounterCode counterCode) {
         BigDecimal next = jdbc.queryForObject("""
-                SELECT ISNULL(MAX(N_PLAT_POR), 0) + 1
-                FROM dbo.SCL_NAKL WITH (TABLOCKX, HOLDLOCK)
-                WHERE TYPE_DOC = ?
-                """, BigDecimal.class, typeDoc);
+                SELECT N_3
+                FROM dbo.NSF_ORG WITH (UPDLOCK, HOLDLOCK)
+                WHERE ID_SCLAD = 0
+                  AND RIGHT(NAME_USER, 2) = ?
+                """, BigDecimal.class, counterCode.databaseSuffix());
         if (next == null) {
-            throw new IllegalStateException("Cannot allocate SCL_NAKL.N_PLAT_POR");
+            throw new IllegalStateException("Cannot allocate visible Folio document number from NSF_ORG.N_3");
+        }
+        int updated = jdbc.update("""
+                UPDATE dbo.NSF_ORG
+                SET N_3 = N_3 + 1
+                WHERE ID_SCLAD = 0
+                  AND RIGHT(NAME_USER, 2) = ?
+                """, counterCode.databaseSuffix());
+        if (updated != 1) {
+            throw new IllegalStateException("Cannot increment NSF_ORG.N_3 for counter " + counterCode.databaseSuffix()
+                    + ": updated rows=" + updated);
         }
         return next;
     }
 
     public BigDecimal peekNextVisibleDocumentNumber(String typeDoc) {
+        return peekNextVisibleDocumentNumber(FolioDocumentCounterCode.ACCOUNT_ACCOUNTED);
+    }
+
+    public BigDecimal peekNextVisibleDocumentNumber(FolioDocumentCounterCode counterCode) {
         BigDecimal next = jdbc.queryForObject("""
-                SELECT ISNULL(MAX(N_PLAT_POR), 0) + 1
-                FROM dbo.SCL_NAKL
-                WHERE TYPE_DOC = ?
-                """, BigDecimal.class, typeDoc);
+                SELECT N_3
+                FROM dbo.NSF_ORG
+                WHERE ID_SCLAD = 0
+                  AND RIGHT(NAME_USER, 2) = ?
+                """, BigDecimal.class, counterCode.databaseSuffix());
         if (next == null) {
-            throw new IllegalStateException("Cannot preview SCL_NAKL.N_PLAT_POR");
+            throw new IllegalStateException("Cannot preview visible Folio document number from NSF_ORG.N_3");
         }
         return next;
     }

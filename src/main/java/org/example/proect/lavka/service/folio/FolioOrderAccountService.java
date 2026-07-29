@@ -1,12 +1,12 @@
 package org.example.proect.lavka.service.folio;
 
 import org.example.proect.lavka.dao.folio.FolioAccountDao;
+import org.example.proect.lavka.dao.folio.FolioDocumentCounterCode;
 import org.example.proect.lavka.dto.folio.CreateFolioAccountItemRequest;
 import org.example.proect.lavka.dto.folio.CreateFolioAccountRequest;
 import org.example.proect.lavka.dto.folio.FolioAccountResponse;
 import org.example.proect.lavka.dto.folio.FolioOrderAccountRequest;
 import org.example.proect.lavka.dto.folio.FolioOrderAccountResponse;
-import org.example.proect.lavka.property.FolioAccountProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,14 +28,11 @@ public class FolioOrderAccountService {
 
     private final FolioAccountService accountService;
     private final FolioAccountDao accountDao;
-    private final FolioAccountProperties properties;
 
     public FolioOrderAccountService(FolioAccountService accountService,
-                                    FolioAccountDao accountDao,
-                                    FolioAccountProperties properties) {
+                                    FolioAccountDao accountDao) {
         this.accountService = accountService;
         this.accountDao = accountDao;
-        this.properties = properties;
     }
 
     @Transactional(transactionManager = "mssqlTransactionManager", isolation = Isolation.SERIALIZABLE)
@@ -55,7 +53,8 @@ public class FolioOrderAccountService {
 
         for (var group : allocation.accountingGroups().values()) {
             documents.add(previewOnly
-                    ? previewDocument(group, header.documentDate(), accountingEnabled, orderMode.documentType(), previewNumbers.next())
+                    ? previewDocument(group, header.documentDate(), accountingEnabled, orderMode.documentType(),
+                    previewNumbers.next(counterCode(accountingEnabled)))
                     : createDocument(request, group, accountingEnabled, orderMode.documentType()));
         }
 
@@ -70,7 +69,8 @@ public class FolioOrderAccountService {
                     allocation.missingItems()
             );
             documents.add(previewOnly
-                    ? previewDocument(missingGroup, header.documentDate(), false, "missing_stock_account", previewNumbers.next())
+                    ? previewDocument(missingGroup, header.documentDate(), false, "missing_stock_account",
+                    previewNumbers.next(counterCode(false)))
                     : createDocument(request, missingGroup, false, "missing_stock_account"));
         }
 
@@ -168,7 +168,7 @@ public class FolioOrderAccountService {
         List<AllocatedItem> mergedItems = mergeItems(group.items());
         CreateFolioAccountRequest request = new CreateFolioAccountRequest(
                 group.externalRequestId(),
-                documentNumberOrAllocated(base.documentNumber()),
+                documentNumberOrAllocated(base.documentNumber(), counterCode(accountingEnabled)),
                 base.documentDate(),
                 group.warehouseId(),
                 base.operationType(),
@@ -338,23 +338,24 @@ public class FolioOrderAccountService {
         }
     }
 
-    private String documentNumberOrAllocated(String documentNumber) {
+    private String documentNumberOrAllocated(String documentNumber, FolioDocumentCounterCode counterCode) {
         if (documentNumber != null && !documentNumber.trim().isEmpty()) {
             return documentNumber.trim();
         }
-        return accountDao.nextVisibleDocumentNumber(properties.getTypeDoc()).stripTrailingZeros().toPlainString();
+        return accountDao.nextVisibleDocumentNumber(counterCode).stripTrailingZeros().toPlainString();
     }
 
     private PreviewNumberAllocator previewNumberAllocator(FolioOrderAccountRequest.Header header) {
         return new PreviewNumberAllocator(
                 accountDao.peekNextDocumentId(),
-                previewStartDocumentNumber(header.documentNumber())
+                previewStartDocumentNumber(header.documentNumber()),
+                accountDao
         );
     }
 
     private BigDecimal previewStartDocumentNumber(String documentNumber) {
         if (documentNumber == null || documentNumber.trim().isEmpty()) {
-            return accountDao.peekNextVisibleDocumentNumber(properties.getTypeDoc());
+            return null;
         }
         try {
             return new BigDecimal(documentNumber.trim());
@@ -362,6 +363,12 @@ public class FolioOrderAccountService {
             throw new FolioAccountValidationException("document_number_not_numeric",
                     "SCL_NAKL.N_PLAT_POR is float in Folio, documentNumber must be numeric: " + documentNumber);
         }
+    }
+
+    private FolioDocumentCounterCode counterCode(boolean accountingEnabled) {
+        return accountingEnabled
+                ? FolioDocumentCounterCode.ACCOUNT_ACCOUNTED
+                : FolioDocumentCounterCode.ACCOUNT_UNACCOUNTED;
     }
 
     private String missingAdditionalInfo(String value, DocumentGroup group, boolean accountingEnabled) {
@@ -449,21 +456,39 @@ public class FolioOrderAccountService {
 
     private static class PreviewNumberAllocator {
         private long nextDocumentId;
-        private BigDecimal nextDocumentNumber;
+        private int issuedCount;
+        private final BigDecimal explicitDocumentNumber;
+        private final FolioAccountDao accountDao;
+        private final Map<FolioDocumentCounterCode, BigDecimal> nextDocumentNumbers =
+                new EnumMap<>(FolioDocumentCounterCode.class);
 
-        private PreviewNumberAllocator(long nextDocumentId, BigDecimal nextDocumentNumber) {
+        private PreviewNumberAllocator(long nextDocumentId,
+                                       BigDecimal explicitDocumentNumber,
+                                       FolioAccountDao accountDao) {
             this.nextDocumentId = nextDocumentId;
-            this.nextDocumentNumber = nextDocumentNumber;
+            this.explicitDocumentNumber = explicitDocumentNumber;
+            this.accountDao = accountDao;
         }
 
-        private PreviewNumber next() {
+        private PreviewNumber next(FolioDocumentCounterCode counterCode) {
+            BigDecimal nextDocumentNumber = nextDocumentNumber(counterCode);
             PreviewNumber result = new PreviewNumber(
                     nextDocumentId,
                     nextDocumentNumber.stripTrailingZeros().toPlainString()
             );
             nextDocumentId++;
-            nextDocumentNumber = nextDocumentNumber.add(BigDecimal.ONE);
+            issuedCount++;
+            if (explicitDocumentNumber == null) {
+                nextDocumentNumbers.put(counterCode, nextDocumentNumber.add(BigDecimal.ONE));
+            }
             return result;
+        }
+
+        private BigDecimal nextDocumentNumber(FolioDocumentCounterCode counterCode) {
+            if (explicitDocumentNumber != null) {
+                return explicitDocumentNumber.add(BigDecimal.valueOf(issuedCount));
+            }
+            return nextDocumentNumbers.computeIfAbsent(counterCode, accountDao::peekNextVisibleDocumentNumber);
         }
     }
 
