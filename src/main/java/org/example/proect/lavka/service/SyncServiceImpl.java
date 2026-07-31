@@ -418,14 +418,13 @@ public class SyncServiceImpl implements SyncService {
             m.put("description", dto.description());
         }
 
-        // Статус публикации
+        // Статус публикации и видимость каталога Woo.
+        // post_status не используем как признак скрытия: DEPARTAM управляет catalog_visibility.
         {
-            String st = "draft";
             Integer srcStatus = dto.status();
-            if (!forceDraft && srcStatus != null && srcStatus.intValue() == 1) {
-                st = "publish";
-            }
-            m.put("status", st);
+            m.put("status", forceDraft ? "draft" : "publish");
+            m.put("catalog_visibility",
+                    srcStatus != null && srcStatus.intValue() == 1 ? "visible" : "hidden");
         }
 
         // Вес
