@@ -20,4 +20,17 @@ public interface SyncService {
             String cursorAfter,
             Boolean dryRun
     );
+
+    /**
+     * Выполняет тот же проход, что и обычный runOneBatch, но для товаров,
+     * уже найденных в Woo и MSSQL, игнорирует совпадение _ms_hash и принудительно
+     * отправляет update payload. Нужен для ручного исправления Woo-состояния
+     * после изменения правил маппинга.
+     */
+    SyncRunResponse forceRefreshOneBatch(
+            Integer limit,
+            Integer pageSizeWoo,
+            String cursorAfter,
+            Boolean dryRun
+    );
 }

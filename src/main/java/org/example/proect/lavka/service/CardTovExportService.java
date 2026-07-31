@@ -72,9 +72,14 @@ public class CardTovExportService {
     }
 
     public DiffResult diffPage(String afterSku, int limit, List<ItemHash> seen) {
+        return diffPage(afterSku, limit, seen, false);
+    }
+
+    public DiffResult diffPage(String afterSku, int limit, List<ItemHash> seen, boolean forceRefresh) {
         long t0 = System.currentTimeMillis();
         int seenSize = (seen == null ? 0 : (int) seen.stream().filter(Objects::nonNull).count());
-        log.info(OPS, "[export.diff] req afterSku={} limit={} seen={}", afterSku, limit, seenSize);
+        log.info(OPS, "[export.diff] req afterSku={} limit={} seen={} forceRefresh={}",
+                afterSku, limit, seenSize, forceRefresh);
         try {
             // 1) Собрали норм-представление Woo
             List<String> wooSkusRaw = (seen == null ? List.<ItemHash>of() : seen).stream()
@@ -184,7 +189,7 @@ public class CardTovExportService {
             List<CardTovExportOutDto> toUpdateFull = remainingNorm.stream()
                     .map(msByNorm::get)
                     .filter(Objects::nonNull)
-                    .filter(o -> !Objects.equals(o.hash(), wooHashByNorm.get(nz(o.sku()))))
+                    .filter(o -> forceRefresh || !Objects.equals(o.hash(), wooHashByNorm.get(nz(o.sku()))))
                     .toList();
 
             if (!toUpdateFull.isEmpty()) {

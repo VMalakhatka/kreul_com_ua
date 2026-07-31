@@ -43,8 +43,29 @@ public class SyncServiceImpl implements SyncService {
             String startCursorAfter,
             Boolean dryRun
     ) {
+        return runOneBatchInternal(limit, pageSizeWoo, startCursorAfter, dryRun, false);
+    }
+
+    @Override
+    public SyncRunResponse forceRefreshOneBatch(
+            Integer limit,
+            Integer pageSizeWoo,
+            String startCursorAfter,
+            Boolean dryRun
+    ) {
+        return runOneBatchInternal(limit, pageSizeWoo, startCursorAfter, dryRun, true);
+    }
+
+    private SyncRunResponse runOneBatchInternal(
+            Integer limit,
+            Integer pageSizeWoo,
+            String startCursorAfter,
+            Boolean dryRun,
+            boolean forceRefresh
+    ) {
         final String reqId = java.util.UUID.randomUUID().toString();
         MDC.put("reqId", reqId);
+        MDC.put("forceRefresh", String.valueOf(forceRefresh));
         // === 0. Входные параметры ===
         final int runLimit = (limit == null || limit < 1)
                 ? 1_000_000_000 // условно бесконечно
@@ -131,7 +152,8 @@ public class SyncServiceImpl implements SyncService {
                             cardTovExportService.diffPage(
                                     innerAfterSku,
                                     diffChunkLimit,
-                                    windowForDiff
+                                    windowForDiff,
+                                    forceRefresh
                             );
 
                     // разбор результата
