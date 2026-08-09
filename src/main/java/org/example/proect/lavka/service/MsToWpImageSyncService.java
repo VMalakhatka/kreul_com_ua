@@ -47,7 +47,6 @@ public class MsToWpImageSyncService {
 
             var ids = wp.findIdsBySkus(skus);
             var out = new ArrayList<Map<String, Object>>();
-            List<String> allWarnings = new ArrayList<>();
 
             log.info(OPS, "[sync.ops] img-sync start skus={} mode={} galleryStartPos={} limitPerSku={} dry={}",
                     skus.size(), mode, galleryStartPos, limitPerSku, dry);
@@ -64,7 +63,6 @@ public class MsToWpImageSyncService {
                     if (pid == null) {
                         String w = "product_not_found";
                         one.put("warnings", List.of(w));
-                        allWarnings.add("sku=" + sku + " " + w);
                         totalWarn++;
                         // WARN → sync-errors.log
                         log.warn(MISMATCH, "[sync.mismatch] img-sync product_not_found sku={}", sku);
@@ -102,7 +100,6 @@ public class MsToWpImageSyncService {
                         } catch (Exception e) {
                             String msg = "featured_error:" + e.getMessage();
                             warnings.add(msg);
-                            allWarnings.add("sku=" + sku + " " + msg);
                             totalWarn++;
                             // WARN → sync-errors.log
                             log.warn(MISMATCH, "[sync.mismatch] featured_failed sku={} pid={} msg={}", sku, pid, e.getMessage());
@@ -128,7 +125,6 @@ public class MsToWpImageSyncService {
                             } catch (Exception e) {
                                 String w = "gallery_error:" + g.fileName() + ":" + e.getMessage();
                                 warnings.add(w);
-                                allWarnings.add("sku=" + sku + " " + w);
                                 totalWarn++;
                                 log.warn(MISMATCH, "[sync.mismatch] gallery_failed sku={} pid={} file={} msg={}",
                                         sku, pid, g.fileName(), e.getMessage());
@@ -151,11 +147,6 @@ public class MsToWpImageSyncService {
             // Финальный итог
             log.info(OPS, "[sync.ops] img-sync done processed={} applied={} warnings={}",
                     skus.size(), totalApplied, totalWarn);
-
-            // если хочешь ещё раз «свести» все варнинги в errors-лог одной строкой:
-            if (!allWarnings.isEmpty()) {
-                logWarningsChunked(allWarnings, 50);
-            }
 
             return Map.of("ok", true, "processed", skus.size(), "results", out);
         }finally {
@@ -230,11 +221,4 @@ public class MsToWpImageSyncService {
         }
     }
 
-    private static void logWarningsChunked(List<String> lines, int chunkSize) {
-        for (int i = 0; i < lines.size(); i += chunkSize) {
-            int end = Math.min(i + chunkSize, lines.size());
-            String part = String.join(System.lineSeparator(), lines.subList(i, end));
-            log.warn(MISMATCH, "[sync.mismatch] img-sync warnings {}/{}:\n{}", end, lines.size(), part);
-        }
-    }
 }
