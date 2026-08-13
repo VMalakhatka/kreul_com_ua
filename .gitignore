@@ -46,3 +46,13 @@ env-local.sh
 # local-only artifacts
 .env*
 *.tar.gz
+
+# Local FOLIO sources known to contain infrastructure credentials
+/docs/contentr.rpt
+/docs/contentr_full.rpt
+/docs/Книги Фолио/*.xls*
+/docs/folio-experiments/*.rpt
+/folio-rus-lab/.env*
+/folio-rus-lab/target/
+/folio-rus-lab/var/
+/folio-rus-lab/logs/

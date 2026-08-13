@@ -42,11 +42,38 @@ public class LavkaLocationsClient {
             String title
     ) {}
 
+    public record MediaDescriptor(
+            String s3_key,
+            String url,
+            String mime,
+            Integer position,
+            String alt,
+            String title
+    ) {}
+
+    public record MediaReconcilePayload(
+            long product_id,
+            String sku,
+            MediaDescriptor featured,
+            List<MediaDescriptor> gallery,
+            boolean replace_gallery,
+            boolean dry_run
+    ) {}
+
     @SuppressWarnings("unchecked")
     public Map<String,Object> mediaLinkOnly(MediaLinkOnlyPayload p) {
         String url = base + "/media/link-only"; // base уже = .../wp-json/lavka/v1
-        return rex.execUnsafe("woo.findCategoryByNameAndParent", () ->
+        return rex.execUnsafe("woo.mediaLinkOnly", () ->
                 rt.postForObject(url, p, Map.class)
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String,Object> mediaReconcile(MediaReconcilePayload payload) {
+        String url = base + "/media/reconcile";
+        // Reconcile задаёт полное желаемое состояние и безопасен для повтора.
+        return rex.execSafe("woo.mediaReconcile", () ->
+                rt.postForObject(url, payload, Map.class)
         );
     }
 
