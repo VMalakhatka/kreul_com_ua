@@ -5,6 +5,7 @@ import jakarta.validation.ConstraintViolationException;
 import org.example.proect.lavka.service.folio.FolioAccountConflictException;
 import org.example.proect.lavka.service.folio.FolioAccountNotFoundException;
 import org.example.proect.lavka.service.folio.FolioAccountValidationException;
+import org.example.proect.lavka.service.folio.FolioPartnerNotFoundException;
 import org.slf4j.MDC;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
@@ -104,6 +105,14 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleFolioAccountNotFound(FolioAccountNotFoundException e, HttpServletRequest r) {
         log.warn("[folio.account] not-found uri={} msg={}", r.getRequestURI(), e.getMessage());
         return problem(r, HttpStatus.NOT_FOUND, "Folio account not found", Map.of(
+                "message", truncate(e.getMessage(), 1000)
+        ));
+    }
+
+    @ExceptionHandler(FolioPartnerNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleFolioPartnerNotFound(FolioPartnerNotFoundException e, HttpServletRequest r) {
+        log.warn("[folio.balance] partner-not-found uri={} msg={}", r.getRequestURI(), e.getMessage());
+        return problem(r, HttpStatus.NOT_FOUND, "Folio partner not found", Map.of(
                 "message", truncate(e.getMessage(), 1000)
         ));
     }
