@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
@@ -84,6 +85,42 @@ public class S3MediaIndexService {
         return base + fullKey.replaceFirst("^/+", "");
     }
 
+    /**
+     * Проверяет, что выбранная запись индекса всё ещё соответствует физическому
+     * объекту S3. Индекс намеренно не считается доказательством существования файла.
+     */
+    public void assertPhysicalObject(S3MediaIndexDao.Row indexed) {
+        try {
+            HeadObjectResponse actual = s3.headObject(HeadObjectRequest.builder()
+                    .bucket(props.bucket())
+                    .key(indexed.fullKey())
+                    .build());
+
+            if (actual.contentLength() != indexed.sizeBytes()) {
+                throw new IllegalStateException("S3 object size differs from index: " + indexed.fullKey());
+            }
+            String indexedEtag = normalizeEtag(indexed.etag());
+            String actualEtag = normalizeEtag(actual.eTag());
+            if (!indexedEtag.isBlank() && !actualEtag.isBlank() && !Objects.equals(indexedEtag, actualEtag)) {
+                throw new IllegalStateException("S3 object ETag differs from index: " + indexed.fullKey());
+            }
+        } catch (NoSuchKeyException e) {
+            throw new IllegalStateException("S3 object no longer exists: " + indexed.fullKey(), e);
+        } catch (S3Exception e) {
+            String reason = e.awsErrorDetails() == null
+                    ? e.getMessage()
+                    : e.awsErrorDetails().errorMessage();
+            throw new IllegalStateException(
+                    "Cannot verify S3 object " + indexed.fullKey() + ": " + reason,
+                    e
+            );
+        }
+    }
+
+    private String normalizeEtag(String etag) {
+        return etag == null ? "" : etag.replace("\"", "").trim();
+    }
+
     @Transactional
     public int[] linkByFileNameToSkus(String fileName, List<String> skus, Integer startPos) {
         return dao.upsertLinksByFileNameAndSkus(fileName, skus, startPos);
@@ -92,6 +129,16 @@ public class S3MediaIndexService {
     @Transactional
     public int linkByFileNameToProduct(String fileName, long productId, Integer position) {
         return dao.upsertLinkByFileNameAndProductId(fileName, productId, position);
+    }
+
+    @Transactional(transactionManager = "wpTransactionManager")
+    public void reconcileLinksForSku(
+            String sku,
+            List<S3MediaIndexDao.DesiredLink> desired,
+            boolean replaceFeatured,
+            boolean replaceGallery
+    ) {
+        dao.reconcileLinksForSku(sku, desired, replaceFeatured, replaceGallery);
     }
 
     public List<java.util.Map<String,Object>> buildWooImages(List<String> fullKeys) {

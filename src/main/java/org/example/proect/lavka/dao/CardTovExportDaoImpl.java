@@ -350,9 +350,9 @@ public List<CardTovExportDto> findBetweenExcluding(
     ) {}
 
     @Override
-    public MsImagesBundle findImagesBundleBySku(String sku) {
+    public @Nullable MsImagesBundle findImagesBundleBySku(String sku) {
         MsCardImages base = findCardImagesBySku(sku);
-        if (base == null) return new MsImagesBundle(sku, null,null, List.of());
+        if (base == null) return null;
         List<MsGalleryImage> gal = findGalleryByPlusArtic(base.plusArtic());
         return new MsImagesBundle(sku, base.nameArtic(), base.mainFileName(), gal);
     }

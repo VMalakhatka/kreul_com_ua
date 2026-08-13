@@ -72,64 +72,147 @@ public class MsToWpImageSyncService {
                         continue;
                     }
 
-                    var bundle = msDao.findImagesBundleBySku(sku);
-                    var gallery = (bundle == null) ? List.<CardTovExportDaoImpl.MsGalleryImage>of() : bundle.gallery();
+                    CardTovExportDaoImpl.MsImagesBundle bundle;
+                    try {
+                        bundle = msDao.findImagesBundleBySku(sku);
+                    } catch (Exception e) {
+                        String msg = "bundle_error:" + e.getMessage();
+                        one.put("warnings", List.of(msg));
+                        totalWarn++;
+                        log.warn(MISMATCH, "[sync.mismatch] bundle_failed sku={} pid={} msg={}",
+                                sku, pid, e.getMessage());
+                        out.add(one);
+                        continue;
+                    }
+                    if (bundle == null) {
+                        String msg = "bundle_error:Folio image bundle not found";
+                        one.put("warnings", List.of(msg));
+                        totalWarn++;
+                        log.warn(MISMATCH, "[sync.mismatch] bundle_failed sku={} pid={} msg={}",
+                                sku, pid, "Folio image bundle not found");
+                        out.add(one);
+                        continue;
+                    }
+
+                    var gallery = bundle.gallery() == null
+                            ? List.<CardTovExportDaoImpl.MsGalleryImage>of()
+                            : bundle.gallery();
 
                     var pref = new ProductRef(pid, sku,
                             /*name*/ null,
-                            /*msNameArtic*/ (bundle == null ? null : bundle.nameArtic()),
+                            /*msNameArtic*/ bundle.nameArtic(),
                             null, null, null, null,
-                            (bundle == null ? null : bundle.mainFileName()));
+                            bundle.mainFileName());
 
                     var applied = new ArrayList<Map<String, Object>>();
                     var warnings = new ArrayList<String>();
+                    var desiredLinks = new ArrayList<S3MediaIndexDao.DesiredLink>();
+                    var desiredGallery = new ArrayList<LavkaLocationsClient.MediaDescriptor>();
+                    LavkaLocationsClient.MediaDescriptor desiredFeatured = null;
+                    boolean incomplete = false;
+                    boolean includeFeatured = !"gallery".equalsIgnoreCase(mode);
+                    boolean includeGallery = !"featured".equalsIgnoreCase(mode);
 
-                    // featured
-                    if (!"gallery".equalsIgnoreCase(mode) && pref.imgFileName() != null && !pref.imgFileName().isBlank()) {
+                    // Полный reconcile всегда читает всю галерею. galleryStartPos/limitPerSku
+                    // остаются в контракте старого endpoint, но не могут ограничивать desired state.
+                    if (includeFeatured && pref.imgFileName() != null && !pref.imgFileName().isBlank()) {
                         try {
                             var img = ImageAttachment.fromProduct(pref, s3dao, s3, naming);
-                            if (!dry) {
-                                img.attachAsFeatured(mediaClient);
-                                img.persistLinkAndMeta(s3dao, 0);
-                            }
+                            verifyIndexedObject(img);
+                            desiredFeatured = toDescriptor(img, null);
+                            desiredLinks.add(toDesiredLink(img, 0));
                             applied.add(Map.of("file", img.getFileName(), "featured", true, "applied", !dry));
-                            totalApplied++;
-                            // INFO c маркером OPS → sync-ops.log
-                            log.info(OPS, "[sync.ops] featured attached sku={} pid={} file={} dry={}",
-                                    sku, pid, img.getFileName(), dry);
                         } catch (Exception e) {
                             String msg = "featured_error:" + e.getMessage();
                             warnings.add(msg);
                             totalWarn++;
-                            // WARN → sync-errors.log
+                            incomplete = true;
                             log.warn(MISMATCH, "[sync.mismatch] featured_failed sku={} pid={} msg={}", sku, pid, e.getMessage());
                         }
                     }
 
-                    // gallery
-                    if (!"featured".equalsIgnoreCase(mode) && gallery != null && !gallery.isEmpty()) {
-                        int pos = galleryStartPos;
+                    if (includeGallery) {
+                        int pos = 1;
+                        Set<String> desiredKeys = new HashSet<>();
                         for (var g : gallery) {
-                            if (applied.size() >= limitPerSku) break;
                             try {
                                 var img = ImageAttachment.fromProductAndFile(pref, g.fileName(), s3dao, s3, naming);
-                                if (!dry) {
-                                    img.attachToGallery(mediaClient, pos);
-                                    img.persistLinkAndMeta(s3dao, pos);
+                                verifyIndexedObject(img);
+                                if (!desiredKeys.add(img.getS3Key())) {
+                                    throw new IllegalStateException("Duplicate gallery object in Folio bundle: " + img.getS3Key());
                                 }
+                                desiredGallery.add(toDescriptor(img, pos));
+                                desiredLinks.add(toDesiredLink(img, pos));
                                 applied.add(Map.of("file", img.getFileName(), "position", pos, "applied", !dry));
-                                totalApplied++;
-                                log.info(OPS, "[sync.ops] gallery attached sku={} pid={} file={} pos={} dry={}",
-                                        sku, pid, img.getFileName(), pos, dry);
                                 pos++;
                             } catch (Exception e) {
                                 String w = "gallery_error:" + g.fileName() + ":" + e.getMessage();
                                 warnings.add(w);
                                 totalWarn++;
+                                incomplete = true;
                                 log.warn(MISMATCH, "[sync.mismatch] gallery_failed sku={} pid={} file={} msg={}",
                                         sku, pid, g.fileName(), e.getMessage());
                             }
                         }
+                    }
+
+                    boolean replaceGallery = includeGallery && !incomplete;
+                    var reconcilePayload = new LavkaLocationsClient.MediaReconcilePayload(
+                            pid,
+                            sku,
+                            desiredFeatured,
+                            desiredGallery,
+                            replaceGallery,
+                            dry
+                    );
+
+                    try {
+                        Map<String, Object> reconcile = mediaClient.mediaReconcile(reconcilePayload);
+                        if (!Boolean.TRUE.equals(reconcile.get("ok"))) {
+                            throw new IllegalStateException("Woo reconcile returned ok=false");
+                        }
+                        one.put("reconcile", reconcile);
+
+                        if (!dry) {
+                            try {
+                                boolean replaceFeaturedLinks = desiredFeatured != null;
+                                s3.reconcileLinksForSku(
+                                        sku,
+                                        desiredLinks,
+                                        replaceFeaturedLinks,
+                                        replaceGallery
+                                );
+                            } catch (Exception e) {
+                                String msg = "link_persist_error:" + e.getMessage();
+                                warnings.add(msg);
+                                totalWarn++;
+                                log.warn(MISMATCH,
+                                        "[sync.mismatch] link_persist_failed sku={} pid={} msg={}",
+                                        sku, pid, e.getMessage());
+                            }
+                        }
+                        totalApplied += applied.size();
+                        for (var item : applied) {
+                            if (Boolean.TRUE.equals(item.get("featured"))) {
+                                log.info(OPS, "[sync.ops] featured attached sku={} pid={} file={} dry={}",
+                                        sku, pid, item.get("file"), dry);
+                            } else {
+                                log.info(OPS, "[sync.ops] gallery attached sku={} pid={} file={} pos={} dry={}",
+                                        sku, pid, item.get("file"), item.get("position"), dry);
+                            }
+                        }
+                    } catch (Exception e) {
+                        String msg = "reconcile_error:" + e.getMessage();
+                        warnings.add(msg);
+                        totalWarn++;
+                        log.warn(MISMATCH, "[sync.mismatch] reconcile_failed sku={} pid={} msg={}",
+                                sku, pid, e.getMessage());
+                        // Woo reconcile не применён: локальные связи тоже не считаем применёнными.
+                        applied.replaceAll(item -> {
+                            var failed = new LinkedHashMap<>(item);
+                            failed.put("applied", false);
+                            return failed;
+                        });
                     }
 
                     one.put("applied", applied);
@@ -152,6 +235,52 @@ public class MsToWpImageSyncService {
         }finally {
             MDC.clear();
         }
+    }
+
+    private void verifyIndexedObject(ImageAttachment image) {
+        List<S3MediaIndexDao.Row> rows = s3dao.findByFileName(image.getFileNameLower());
+        S3MediaIndexDao.Row selected = rows.stream()
+                .filter(row -> Objects.equals(row.fullKey(), image.getS3Key()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "Selected S3 index row disappeared: " + image.getS3Key()
+                ));
+
+        String selectedEtag = normalizeEtag(selected.etag());
+        boolean ambiguous = rows.stream().anyMatch(row ->
+                row.sizeBytes() != selected.sizeBytes()
+                        || (!selectedEtag.isBlank()
+                        && !normalizeEtag(row.etag()).isBlank()
+                        && !Objects.equals(selectedEtag, normalizeEtag(row.etag())))
+        );
+        if (ambiguous) {
+            throw new IllegalStateException("Ambiguous S3 objects with the same filename: " + image.getFileName());
+        }
+        s3.assertPhysicalObject(selected);
+    }
+
+    private LavkaLocationsClient.MediaDescriptor toDescriptor(ImageAttachment image, Integer position) {
+        return new LavkaLocationsClient.MediaDescriptor(
+                image.getAttachedFile(),
+                image.getUrl(),
+                image.getMime(),
+                position,
+                image.getAlt(),
+                image.postTitle()
+        );
+    }
+
+    private S3MediaIndexDao.DesiredLink toDesiredLink(ImageAttachment image, int position) {
+        return new S3MediaIndexDao.DesiredLink(
+                image.getImageId(),
+                position,
+                image.getAlt(),
+                image.postTitle()
+        );
+    }
+
+    private String normalizeEtag(String etag) {
+        return etag == null ? "" : etag.replace("\"", "").trim();
     }
 
     public Map<String,Object> syncRangeBySku(String fromSku,

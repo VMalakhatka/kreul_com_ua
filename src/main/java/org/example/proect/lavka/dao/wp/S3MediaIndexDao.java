@@ -33,6 +33,13 @@ public class S3MediaIndexDao {
             @Nullable String etag
     ) {}
 
+    public record DesiredLink(
+            long imageId,
+            int position,
+            @Nullable String alt,
+            @Nullable String title
+    ) {}
+
     public int[] upsertBatch(List<Row> rows) {
         final String sql = """
             INSERT INTO s3_media_index (filename_lower, full_key, size_bytes, last_modified, etag)
@@ -305,5 +312,56 @@ public class S3MediaIndexDao {
         Long imageId = resolveImageIdByFullKey(fullKey);
         if (imageId == null) return false;
         return linkExists(sku, imageId, position);
+    }
+
+    /**
+     * Обновляет фактические связи после успешного Woo reconcile.
+     * Флаги замены задаются отдельно для main и gallery. Для роли без полной
+     * замены старые связи сохраняются, но найденные изображения переводятся
+     * на актуальные позиции.
+     */
+    public void reconcileLinksForSku(
+            String sku,
+            List<DesiredLink> desired,
+            boolean replaceFeatured,
+            boolean replaceGallery
+    ) {
+        if (replaceFeatured && replaceGallery) {
+            jdbc.update("DELETE FROM s3_media_links WHERE sku = ?", sku);
+        } else if (replaceFeatured) {
+            jdbc.update("DELETE FROM s3_media_links WHERE sku = ? AND position = 0", sku);
+        } else if (replaceGallery) {
+            jdbc.update("DELETE FROM s3_media_links WHERE sku = ? AND position > 0", sku);
+        }
+
+        // Для роли, которая не заменяется полностью, удаляем только прежнюю
+        // позицию того же изображения. Остальные старые связи сохраняются.
+        for (DesiredLink link : desired) {
+            boolean roleWasReplaced = link.position() == 0 ? replaceFeatured : replaceGallery;
+            if (!roleWasReplaced) {
+                jdbc.update(
+                        "DELETE FROM s3_media_links WHERE sku = ? AND image_id = ?",
+                        sku,
+                        link.imageId()
+                );
+            }
+        }
+
+        for (DesiredLink link : desired) {
+            jdbc.update("""
+                INSERT INTO s3_media_links
+                    (image_id, sku, position, alt_text, title_text, pending_meta, pending_link)
+                VALUES (?, ?, ?, ?, ?, 0, 0)
+                ON DUPLICATE KEY UPDATE
+                    position = VALUES(position),
+                    alt_text = VALUES(alt_text),
+                    title_text = VALUES(title_text),
+                    pending_meta = 0,
+                    pending_link = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                    link.imageId(), sku, link.position(), link.alt(), link.title()
+            );
+        }
     }
 }

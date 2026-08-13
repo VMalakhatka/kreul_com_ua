@@ -30,6 +30,6 @@ public interface CardTovExportDao {
                                                     int limit);
     public @Nullable CardTovExportDaoImpl.MsCardImages findCardImagesBySku(String sku);
     public List<CardTovExportDaoImpl.MsGalleryImage> findGalleryByPlusArtic(String plusArtic);
-    public CardTovExportDaoImpl.MsImagesBundle findImagesBundleBySku(String sku);
+    public @Nullable CardTovExportDaoImpl.MsImagesBundle findImagesBundleBySku(String sku);
 
 }
