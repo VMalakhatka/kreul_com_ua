@@ -36,30 +36,27 @@ public class FolioCustomerBalanceService {
         this.clock = clock;
     }
 
-    public FolioCustomerBalanceResponse get(String partnerId,
+    public FolioCustomerBalanceResponse get(String partnerShortName,
                                             LocalDate dateFrom,
-                                            LocalDate dateTo,
-                                            LocalDate asOfDate,
                                             List<Integer> warehouseIds,
                                             Boolean includeServicePayments) {
-        String normalizedPartnerId = normalizePartnerId(partnerId);
+        String normalizedPartnerId = normalizePartnerShortName(partnerShortName);
+        LocalDate currentDate = LocalDate.now(clock);
         LocalDate normalizedDateFrom = dateFrom == null ? FOLIO_MIN_DATE : dateFrom;
-        LocalDate normalizedDateTo = dateTo == null ? LocalDate.now(clock) : dateTo;
-        LocalDate normalizedAsOfDate = asOfDate == null ? LocalDate.now(clock) : asOfDate;
         List<Integer> normalizedWarehouseIds = normalizeWarehouseIds(warehouseIds);
         boolean normalizedShowServicePayments = includeServicePayments == null || includeServicePayments;
 
-        if (normalizedDateFrom.isAfter(normalizedDateTo)) {
+        if (normalizedDateFrom.isAfter(currentDate)) {
             throw new FolioAccountValidationException(
                     "invalid_date_range",
-                    "dateFrom must be before or equal to dateTo"
+                    "dateFrom must be before or equal to the current date"
             );
         }
 
         var procedure = dao.load(
                 normalizedPartnerId,
                 normalizedDateFrom,
-                normalizedDateTo,
+                currentDate,
                 normalizedWarehouseIds,
                 normalizedShowServicePayments
         );
@@ -97,7 +94,7 @@ public class FolioCustomerBalanceService {
             LocalDate controlDate = toDate(raw.controlDate());
             boolean deferred = amounts.expense().signum() != 0
                     && controlDate != null
-                    && controlDate.isAfter(normalizedAsOfDate);
+                    && controlDate.isAfter(currentDate);
             boolean overdueDeferred = amounts.expense().signum() != 0
                     && startsWith(raw.basis(), "111")
                     && !deferred;
@@ -176,8 +173,8 @@ public class FolioCustomerBalanceService {
                 new FolioCustomerBalanceResponse.Partner(procedure.partnerId(), procedure.partnerName()),
                 new FolioCustomerBalanceResponse.Filters(
                         normalizedDateFrom,
-                        normalizedDateTo,
-                        normalizedAsOfDate,
+                        currentDate,
+                        currentDate,
                         normalizedWarehouseIds,
                         warehouseMode,
                         normalizedShowServicePayments
@@ -198,7 +195,7 @@ public class FolioCustomerBalanceService {
                         new FolioCustomerBalanceResponse.Warning(
                                 "LEGACY_DATE_TO_MIDNIGHT",
                                 "I_DOLG_DOC treats dateTo as an inclusive midnight boundary",
-                                Map.of("dateTo", normalizedDateTo.toString())
+                                Map.of("dateTo", currentDate.toString())
                         )
                 )
         );
@@ -253,15 +250,18 @@ public class FolioCustomerBalanceService {
                 : new MappedAmounts(ZERO, amount.abs(), ZERO, ZERO);
     }
 
-    private static String normalizePartnerId(String partnerId) {
-        String value = partnerId == null ? "" : partnerId.trim();
+    private static String normalizePartnerShortName(String partnerShortName) {
+        String value = partnerShortName == null ? "" : partnerShortName.trim();
         if (value.isEmpty()) {
-            throw new FolioAccountValidationException("missing_partner_id", "partnerId is required");
+            throw new FolioAccountValidationException(
+                    "missing_partner_short_name",
+                    "partnerShortName is required"
+            );
         }
         if (value.length() > MAX_PARTNER_ID_LENGTH) {
             throw new FolioAccountValidationException(
-                    "partner_id_too_long",
-                    "partnerId must fit _PARTNER.N_USER varchar(8)"
+                    "partner_short_name_too_long",
+                    "partnerShortName must fit _PARTNER.N_USER varchar(8)"
             );
         }
         return value;

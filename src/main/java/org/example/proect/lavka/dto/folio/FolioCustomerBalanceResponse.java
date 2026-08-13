@@ -13,7 +13,7 @@ public record FolioCustomerBalanceResponse(
         List<Row> rows,
         List<Warning> warnings
 ) {
-    public record Partner(String id, String name) {
+    public record Partner(String shortName, String name) {
     }
 
     public record Filters(

@@ -52,8 +52,6 @@ class FolioCustomerBalanceServiceTest {
         var response = new FolioCustomerBalanceService(dao, CLOCK).get(
                 "КЛИЕНТ",
                 LocalDate.of(2026, 1, 1),
-                AS_OF,
-                AS_OF,
                 null,
                 true
         );
@@ -81,7 +79,7 @@ class FolioCustomerBalanceServiceTest {
     }
 
     @Test
-    void usesReportDefaultsAndDeduplicatesWarehouses() {
+    void usesFullHistoryWhenStartDateIsMissingAndAlwaysEndsToday() {
         FolioCustomerBalanceDao dao = mock(FolioCustomerBalanceDao.class);
         when(dao.load(eq("A"), eq(FolioCustomerBalanceService.FOLIO_MIN_DATE), eq(AS_OF),
                 eq(List.of(7, 1)), eq(true)))
@@ -89,8 +87,9 @@ class FolioCustomerBalanceServiceTest {
                         BigDecimal.ZERO, null, List.of()));
 
         var response = new FolioCustomerBalanceService(dao, CLOCK)
-                .get(" A ", null, null, null, List.of(7, 1, 7), null);
+                .get(" A ", null, List.of(7, 1, 7), null);
 
+        assertThat(response.partner().shortName()).isEqualTo("A");
         assertThat(response.filters().dateFrom()).isEqualTo(FolioCustomerBalanceService.FOLIO_MIN_DATE);
         assertThat(response.filters().dateTo()).isEqualTo(AS_OF);
         assertThat(response.filters().asOfDate()).isEqualTo(AS_OF);
@@ -99,15 +98,13 @@ class FolioCustomerBalanceServiceTest {
     }
 
     @Test
-    void rejectsInvertedDateRangeBeforeCallingDatabase() {
+    void rejectsFutureStartDateBeforeCallingDatabase() {
         FolioCustomerBalanceDao dao = mock(FolioCustomerBalanceDao.class);
         FolioCustomerBalanceService service = new FolioCustomerBalanceService(dao, CLOCK);
 
         assertThatThrownBy(() -> service.get(
                 "A",
-                LocalDate.of(2026, 2, 1),
-                LocalDate.of(2026, 1, 1),
-                AS_OF,
+                LocalDate.of(2026, 8, 14),
                 List.of(),
                 true
         )).isInstanceOf(FolioAccountValidationException.class)

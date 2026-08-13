@@ -22,20 +22,14 @@ public class FolioCustomerBalanceController {
 
     @GetMapping
     public ResponseEntity<FolioCustomerBalanceResponse> get(
-            @RequestParam String partnerId,
+            @RequestParam String partnerShortName,
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
-            @RequestParam(required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
-            @RequestParam(required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate asOfDate,
             @RequestParam(required = false) List<Integer> warehouseIds,
             @RequestParam(required = false) Boolean includeServicePayments) {
         return ResponseEntity.ok(service.get(
-                partnerId,
+                partnerShortName,
                 dateFrom,
-                dateTo,
-                asOfDate,
                 warehouseIds,
                 includeServicePayments
         ));
