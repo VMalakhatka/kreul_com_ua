@@ -41,7 +41,7 @@ class FolioCustomerBalanceServiceTest {
                         BigDecimal.ZERO,
                         null,
                         List.of(
-                                row(0, "Р", "1", "", "1000", "0", "0", "2026-08-01", "2026-09-01"),
+                                row(0, "Р", "1", "111 Отсрочка", "1000", "0", "0", "2026-08-01", "2026-09-01"),
                                 row(1, "ПК", "2", "222Предоплата", "-300", "300", "0", "2026-08-02", null),
                                 row(2, "Р", "3", "111 Реализация", "400", "0", "0", "2026-08-03", "2026-08-10"),
                                 row(3, "Р", "4", "", "-50", "0", "0", "2026-08-04", null),
@@ -76,6 +76,37 @@ class FolioCustomerBalanceServiceTest {
         assertThat(response.rows().get(5).prepayment()).isTrue();
         assertThat(response.rows().get(5).prepaymentAmount()).isEqualByComparingTo("200");
         assertThat(response.rows().get(5).balanceAfter()).isEqualByComparingTo("950");
+    }
+
+    @Test
+    void doesNotTreatFutureControlDateAsDeferredWithout111Basis() {
+        FolioCustomerBalanceDao dao = mock(FolioCustomerBalanceDao.class);
+        when(dao.load(eq("A"), any(), any(), anyList(), anyBoolean()))
+                .thenReturn(new ProcedureResult(
+                        "A",
+                        "Client",
+                        BigDecimal.ZERO,
+                        BigDecimal.ZERO,
+                        null,
+                        List.of(expenseRowWithBasis(
+                                0,
+                                "DOC",
+                                "555053Woo o 11.08.2026",
+                                "3354.12",
+                                "2026-08-11",
+                                "2026-08-14"
+                        ))
+                ));
+
+        var response = new FolioCustomerBalanceService(dao, CLOCK)
+                .get("A", LocalDate.of(2026, 8, 1), null, true);
+
+        assertThat(response.rows().get(1).deferred()).isFalse();
+        assertThat(response.rows().get(1).overdueDeferred()).isFalse();
+        assertThat(response.rows().get(1).basis()).startsWith("555053");
+        assertThat(response.rows().get(1).deferredAmount()).isEqualByComparingTo("0");
+        assertThat(response.summary().deferredAmount()).isEqualByComparingTo("0");
+        assertThat(response.summary().payableNow()).isEqualByComparingTo("3354.12");
     }
 
     @Test
@@ -164,6 +195,34 @@ class FolioCustomerBalanceServiceTest {
                 controlDate == null ? null : LocalDateTime.parse(controlDate + "T00:00:00"),
                 "Тестовый клиент",
                 basisMarker ? null : noteOrBasis
+        );
+    }
+
+    private static RawRow expenseRowWithBasis(int order,
+                                              String number,
+                                              String basis,
+                                              String amount,
+                                              String documentDate,
+                                              String controlDate) {
+        return new RawRow(
+                order,
+                LocalDateTime.parse(documentDate + "T00:00:00"),
+                "Р",
+                number,
+                basis,
+                bd(amount),
+                (long) order + 1,
+                7,
+                "Киев ОПТ",
+                "*РОЗНИЦА",
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                "CLASSIC",
+                null,
+                LocalDateTime.parse(documentDate + "T00:00:00"),
+                LocalDateTime.parse(controlDate + "T00:00:00"),
+                "Тестовый клиент",
+                null
         );
     }
 

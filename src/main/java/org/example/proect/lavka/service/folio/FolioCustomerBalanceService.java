@@ -93,11 +93,13 @@ public class FolioCustomerBalanceService {
                     .subtract(amounts.cashPayment());
 
             LocalDate controlDate = toDate(raw.controlDate());
+            boolean deferredMarker = startsWith(raw.basis(), "111");
             boolean deferred = amounts.expense().signum() != 0
+                    && deferredMarker
                     && controlDate != null
                     && controlDate.isAfter(currentDate);
             boolean overdueDeferred = amounts.expense().signum() != 0
-                    && startsWith(raw.basis(), "111")
+                    && deferredMarker
                     && !deferred;
             BigDecimal paymentAmount = amounts.bankPayment().add(amounts.cashPayment());
             boolean prepayment = startsWith(raw.note(), "222")
