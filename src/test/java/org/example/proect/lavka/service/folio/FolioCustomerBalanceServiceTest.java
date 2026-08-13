@@ -45,7 +45,7 @@ class FolioCustomerBalanceServiceTest {
                                 row(1, "ПК", "2", "222Предоплата", "-300", "-300", "0", "2026-08-02", null),
                                 row(2, "Р", "3", "111 Реализация", "400", "0", "0", "2026-08-03", "2026-08-10"),
                                 row(3, "Р", "4", "", "-50", "0", "0", "2026-08-04", null),
-                                row(4, "ПБ", "5", "", "-200", "0", "-200", "2026-08-05", null)
+                                row(4, "ПБ", "5", "222Банковская предоплата", "-200", "0", "-200", "2026-08-05", null)
                         )
                 ));
 
@@ -66,8 +66,8 @@ class FolioCustomerBalanceServiceTest {
         assertThat(response.summary().commonDebt()).isEqualByComparingTo("950");
         assertThat(response.summary().deferredAmount()).isEqualByComparingTo("1000");
         assertThat(response.summary().overdueDeferredAmount()).isEqualByComparingTo("400");
-        assertThat(response.summary().prepaymentAmount()).isEqualByComparingTo("300");
-        assertThat(response.summary().payableNow()).isEqualByComparingTo("250");
+        assertThat(response.summary().prepaymentAmount()).isEqualByComparingTo("500");
+        assertThat(response.summary().payableNow()).isEqualByComparingTo("450");
 
         assertThat(response.rows()).hasSize(6);
         assertThat(response.rows().get(0).openingBalanceRow()).isTrue();
@@ -75,6 +75,8 @@ class FolioCustomerBalanceServiceTest {
         assertThat(response.rows().get(2).prepayment()).isTrue();
         assertThat(response.rows().get(3).overdueDeferred()).isTrue();
         assertThat(response.rows().get(5).bankPayment()).isEqualByComparingTo("200");
+        assertThat(response.rows().get(5).prepayment()).isTrue();
+        assertThat(response.rows().get(5).prepaymentAmount()).isEqualByComparingTo("200");
         assertThat(response.rows().get(5).balanceAfter()).isEqualByComparingTo("950");
     }
 

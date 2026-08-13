@@ -101,12 +101,13 @@ public class FolioCustomerBalanceService {
             boolean overdueDeferred = amounts.expense().signum() != 0
                     && startsWith(raw.basis(), "111")
                     && !deferred;
+            BigDecimal paymentAmount = amounts.bankPayment().add(amounts.cashPayment());
             boolean prepayment = startsWith(raw.note(), "222")
-                    && amounts.cashPayment().signum() != 0;
+                    && paymentAmount.signum() != 0;
 
             BigDecimal deferredAmount = deferred ? amounts.expense() : ZERO;
             BigDecimal overdueDeferredAmount = overdueDeferred ? amounts.expense() : ZERO;
-            BigDecimal prepaymentAmount = prepayment ? amounts.cashPayment() : ZERO;
+            BigDecimal prepaymentAmount = prepayment ? paymentAmount : ZERO;
 
             expenseTotal = expenseTotal.add(amounts.expense());
             receiptTotal = receiptTotal.add(amounts.receipt());
