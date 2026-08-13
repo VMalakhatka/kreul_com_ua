@@ -8,6 +8,7 @@ import org.springframework.stereotype.Repository;
 
 import javax.sql.DataSource;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -27,6 +28,7 @@ public class FolioCustomerBalanceDao {
     private static final String PROCEDURE = "dbo.I_DOLG_DOC";
     private static final String CALL_SQL = "{call " + PROCEDURE + "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)}";
     private static final DateTimeFormatter FOLIO_DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+    private static final int MONEY_SCALE = 2;
 
     private final DataSource dataSource;
 
@@ -179,12 +181,16 @@ public class FolioCustomerBalanceDao {
 
     private static BigDecimal decimal(ResultSet resultSet, int column) throws SQLException {
         BigDecimal value = resultSet.getBigDecimal(column);
-        return value == null ? BigDecimal.ZERO : value;
+        return money(value);
     }
 
     private static BigDecimal outDecimal(CallableStatement statement, int index) throws SQLException {
         BigDecimal value = statement.getBigDecimal(index);
-        return value == null ? BigDecimal.ZERO : value;
+        return money(value);
+    }
+
+    private static BigDecimal money(BigDecimal value) {
+        return (value == null ? BigDecimal.ZERO : value).setScale(MONEY_SCALE, RoundingMode.HALF_UP);
     }
 
     private static Long nullableLong(ResultSet resultSet, int column) throws SQLException {

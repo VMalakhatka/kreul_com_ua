@@ -42,10 +42,10 @@ class FolioCustomerBalanceServiceTest {
                         null,
                         List.of(
                                 row(0, "Р", "1", "", "1000", "0", "0", "2026-08-01", "2026-09-01"),
-                                row(1, "ПК", "2", "222Предоплата", "-300", "-300", "0", "2026-08-02", null),
+                                row(1, "ПК", "2", "222Предоплата", "-300", "300", "0", "2026-08-02", null),
                                 row(2, "Р", "3", "111 Реализация", "400", "0", "0", "2026-08-03", "2026-08-10"),
                                 row(3, "Р", "4", "", "-50", "0", "0", "2026-08-04", null),
-                                row(4, "ПБ", "5", "222Банковская предоплата", "-200", "0", "-200", "2026-08-05", null)
+                                row(4, "ПБ", "5", "222Банковская предоплата", "-200", "0", "200", "2026-08-05", null)
                         )
                 ));
 
@@ -109,6 +109,30 @@ class FolioCustomerBalanceServiceTest {
                 true
         )).isInstanceOf(FolioAccountValidationException.class)
                 .hasMessageContaining("dateFrom");
+    }
+
+    @Test
+    void placesPaymentsBeforeDocumentsCreatedOnTheSameDate() {
+        FolioCustomerBalanceDao dao = mock(FolioCustomerBalanceDao.class);
+        when(dao.load(eq("A"), any(), any(), anyList(), anyBoolean()))
+                .thenReturn(new ProcedureResult(
+                        "A",
+                        "Client",
+                        BigDecimal.ZERO,
+                        BigDecimal.ZERO,
+                        null,
+                        List.of(
+                                row(0, "Р", "DOC", "", "100", "0", "0", "2026-08-01", null),
+                                row(1, "ПБ", "PAY", "", "-100", "0", "100", "2026-08-01", null)
+                        )
+                ));
+
+        var response = new FolioCustomerBalanceService(dao, CLOCK)
+                .get("A", LocalDate.of(2026, 8, 1), null, true);
+
+        assertThat(response.rows().get(1).documentNumber()).isEqualTo("PAY");
+        assertThat(response.rows().get(2).documentNumber()).isEqualTo("DOC");
+        assertThat(response.summary().commonDebt()).isEqualByComparingTo("0");
     }
 
     private static RawRow row(int order,

@@ -65,6 +65,7 @@ public class FolioCustomerBalanceService {
                 .filter(row -> row.documentType() != null)
                 .sorted(Comparator
                         .comparing(RawRow::documentDate, Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparingInt(row -> isPaymentRow(row) ? 0 : 1)
                         .thenComparingInt(RawRow::sourceOrder))
                 .toList();
 
@@ -232,15 +233,12 @@ public class FolioCustomerBalanceService {
     }
 
     private static MappedAmounts mapAmounts(RawRow row) {
-        boolean paymentRow = row.rawCashPayment().signum() != 0
-                || row.rawBankPayment().signum() != 0
-                || (row.documentType() != null && row.documentType().length() > 1);
-        if (paymentRow) {
+        if (isPaymentRow(row)) {
             return new MappedAmounts(
                     ZERO,
                     ZERO,
-                    row.rawBankPayment().negate(),
-                    row.rawCashPayment().negate()
+                    row.rawBankPayment(),
+                    row.rawCashPayment()
             );
         }
 
@@ -248,6 +246,12 @@ public class FolioCustomerBalanceService {
         return amount.signum() >= 0
                 ? new MappedAmounts(amount, ZERO, ZERO, ZERO)
                 : new MappedAmounts(ZERO, amount.abs(), ZERO, ZERO);
+    }
+
+    private static boolean isPaymentRow(RawRow row) {
+        return row.rawCashPayment().signum() != 0
+                || row.rawBankPayment().signum() != 0
+                || (row.documentType() != null && row.documentType().length() > 1);
     }
 
     private static String normalizePartnerShortName(String partnerShortName) {
