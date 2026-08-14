@@ -6,6 +6,7 @@ import org.example.proect.lavka.service.folio.FolioAccountConflictException;
 import org.example.proect.lavka.service.folio.FolioAccountNotFoundException;
 import org.example.proect.lavka.service.folio.FolioAccountValidationException;
 import org.example.proect.lavka.service.folio.FolioBalanceSnapshotUnavailableException;
+import org.example.proect.lavka.service.folio.FolioCustomerDocumentNotFoundException;
 import org.example.proect.lavka.service.folio.FolioPartnerNotFoundException;
 import org.slf4j.MDC;
 import org.springframework.dao.DataAccessException;
@@ -126,6 +127,17 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleFolioPartnerNotFound(FolioPartnerNotFoundException e, HttpServletRequest r) {
         log.warn("[folio.balance] partner-not-found uri={} msg={}", r.getRequestURI(), e.getMessage());
         return problem(r, HttpStatus.NOT_FOUND, "Folio partner not found", Map.of(
+                "message", truncate(e.getMessage(), 1000)
+        ));
+    }
+
+    @ExceptionHandler(FolioCustomerDocumentNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleFolioCustomerDocumentNotFound(
+            FolioCustomerDocumentNotFoundException e,
+            HttpServletRequest r) {
+        log.warn("[folio.customer-documents] not-found uri={} msg={}", r.getRequestURI(), e.getMessage());
+        return problem(r, HttpStatus.NOT_FOUND, "Folio customer document not found", Map.of(
+                "code", "CUSTOMER_DOCUMENT_NOT_FOUND",
                 "message", truncate(e.getMessage(), 1000)
         ));
     }
