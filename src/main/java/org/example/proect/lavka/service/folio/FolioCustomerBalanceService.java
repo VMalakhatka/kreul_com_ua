@@ -1,8 +1,10 @@
 package org.example.proect.lavka.service.folio;
 
+import lombok.extern.slf4j.Slf4j;
 import org.example.proect.lavka.dao.folio.FolioCustomerBalanceDao;
 import org.example.proect.lavka.dto.folio.FolioCustomerBalanceResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -12,22 +14,27 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@Slf4j
 public class FolioCustomerBalanceService {
 
     static final LocalDate FOLIO_MIN_DATE = LocalDate.of(1753, 1, 1);
     private static final int MAX_PARTNER_ID_LENGTH = 8;
     private static final int MAX_WAREHOUSE_MEMBERSHIP_LENGTH = 255;
     private final FolioCustomerBalanceDao dao;
+    private final FolioCustomerBalanceSnapshotService snapshotService;
     private final Clock clock;
 
     @Autowired
-    public FolioCustomerBalanceService(FolioCustomerBalanceDao dao) {
-        this(dao, Clock.systemDefaultZone());
+    public FolioCustomerBalanceService(FolioCustomerBalanceDao dao,
+                                       FolioCustomerBalanceSnapshotService snapshotService,
+                                       @Qualifier("folioBalanceClock") Clock clock) {
+        this.dao = dao;
+        this.snapshotService = snapshotService;
+        this.clock = clock;
     }
 
     FolioCustomerBalanceService(FolioCustomerBalanceDao dao, Clock clock) {
-        this.dao = dao;
-        this.clock = clock;
+        this(dao, null, clock);
     }
 
     public FolioCustomerBalanceResponse get(String partnerShortName,
@@ -61,7 +68,7 @@ public class FolioCustomerBalanceService {
                 ? "ALL_WAREHOUSES"
                 : "ALL_DOCUMENT_LINES_IN_SELECTED_WAREHOUSES";
 
-        return new FolioCustomerBalanceResponse(
+        FolioCustomerBalanceResponse response = new FolioCustomerBalanceResponse(
                 true,
                 new FolioCustomerBalanceResponse.Partner(procedure.partnerId(), procedure.partnerName()),
                 new FolioCustomerBalanceResponse.Filters(
@@ -92,6 +99,26 @@ public class FolioCustomerBalanceService {
                         )
                 )
         );
+
+        if (snapshotService != null
+                && normalizedDateFrom.equals(FOLIO_MIN_DATE)
+                && normalizedWarehouseIds.isEmpty()
+                && normalizedShowServicePayments) {
+            try {
+                snapshotService.updateActiveClient(
+                        currentDate,
+                        procedure.partnerId(),
+                        procedure.partnerName(),
+                        calculation.summary()
+                );
+            } catch (RuntimeException e) {
+                // Snapshot persistence must not turn a successful canonical Folio report into an API error.
+                log.warn("[folio.balance.snapshot] cannot refresh partner={} after live report: {}",
+                        procedure.partnerId(), e.getMessage());
+            }
+        }
+
+        return response;
     }
 
     private static String normalizePartnerShortName(String partnerShortName) {

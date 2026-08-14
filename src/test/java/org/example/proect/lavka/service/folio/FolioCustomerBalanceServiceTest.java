@@ -20,6 +20,8 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class FolioCustomerBalanceServiceTest {
@@ -126,6 +128,40 @@ class FolioCustomerBalanceServiceTest {
         assertThat(response.filters().asOfDate()).isEqualTo(AS_OF);
         assertThat(response.filters().warehouseIds()).containsExactly(7, 1);
         assertThat(response.filters().includeServicePayments()).isTrue();
+    }
+
+    @Test
+    void refreshesActiveSnapshotAfterCanonicalSingleCustomerReport() {
+        FolioCustomerBalanceDao dao = mock(FolioCustomerBalanceDao.class);
+        FolioCustomerBalanceSnapshotService snapshotService = mock(FolioCustomerBalanceSnapshotService.class);
+        when(dao.load(eq("A"), eq(FolioCustomerBalanceService.FOLIO_MIN_DATE), eq(AS_OF),
+                eq(List.of()), eq(true)))
+                .thenReturn(new ProcedureResult(
+                        "A", "Client", BigDecimal.ZERO, BigDecimal.ZERO, null,
+                        List.of(row(0, "Р", "DOC", "", "200", "0", "0", "2026-08-01", null))
+                ));
+
+        var response = new FolioCustomerBalanceService(dao, snapshotService, CLOCK)
+                .get("A", null, null, null);
+
+        verify(snapshotService).updateActiveClient(
+                eq(AS_OF), eq("A"), eq("Client"), eq(response.summary())
+        );
+    }
+
+    @Test
+    void doesNotRefreshGeneralSnapshotFromFilteredSingleCustomerReport() {
+        FolioCustomerBalanceDao dao = mock(FolioCustomerBalanceDao.class);
+        FolioCustomerBalanceSnapshotService snapshotService = mock(FolioCustomerBalanceSnapshotService.class);
+        when(dao.load(eq("A"), eq(LocalDate.of(2026, 8, 1)), eq(AS_OF),
+                eq(List.of(7)), eq(true)))
+                .thenReturn(new ProcedureResult("A", "Client", BigDecimal.ZERO,
+                        BigDecimal.ZERO, null, List.of()));
+
+        new FolioCustomerBalanceService(dao, snapshotService, CLOCK)
+                .get("A", LocalDate.of(2026, 8, 1), List.of(7), true);
+
+        verify(snapshotService, never()).updateActiveClient(any(), any(), any(), any());
     }
 
     @Test

@@ -1,18 +1,17 @@
 package org.example.proect.lavka.service.folio;
 
-import org.example.proect.lavka.dao.folio.FolioCustomerBalanceDao;
-import org.example.proect.lavka.dto.folio.FolioCustomerBalanceResponse;
+import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao;
+import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao.ActiveSnapshot;
 import org.example.proect.lavka.dto.folio.FolioCustomerDebtorsResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.LocalDate;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -27,17 +26,12 @@ public class FolioCustomerDebtorsService {
     private static final int MAX_LIMIT = 200;
     private static final int MAX_SEARCH_LENGTH = 100;
     private static final List<String> DEFAULT_TYPES = List.of("П", "Д", "К");
-    private static final BigDecimal ZERO = new BigDecimal("0.00");
-
-    private final FolioCustomerBalanceDao dao;
+    private final FolioCustomerBalanceSnapshotDao dao;
     private final Clock clock;
 
     @Autowired
-    public FolioCustomerDebtorsService(FolioCustomerBalanceDao dao) {
-        this(dao, Clock.systemDefaultZone());
-    }
-
-    FolioCustomerDebtorsService(FolioCustomerBalanceDao dao, Clock clock) {
+    public FolioCustomerDebtorsService(FolioCustomerBalanceSnapshotDao dao,
+                                       @Qualifier("folioBalanceClock") Clock clock) {
         this.dao = dao;
         this.clock = clock;
     }
@@ -54,57 +48,48 @@ public class FolioCustomerDebtorsService {
         int normalizedLimit = normalizeLimit(limit);
         int normalizedOffset = normalizeOffset(offset);
         String normalizedSort = normalizeSort(sort);
-        LocalDate asOfDate = LocalDate.now(clock);
-
-        var balances = dao.loadForPartners(
+        LocalDate currentDate = LocalDate.now(clock);
+        ActiveSnapshot activeSnapshot = dao.findActiveSnapshot()
+                .orElseThrow(() -> new FolioBalanceSnapshotUnavailableException(
+                        "Customer debtors snapshot is not ready; start /snapshot/refresh"
+                ));
+        LocalDate asOfDate = activeSnapshot.asOfDate();
+        var snapshotPage = dao.findDebtors(
+                activeSnapshot.generationId(),
+                normalizedMinPayable,
                 normalizedQuery,
                 normalizedTypes.databaseValues(),
-                FolioCustomerBalanceService.FOLIO_MIN_DATE,
-                asOfDate,
-                true
+                normalizedLimit,
+                normalizedOffset
         );
 
-        List<FolioCustomerDebtorsResponse.DebtorItem> matched = new ArrayList<>();
-        for (var result : balances) {
-            var calculation = FolioCustomerBalanceCalculator.calculate(result.balance(), asOfDate, false);
-            FolioCustomerBalanceResponse.Summary financial = calculation.summary();
-            if (financial.payableNow().compareTo(normalizedMinPayable) <= 0) {
-                continue;
-            }
-            var partner = result.partner();
-            matched.add(new FolioCustomerDebtorsResponse.DebtorItem(
+        List<FolioCustomerDebtorsResponse.DebtorItem> page = snapshotPage.clients().stream()
+                .map(client -> new FolioCustomerDebtorsResponse.DebtorItem(
                     new FolioCustomerDebtorsResponse.DebtorPartner(
-                            partner.shortName(),
-                            partner.name(),
-                            partner.type(),
-                            partner.city(),
-                            partner.phone()
+                            client.partnerShortName(),
+                            client.partnerName(),
+                            client.partnerType(),
+                            client.city(),
+                            client.phone()
                     ),
-                    financial.commonDebt(),
-                    financial.deferredAmount(),
-                    financial.overdueDeferredAmount(),
-                    financial.prepaymentAmount(),
-                    financial.payableNow(),
+                    client.commonDebt(),
+                    client.deferredAmount(),
+                    client.overdueDeferredAmount(),
+                    client.prepaymentAmount(),
+                    client.payableNow(),
                     List.of()
-            ));
-        }
+                ))
+                .toList();
 
-        matched.sort(Comparator
-                .comparing(FolioCustomerDebtorsResponse.DebtorItem::payableNow).reversed()
-                .thenComparing(item -> item.partner().shortName()));
-
-        FolioCustomerDebtorsResponse.DebtorsSummary summary = summarize(matched);
-        int from = Math.min(normalizedOffset, matched.size());
-        int to = Math.min(from + normalizedLimit, matched.size());
-        List<FolioCustomerDebtorsResponse.DebtorItem> page = List.copyOf(matched.subList(from, to));
-        summary = new FolioCustomerDebtorsResponse.DebtorsSummary(
-                summary.matchedClients(),
+        var storedSummary = snapshotPage.summary();
+        FolioCustomerDebtorsResponse.DebtorsSummary summary = new FolioCustomerDebtorsResponse.DebtorsSummary(
+                storedSummary.matchedClients(),
                 page.size(),
-                summary.commonDebtTotal(),
-                summary.deferredAmountTotal(),
-                summary.overdueDeferredAmountTotal(),
-                summary.prepaymentAmountTotal(),
-                summary.payableNowTotal()
+                money(storedSummary.commonDebtTotal()),
+                money(storedSummary.deferredAmountTotal()),
+                money(storedSummary.overdueDeferredAmountTotal()),
+                money(storedSummary.prepaymentAmountTotal()),
+                money(storedSummary.payableNowTotal())
         );
 
         return new FolioCustomerDebtorsResponse(
@@ -120,41 +105,28 @@ public class FolioCustomerDebtorsService {
                 ),
                 summary,
                 page,
-                standardWarnings(asOfDate),
+                standardWarnings(activeSnapshot, currentDate),
                 List.of()
         );
     }
 
-    private static FolioCustomerDebtorsResponse.DebtorsSummary summarize(
-            List<FolioCustomerDebtorsResponse.DebtorItem> matched) {
-        BigDecimal commonDebt = ZERO;
-        BigDecimal deferred = ZERO;
-        BigDecimal overdueDeferred = ZERO;
-        BigDecimal prepayment = ZERO;
-        BigDecimal payableNow = ZERO;
-        for (var item : matched) {
-            commonDebt = commonDebt.add(item.commonDebt());
-            deferred = deferred.add(item.deferredAmount());
-            overdueDeferred = overdueDeferred.add(item.overdueDeferredAmount());
-            prepayment = prepayment.add(item.prepaymentAmount());
-            payableNow = payableNow.add(item.payableNow());
-        }
-        return new FolioCustomerDebtorsResponse.DebtorsSummary(
-                matched.size(),
-                matched.size(),
-                money(commonDebt),
-                money(deferred),
-                money(overdueDeferred),
-                money(prepayment),
-                money(payableNow)
-        );
-    }
-
-    private static List<FolioCustomerDebtorsResponse.DebtorsIssue> standardWarnings(LocalDate asOfDate) {
-        return List.of(
+    private static List<FolioCustomerDebtorsResponse.DebtorsIssue> standardWarnings(
+            ActiveSnapshot snapshot,
+            LocalDate currentDate) {
+        List<FolioCustomerDebtorsResponse.DebtorsIssue> warnings = new java.util.ArrayList<>(List.of(
+                new FolioCustomerDebtorsResponse.DebtorsIssue(
+                        "BALANCE_SNAPSHOT",
+                        "Response was read from the active MariaDB balance snapshot",
+                        Map.of(
+                                "generationId", snapshot.generationId(),
+                                "asOfDate", snapshot.asOfDate().toString(),
+                                "completedAt", snapshot.completedAt().toString(),
+                                "totalClients", snapshot.totalClients()
+                        )
+                ),
                 new FolioCustomerDebtorsResponse.DebtorsIssue(
                         "FOLIO_NOLOCK_READ",
-                        "I_DOLG_DOC uses NOLOCK; concurrent Folio edits can make the report internally non-snapshot",
+                        "The snapshot source I_DOLG_DOC uses NOLOCK; concurrent Folio edits can affect a generation",
                         Map.of()
                 ),
                 new FolioCustomerDebtorsResponse.DebtorsIssue(
@@ -165,9 +137,20 @@ public class FolioCustomerDebtorsService {
                 new FolioCustomerDebtorsResponse.DebtorsIssue(
                         "LEGACY_DATE_TO_MIDNIGHT",
                         "I_DOLG_DOC treats the report date as an inclusive midnight boundary",
-                        Map.of("asOfDate", asOfDate.toString())
+                        Map.of("asOfDate", snapshot.asOfDate().toString())
                 )
-        );
+        ));
+        if (snapshot.asOfDate().isBefore(currentDate)) {
+            warnings.add(new FolioCustomerDebtorsResponse.DebtorsIssue(
+                    "BALANCE_SNAPSHOT_STALE",
+                    "The active balance snapshot is older than the current business date",
+                    Map.of(
+                            "snapshotAsOfDate", snapshot.asOfDate().toString(),
+                            "currentDate", currentDate.toString()
+                    )
+            ));
+        }
+        return List.copyOf(warnings);
     }
 
     private static BigDecimal normalizeMinPayable(BigDecimal value) {

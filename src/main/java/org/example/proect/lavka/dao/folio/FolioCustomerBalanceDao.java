@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 @Repository
 public class FolioCustomerBalanceDao {
@@ -76,11 +77,27 @@ public class FolioCustomerBalanceDao {
                                                       LocalDate dateFrom,
                                                       LocalDate dateTo,
                                                       boolean includeServicePayments) {
+        List<PartnerBalanceResult> results = new ArrayList<>();
+        forEachPartnerBalance(
+                q, types, dateFrom, dateTo, includeServicePayments, results::add
+        );
+        return List.copyOf(results);
+    }
+
+    /**
+     * Streams partner results through one disposable MSSQL session. This avoids retaining
+     * every client's detailed ledger while a complete snapshot is being generated.
+     */
+    public int forEachPartnerBalance(String q,
+                                     List<String> types,
+                                     LocalDate dateFrom,
+                                     LocalDate dateTo,
+                                     boolean includeServicePayments,
+                                     Consumer<PartnerBalanceResult> consumer) {
         Connection connection = null;
         try {
             connection = dataSource.getConnection();
             List<PartnerCandidate> candidates = findPartnerCandidates(connection, q, types);
-            List<PartnerBalanceResult> results = new ArrayList<>(candidates.size());
             for (PartnerCandidate candidate : candidates) {
                 ProcedureResult balance = executeProcedure(
                         connection,
@@ -91,9 +108,9 @@ public class FolioCustomerBalanceDao {
                         List.of(),
                         includeServicePayments
                 );
-                results.add(new PartnerBalanceResult(candidate, balance));
+                consumer.accept(new PartnerBalanceResult(candidate, balance));
             }
-            return List.copyOf(results);
+            return candidates.size();
         } catch (SQLException e) {
             throw new UncategorizedSQLException("Read Folio customer debtors", CALL_SQL, e);
         } finally {

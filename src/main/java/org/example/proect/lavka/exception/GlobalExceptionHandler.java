@@ -5,6 +5,7 @@ import jakarta.validation.ConstraintViolationException;
 import org.example.proect.lavka.service.folio.FolioAccountConflictException;
 import org.example.proect.lavka.service.folio.FolioAccountNotFoundException;
 import org.example.proect.lavka.service.folio.FolioAccountValidationException;
+import org.example.proect.lavka.service.folio.FolioBalanceSnapshotUnavailableException;
 import org.example.proect.lavka.service.folio.FolioPartnerNotFoundException;
 import org.slf4j.MDC;
 import org.springframework.dao.DataAccessException;
@@ -134,6 +135,17 @@ public class GlobalExceptionHandler {
         log.warn("[folio.account] validation uri={} code={} msg={}", r.getRequestURI(), e.getCode(), e.getMessage());
         return problem(r, HttpStatus.BAD_REQUEST, "Folio account validation failed", Map.of(
                 "code", e.getCode(),
+                "message", truncate(e.getMessage(), 1000)
+        ));
+    }
+
+    @ExceptionHandler(FolioBalanceSnapshotUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleFolioBalanceSnapshotUnavailable(
+            FolioBalanceSnapshotUnavailableException e,
+            HttpServletRequest r) {
+        log.warn("[folio.balance.snapshot] unavailable uri={} msg={}", r.getRequestURI(), e.getMessage());
+        return problem(r, HttpStatus.SERVICE_UNAVAILABLE, "Folio balance snapshot unavailable", Map.of(
+                "code", "BALANCE_SNAPSHOT_NOT_READY",
                 "message", truncate(e.getMessage(), 1000)
         ));
     }
