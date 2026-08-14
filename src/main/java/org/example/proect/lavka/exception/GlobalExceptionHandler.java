@@ -17,6 +17,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
@@ -67,6 +68,17 @@ public class GlobalExceptionHandler {
         return problem(r, HttpStatus.BAD_REQUEST, "Missing request parameter", Map.of(
                 "param", e.getParameterName(),
                 "type", e.getParameterType()
+        ));
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleTypeMismatch(MethodArgumentTypeMismatchException e,
+                                                                   HttpServletRequest r) {
+        log.warn("[sync.errors] parameter-type uri={} name={} value={}",
+                r.getRequestURI(), e.getName(), e.getValue());
+        return problem(r, HttpStatus.BAD_REQUEST, "Invalid request parameter", Map.of(
+                "param", e.getName(),
+                "message", "Invalid value for request parameter " + e.getName()
         ));
     }
 

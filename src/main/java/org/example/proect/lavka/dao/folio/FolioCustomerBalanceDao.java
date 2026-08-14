@@ -48,44 +48,14 @@ public class FolioCustomerBalanceDao {
             if (partnerName == null) {
                 throw new FolioPartnerNotFoundException(partnerId);
             }
-
-            List<RawRow> rows = new ArrayList<>();
-            BigDecimal openingBalance;
-            BigDecimal openingCurrencyBalance;
-            String openingCurrencyCode;
-
-            try (CallableStatement statement = connection.prepareCall(CALL_SQL)) {
-                bind(statement, partnerId, dateFrom, dateTo, warehouseIds, includeServicePayments);
-
-                boolean hasResult = statement.execute();
-                while (true) {
-                    if (hasResult) {
-                        try (ResultSet resultSet = statement.getResultSet()) {
-                            if (isDetailedBalanceResult(resultSet)) {
-                                int sourceOrder = rows.size();
-                                while (resultSet.next()) {
-                                    rows.add(mapRow(resultSet, sourceOrder++));
-                                }
-                            }
-                        }
-                    } else if (statement.getUpdateCount() == -1) {
-                        break;
-                    }
-                    hasResult = statement.getMoreResults();
-                }
-
-                openingBalance = outDecimal(statement, 7);
-                openingCurrencyBalance = outDecimal(statement, 8);
-                openingCurrencyCode = trimToNull(statement.getString(9));
-            }
-
-            return new ProcedureResult(
+            return executeProcedure(
+                    connection,
                     partnerId,
                     partnerName,
-                    openingBalance,
-                    openingCurrencyBalance,
-                    openingCurrencyCode,
-                    List.copyOf(rows)
+                    dateFrom,
+                    dateTo,
+                    warehouseIds,
+                    includeServicePayments
             );
         } catch (FolioPartnerNotFoundException e) {
             throw e;
@@ -93,6 +63,146 @@ public class FolioCustomerBalanceDao {
             throw new UncategorizedSQLException("Read Folio customer balance", CALL_SQL, e);
         } finally {
             disposeConnection(connection);
+        }
+    }
+
+    /**
+     * Loads all filtered partners in one disposable MSSQL session. I_DOLG_DOC has no
+     * all-partners mode, so the canonical procedure is invoked once per candidate,
+     * without an HTTP loop or reconnecting for every partner.
+     */
+    public List<PartnerBalanceResult> loadForPartners(String q,
+                                                      List<String> types,
+                                                      LocalDate dateFrom,
+                                                      LocalDate dateTo,
+                                                      boolean includeServicePayments) {
+        Connection connection = null;
+        try {
+            connection = dataSource.getConnection();
+            List<PartnerCandidate> candidates = findPartnerCandidates(connection, q, types);
+            List<PartnerBalanceResult> results = new ArrayList<>(candidates.size());
+            for (PartnerCandidate candidate : candidates) {
+                ProcedureResult balance = executeProcedure(
+                        connection,
+                        candidate.shortName(),
+                        candidate.name(),
+                        dateFrom,
+                        dateTo,
+                        List.of(),
+                        includeServicePayments
+                );
+                results.add(new PartnerBalanceResult(candidate, balance));
+            }
+            return List.copyOf(results);
+        } catch (SQLException e) {
+            throw new UncategorizedSQLException("Read Folio customer debtors", CALL_SQL, e);
+        } finally {
+            disposeConnection(connection);
+        }
+    }
+
+    private ProcedureResult executeProcedure(Connection connection,
+                                             String partnerId,
+                                             String partnerName,
+                                             LocalDate dateFrom,
+                                             LocalDate dateTo,
+                                             List<Integer> warehouseIds,
+                                             boolean includeServicePayments) throws SQLException {
+        List<RawRow> rows = new ArrayList<>();
+        BigDecimal openingBalance;
+        BigDecimal openingCurrencyBalance;
+        String openingCurrencyCode;
+
+        try (CallableStatement statement = connection.prepareCall(CALL_SQL)) {
+            bind(statement, partnerId, dateFrom, dateTo, warehouseIds, includeServicePayments);
+
+            boolean hasResult = statement.execute();
+            while (true) {
+                if (hasResult) {
+                    try (ResultSet resultSet = statement.getResultSet()) {
+                        if (isDetailedBalanceResult(resultSet)) {
+                            int sourceOrder = rows.size();
+                            while (resultSet.next()) {
+                                rows.add(mapRow(resultSet, sourceOrder++));
+                            }
+                        }
+                    }
+                } else if (statement.getUpdateCount() == -1) {
+                    break;
+                }
+                hasResult = statement.getMoreResults();
+            }
+
+            openingBalance = outDecimal(statement, 7);
+            openingCurrencyBalance = outDecimal(statement, 8);
+            openingCurrencyCode = trimToNull(statement.getString(9));
+        }
+
+        return new ProcedureResult(
+                partnerId,
+                partnerName,
+                openingBalance,
+                openingCurrencyBalance,
+                openingCurrencyCode,
+                List.copyOf(rows)
+        );
+    }
+
+    private List<PartnerCandidate> findPartnerCandidates(Connection connection,
+                                                         String q,
+                                                         List<String> types) throws SQLException {
+        StringBuilder sql = new StringBuilder("""
+                SELECT N_USER, NAME_USER, MY_ORGANIZ
+                FROM dbo._PARTNER WITH (NOLOCK)
+                WHERE N_USER IS NOT NULL
+                  AND LTRIM(RTRIM(N_USER)) <> ''
+                """);
+        List<String> params = new ArrayList<>();
+
+        if (types != null && !types.isEmpty()) {
+            sql.append(" AND MY_ORGANIZ IN (");
+            for (int i = 0; i < types.size(); i++) {
+                if (i > 0) {
+                    sql.append(", ");
+                }
+                sql.append('?');
+                params.add(types.get(i));
+            }
+            sql.append(')');
+        }
+
+        String search = trimToNull(q);
+        if (search != null) {
+            sql.append(" AND (N_USER LIKE ? OR NAME_USER LIKE ? OR NAMEP_USER LIKE ?)");
+            String pattern = "%" + search + "%";
+            params.add(pattern);
+            params.add(pattern);
+            params.add(pattern);
+        }
+        sql.append(" ORDER BY N_USER");
+
+        try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+            for (int i = 0; i < params.size(); i++) {
+                statement.setString(i + 1, params.get(i));
+            }
+            try (ResultSet resultSet = statement.executeQuery()) {
+                List<PartnerCandidate> candidates = new ArrayList<>();
+                while (resultSet.next()) {
+                    String shortName = trimToNull(resultSet.getString(1));
+                    if (shortName == null) {
+                        continue;
+                    }
+                    String name = trimToNull(resultSet.getString(2));
+                    candidates.add(new PartnerCandidate(
+                            shortName,
+                            name == null ? shortName : name,
+                            trimToNull(resultSet.getString(3)),
+                            "",
+                            ""
+                    ));
+                }
+                return candidates;
+            }
         }
     }
 
@@ -261,6 +371,21 @@ public class FolioCustomerBalanceDao {
             BigDecimal openingCurrencyBalance,
             String openingCurrencyCode,
             List<RawRow> rows
+    ) {
+    }
+
+    public record PartnerCandidate(
+            String shortName,
+            String name,
+            String type,
+            String city,
+            String phone
+    ) {
+    }
+
+    public record PartnerBalanceResult(
+            PartnerCandidate partner,
+            ProcedureResult balance
     ) {
     }
 

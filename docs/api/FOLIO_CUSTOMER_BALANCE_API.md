@@ -188,3 +188,207 @@ API использует исправленное бизнес-правило: �
 8. поведение архивных документов.
 
 Причина: `I_DOLG_DOC` использует `NOLOCK`, старые `float` и внутреннюю сортировку только по типу документа; API нормализует строки хронологически и поэтому должен быть сверён с конкретной настройкой 7-го отчёта.
+
+---
+
+# Общий административный отчёт должников
+
+## Endpoint
+
+```http
+GET /admin/folio/customer-debtors
+```
+
+Endpoint возвращает клиентов, для которых рассчитанная на текущую дату сумма к оплате строго больше заданного порога:
+
+```text
+payableNow > minPayable
+```
+
+При `minPayable=100.00` клиент с `payableNow=100.00` не входит, а клиент с `100.01` входит.
+
+Пример:
+
+```http
+GET /admin/folio/customer-debtors?minPayable=100.00&types=П,Д,К&limit=50&offset=0&sort=payableNow_desc
+```
+
+## Параметры
+
+| Параметр | Обязательный | По умолчанию | Правило |
+|---|---:|---|---|
+| `minPayable` | нет | `100.00` | неотрицательная сумма, не более двух десятичных знаков |
+| `q` | нет | пустая строка | поиск подстроки в `_PARTNER.N_USER`, `NAME_USER` или `NAMEP_USER`; максимум 100 символов |
+| `types` | нет | `П,Д,К` | список односимвольных кодов `_PARTNER.MY_ORGANIZ`; `all` отключает фильтр типа |
+| `limit` | нет | `50` | от `1` до `200` |
+| `offset` | нет | `0` | целое число не меньше нуля |
+| `sort` | нет | `payableNow_desc` | сейчас поддерживается только `payableNow_desc` |
+
+Период с frontend не передаётся. Backend считает весь доступный активный период от `1753-01-01` до текущей даты Java-сервера. `asOfDate` в ответе — фактическая дата расчёта.
+
+## Финансовая логика
+
+`customer-debtors` не содержит второй версии финансовых формул. Оба endpoint используют общий `FolioCustomerBalanceCalculator`:
+
+- `GET /admin/folio/customer-balance` — подробный отчёт одного клиента;
+- `GET /admin/folio/customer-debtors` — сводные итоги многих клиентов.
+
+Поэтому сохраняются те же правила знаков, банковских/кассовых платежей, `111`, `222`, будущей и просроченной отсрочки:
+
+```text
+commonDebt = openingBalance
+             + expenseTotal
+             - receiptTotal
+             - bankPaymentTotal
+             - cashPaymentTotal
+
+payableNow = commonDebt - deferredAmount + prepaymentAmount
+```
+
+`overdueDeferredAmount` уже входит в `commonDebt` и повторно к `payableNow` не прибавляется. Будущая `controlDate` без `basis`, начинающегося с `111`, отсрочкой не является.
+
+## Сортировка, пагинация и итоги
+
+До пагинации backend:
+
+1. рассчитывает каждого отфильтрованного партнёра;
+2. применяет строгий порог `payableNow > minPayable`;
+3. сортирует по `payableNow DESC`, затем `partner.shortName ASC`;
+4. рассчитывает общие итоги всех совпавших клиентов;
+5. применяет `offset` и `limit`.
+
+Поэтому:
+
+- `summary.matchedClients` — количество всех клиентов после фильтра и порога;
+- `summary.returnedClients` — размер текущей страницы;
+- денежные поля `summary` — суммы по **всем** `matchedClients`, а не только по текущей странице.
+
+## Успешный ответ
+
+```json
+{
+  "ok": true,
+  "asOfDate": "2026-08-14",
+  "filters": {
+    "minPayable": 100.00,
+    "q": "",
+    "types": ["П", "Д", "К"],
+    "limit": 50,
+    "offset": 0,
+    "sort": "payableNow_desc"
+  },
+  "summary": {
+    "matchedClients": 1,
+    "returnedClients": 1,
+    "commonDebtTotal": 5200.00,
+    "deferredAmountTotal": 1000.00,
+    "overdueDeferredAmountTotal": 700.00,
+    "prepaymentAmountTotal": 200.00,
+    "payableNowTotal": 4400.00
+  },
+  "debtors": [
+    {
+      "partner": {
+        "shortName": "БОНД АНН",
+        "name": "Бондаренко Ганна Ігорівна ФОП",
+        "type": "Д",
+        "city": "",
+        "phone": ""
+      },
+      "commonDebt": 5200.00,
+      "deferredAmount": 1000.00,
+      "overdueDeferredAmount": 700.00,
+      "prepaymentAmount": 200.00,
+      "payableNow": 4400.00,
+      "warnings": []
+    }
+  ],
+  "warnings": [
+    {
+      "code": "FOLIO_NOLOCK_READ",
+      "message": "I_DOLG_DOC uses NOLOCK; concurrent Folio edits can make the report internally non-snapshot",
+      "details": {}
+    },
+    {
+      "code": "ACTIVE_LEDGER_ONLY",
+      "message": "The standard procedure does not include archived Folio documents",
+      "details": {}
+    },
+    {
+      "code": "LEGACY_DATE_TO_MIDNIGHT",
+      "message": "I_DOLG_DOC treats the report date as an inclusive midnight boundary",
+      "details": {"asOfDate": "2026-08-14"}
+    }
+  ],
+  "errors": []
+}
+```
+
+`partner.shortName` — точное `_PARTNER.N_USER`, по которому Woo может искать `_folio_partner_short_name`. Наличие пользователя Woo не требуется. `city` и `phone` пока возвращаются пустыми: подтверждённая связь с `_PARTNER_PL` ещё не установлена, поэтому backend не угадывает эти значения.
+
+## Пустой результат
+
+Пустой список — успешный ответ `HTTP 200`:
+
+```json
+{
+  "ok": true,
+  "asOfDate": "2026-08-14",
+  "filters": {
+    "minPayable": 100.00,
+    "q": "НЕСУЩЕСТВУЮЩИЙ",
+    "types": ["П", "Д", "К"],
+    "limit": 50,
+    "offset": 0,
+    "sort": "payableNow_desc"
+  },
+  "summary": {
+    "matchedClients": 0,
+    "returnedClients": 0,
+    "commonDebtTotal": 0.00,
+    "deferredAmountTotal": 0.00,
+    "overdueDeferredAmountTotal": 0.00,
+    "prepaymentAmountTotal": 0.00,
+    "payableNowTotal": 0.00
+  },
+  "debtors": [],
+  "warnings": [
+    {"code": "FOLIO_NOLOCK_READ", "message": "...", "details": {}},
+    {"code": "ACTIVE_LEDGER_ONLY", "message": "...", "details": {}},
+    {"code": "LEGACY_DATE_TO_MIDNIGHT", "message": "...", "details": {"asOfDate": "2026-08-14"}}
+  ],
+  "errors": []
+}
+```
+
+Стандартные предупреждения `FOLIO_NOLOCK_READ`, `ACTIVE_LEDGER_ONLY` и `LEGACY_DATE_TO_MIDNIGHT` возвращаются и при пустом списке. Многоточия выше сокращают только пример сообщения, не фактический JSON API.
+
+## Ошибки
+
+Некорректные параметры возвращают `HTTP 400` в едином problem-формате проекта:
+
+```json
+{
+  "status": 400,
+  "error": "Bad Request",
+  "title": "Folio account validation failed",
+  "path": "/admin/folio/customer-debtors",
+  "code": "invalid_limit",
+  "message": "limit must be between 1 and 200"
+}
+```
+
+- `400` — неправильные `minPayable`, `types`, `limit`, `offset`, `sort` или формат query-параметра;
+- `503` — ФОЛИО/MSSQL недоступен;
+- `500` — непредвиденная внутренняя ошибка;
+- SQL и stack trace клиенту не возвращаются.
+
+## Ограничения производительности и согласованности
+
+`I_DOLG_DOC` не имеет режима расчёта всех партнёров. Чтобы не создавать неподтверждённую альтернативную бухгалтерскую формулу, DAO:
+
+1. одним запросом выбирает кандидатов из `_PARTNER` по `q/types`;
+2. в одном disposable MSSQL-сеансе вызывает каноническую процедуру для каждого кандидата;
+3. не вызывает собственный HTTP endpoint и не открывает новое соединение для каждого клиента.
+
+Это точнее прямого `SUM(SCL_NAKL)-SUM(SCL_PLAT)`, но время ответа зависит от количества кандидатов. Для ускорения сначала задавайте `types` и при необходимости `q`. Все чтения остаются read-only; штатная процедура использует `NOLOCK`, не включает архив и ограничивает конечную дату полуночью.
