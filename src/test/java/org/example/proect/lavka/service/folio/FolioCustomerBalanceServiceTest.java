@@ -41,11 +41,11 @@ class FolioCustomerBalanceServiceTest {
                         BigDecimal.ZERO,
                         null,
                         List.of(
-                                row(0, "Р", "1", "111 Отсрочка", "1000", "0", "0", "2026-08-01", "2026-09-01"),
-                                row(1, "ПК", "2", "222Предоплата", "-300", "300", "0", "2026-08-02", null),
-                                row(2, "Р", "3", "111 Реализация", "400", "0", "0", "2026-08-03", "2026-08-10"),
+                                row(0, "Р", "1", "РЕЛ Отсрочка", "1000", "0", "0", "2026-08-01", "2026-09-01"),
+                                row(1, "ПК", "2", "ПРД Предоплата", "-300", "300", "0", "2026-08-02", null),
+                                row(2, "Р", "3", "РЕЛ Реализация", "400", "0", "0", "2026-08-03", "2026-08-10"),
                                 row(3, "Р", "4", "", "-50", "0", "0", "2026-08-04", null),
-                                row(4, "ПБ", "5", "222Банковская предоплата", "-200", "0", "200", "2026-08-05", null)
+                                row(4, "ПБ", "5", "ПРД Банковская предоплата", "-200", "0", "200", "2026-08-05", null)
                         )
                 ));
 
@@ -61,7 +61,7 @@ class FolioCustomerBalanceServiceTest {
         assertThat(response.summary().receiptTotal()).isEqualByComparingTo("50");
         assertThat(response.summary().bankPaymentTotal()).isEqualByComparingTo("200");
         assertThat(response.summary().cashPaymentTotal()).isEqualByComparingTo("300");
-        assertThat(response.summary().commonDebt()).isEqualByComparingTo("950");
+        assertThat(response.summary().commonDebt()).isEqualByComparingTo("1450");
         assertThat(response.summary().deferredAmount()).isEqualByComparingTo("1000");
         assertThat(response.summary().overdueDeferredAmount()).isEqualByComparingTo("400");
         assertThat(response.summary().prepaymentAmount()).isEqualByComparingTo("500");
@@ -79,7 +79,7 @@ class FolioCustomerBalanceServiceTest {
     }
 
     @Test
-    void doesNotTreatFutureControlDateAsDeferredWithout111Basis() {
+    void doesNotTreatFutureControlDateAsDeferredWithoutRelBasis() {
         FolioCustomerBalanceDao dao = mock(FolioCustomerBalanceDao.class);
         when(dao.load(eq("A"), any(), any(), anyList(), anyBoolean()))
                 .thenReturn(new ProcedureResult(
@@ -175,7 +175,7 @@ class FolioCustomerBalanceServiceTest {
                               String rawBank,
                               String documentDate,
                               String controlDate) {
-        boolean basisMarker = noteOrBasis.startsWith("111");
+        boolean basisMarker = noteOrBasis.startsWith("РЕЛ");
         return new RawRow(
                 order,
                 LocalDateTime.parse(documentDate + "T00:00:00"),

@@ -55,28 +55,49 @@ class FolioCustomerDebtorsServiceTest {
         FolioCustomerBalanceDao dao = mock(FolioCustomerBalanceDao.class);
         when(dao.loadForPartners(any(), anyList(), any(), any(), anyBoolean()))
                 .thenReturn(List.of(
-                        result("NO111", "No marker", "Д",
+                        result("NO_REL", "No marker", "Д",
                                 expense("500", "ordinary", "2026-09-01")),
                         result("FUTURE", "Future deferred", "Д",
-                                expense("1000", "111 Отсрочка", "2026-09-01")),
+                                expense("1000", "РЕЛ Отсрочка", "2026-09-01")),
                         result("OVERDUE", "Overdue", "Д",
-                                expense("400", "111 Отсрочка", "2026-08-10")),
+                                expense("400", "РЕЛ Отсрочка", "2026-08-10")),
                         result("PREPAY", "Prepaid", "Д",
                                 expense("300", null, null),
-                                bankPayment("200", "222 Банковская предоплата"))
+                                bankPayment("200", "ПРД Банковская предоплата"))
                 ));
 
         var response = service(dao).get(BigDecimal.ZERO, null, null, 50, 0, null);
 
         assertThat(response.debtors()).extracting(item -> item.partner().shortName())
-                .containsExactly("NO111", "OVERDUE", "PREPAY");
-        assertThat(item(response, "NO111").deferredAmount()).isEqualByComparingTo("0");
-        assertThat(item(response, "NO111").payableNow()).isEqualByComparingTo("500");
+                .containsExactly("NO_REL", "OVERDUE", "PREPAY");
+        assertThat(item(response, "NO_REL").deferredAmount()).isEqualByComparingTo("0");
+        assertThat(item(response, "NO_REL").payableNow()).isEqualByComparingTo("500");
         assertThat(item(response, "OVERDUE").overdueDeferredAmount()).isEqualByComparingTo("400");
         assertThat(item(response, "OVERDUE").payableNow()).isEqualByComparingTo("400");
-        assertThat(item(response, "PREPAY").commonDebt()).isEqualByComparingTo("100");
+        assertThat(item(response, "PREPAY").commonDebt()).isEqualByComparingTo("300");
         assertThat(item(response, "PREPAY").prepaymentAmount()).isEqualByComparingTo("200");
         assertThat(item(response, "PREPAY").payableNow()).isEqualByComparingTo("300");
+    }
+
+    @Test
+    void keepsPrepaymentSeparateFromExistingDebt() {
+        FolioCustomerBalanceDao dao = mock(FolioCustomerBalanceDao.class);
+        when(dao.loadForPartners(any(), anyList(), any(), any(), anyBoolean()))
+                .thenReturn(List.of(result(
+                        "CLIENT",
+                        "Client",
+                        "Д",
+                        expense("1000", null, null),
+                        bankPayment("800", null),
+                        bankPayment("700", "ПРД Предоплата за будущий товар")
+                )));
+
+        var response = service(dao).get(BigDecimal.ZERO, null, null, 50, 0, null);
+        var client = item(response, "CLIENT");
+
+        assertThat(client.commonDebt()).isEqualByComparingTo("200");
+        assertThat(client.prepaymentAmount()).isEqualByComparingTo("700");
+        assertThat(client.payableNow()).isEqualByComparingTo("200");
     }
 
     @Test

@@ -16,6 +16,8 @@ import java.util.List;
 final class FolioCustomerBalanceCalculator {
 
     private static final BigDecimal ZERO = BigDecimal.ZERO;
+    private static final String DEFERRED_MARKER = "РЕЛ";
+    private static final String PREPAYMENT_MARKER = "ПРД";
 
     private FolioCustomerBalanceCalculator() {
     }
@@ -55,7 +57,7 @@ final class FolioCustomerBalanceCalculator {
                     .subtract(amounts.cashPayment());
 
             LocalDate controlDate = toDate(raw.controlDate());
-            boolean deferredMarker = startsWith(raw.basis(), "111");
+            boolean deferredMarker = startsWith(raw.basis(), DEFERRED_MARKER);
             boolean deferred = amounts.expense().signum() != 0
                     && deferredMarker
                     && controlDate != null
@@ -64,7 +66,7 @@ final class FolioCustomerBalanceCalculator {
                     && deferredMarker
                     && !deferred;
             BigDecimal paymentAmount = amounts.bankPayment().add(amounts.cashPayment());
-            boolean prepayment = startsWith(raw.note(), "222")
+            boolean prepayment = startsWith(raw.note(), PREPAYMENT_MARKER)
                     && paymentAmount.signum() != 0;
 
             BigDecimal deferredAmount = deferred ? amounts.expense() : ZERO;
@@ -110,12 +112,15 @@ final class FolioCustomerBalanceCalculator {
             }
         }
 
-        BigDecimal commonDebt = openingBalance
+        BigDecimal accountingBalance = openingBalance
                 .add(expenseTotal)
                 .subtract(receiptTotal)
                 .subtract(bankPaymentTotal)
                 .subtract(cashPaymentTotal);
-        BigDecimal payableNow = commonDebt.subtract(deferredTotal).add(prepaymentTotal);
+        // A marked prepayment is reserved for a future delivery and must not pay
+        // existing debt. Keep it as a separate amount and exclude its effect from debt.
+        BigDecimal commonDebt = accountingBalance.add(prepaymentTotal);
+        BigDecimal payableNow = commonDebt.subtract(deferredTotal);
 
         var summary = new FolioCustomerBalanceResponse.Summary(
                 openingBalance,
