@@ -5,6 +5,9 @@ import jakarta.validation.ConstraintViolationException;
 import org.example.proect.lavka.service.folio.FolioAccountConflictException;
 import org.example.proect.lavka.service.folio.FolioAccountNotFoundException;
 import org.example.proect.lavka.service.folio.FolioAccountValidationException;
+import org.example.proect.lavka.service.folio.FolioAccountingPriceBusyException;
+import org.example.proect.lavka.service.folio.FolioAccountingPriceDisabledException;
+import org.example.proect.lavka.service.folio.FolioAccountingPriceNotFoundException;
 import org.example.proect.lavka.service.folio.FolioBalanceSnapshotUnavailableException;
 import org.example.proect.lavka.service.folio.FolioCustomerDocumentNotFoundException;
 import org.example.proect.lavka.service.folio.FolioPartnerNotFoundException;
@@ -158,6 +161,41 @@ public class GlobalExceptionHandler {
         log.warn("[folio.balance.snapshot] unavailable uri={} msg={}", r.getRequestURI(), e.getMessage());
         return problem(r, HttpStatus.SERVICE_UNAVAILABLE, "Folio balance snapshot unavailable", Map.of(
                 "code", "BALANCE_SNAPSHOT_NOT_READY",
+                "message", truncate(e.getMessage(), 1000)
+        ));
+    }
+
+    @ExceptionHandler(FolioAccountingPriceBusyException.class)
+    public ResponseEntity<Map<String, Object>> handleFolioAccountingPriceBusy(
+            FolioAccountingPriceBusyException e,
+            HttpServletRequest r) {
+        log.warn("[folio.accounting-price] busy uri={} msg={}", r.getRequestURI(), e.getMessage());
+        return problem(r, HttpStatus.CONFLICT, "Folio accounting-price recalculation is busy", Map.of(
+                "code", "ACCOUNTING_PRICE_RECALCULATION_BUSY",
+                "message", truncate(e.getMessage(), 1000)
+        ));
+    }
+
+    @ExceptionHandler(FolioAccountingPriceDisabledException.class)
+    public ResponseEntity<Map<String, Object>> handleFolioAccountingPriceDisabled(
+            FolioAccountingPriceDisabledException e,
+            HttpServletRequest r) {
+        log.warn("[folio.accounting-price] disabled uri={} code={} msg={}",
+                r.getRequestURI(), e.getCode(), e.getMessage());
+        return problem(r, HttpStatus.FORBIDDEN, "Folio accounting-price API operation is disabled", Map.of(
+                "code", e.getCode(),
+                "message", truncate(e.getMessage(), 1000)
+        ));
+    }
+
+    @ExceptionHandler(FolioAccountingPriceNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleFolioAccountingPriceNotFound(
+            FolioAccountingPriceNotFoundException e,
+            HttpServletRequest r) {
+        log.warn("[folio.accounting-price] not-found uri={} code={} msg={}",
+                r.getRequestURI(), e.getCode(), e.getMessage());
+        return problem(r, HttpStatus.NOT_FOUND, "Folio accounting-price target not found", Map.of(
+                "code", e.getCode(),
                 "message", truncate(e.getMessage(), 1000)
         ));
     }
