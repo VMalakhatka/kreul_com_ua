@@ -107,6 +107,7 @@ public class FolioCustomerDocumentDao {
                     returnDocument,
                     nullableBoolean(rs.getObject("PAYMENT_DIRECTION_RAW")),
                     trimToNull(rs.getString("OPERATION_KIND")),
+                    trimToNull(rs.getString("ADDITIONAL_INFO")),
                     rs.getInt("LINE_COUNT"),
                     moneyNullable(rs.getBigDecimal("ALLOCATED_AMOUNT")),
                     type.repeatable() && !Boolean.TRUE.equals(returnDocument) && rs.getInt("LINE_COUNT") > 0,
@@ -443,6 +444,7 @@ public class FolioCustomerDocumentDao {
                        n.VOZVRAT_PR AS RETURN_DOCUMENT,
                        CAST(NULL AS bit) AS PAYMENT_DIRECTION_RAW,
                        n.VID_DOC AS OPERATION_KIND,
+                       n.L_CP2_PLAT AS ADDITIONAL_INFO,
                        (SELECT COUNT(*) FROM dbo.SCL_MOVE m WITH (NOLOCK)
                          WHERE m.UNICUM_NUM = n.UNICUM_NUM) AS LINE_COUNT,
                        CAST(NULL AS float) AS ALLOCATED_AMOUNT
@@ -465,6 +467,7 @@ public class FolioCustomerDocumentDao {
                        CAST(NULL AS bit) AS RETURN_DOCUMENT,
                        p.TYPE_POR AS PAYMENT_DIRECTION_RAW,
                        p.VID_DOC AS OPERATION_KIND,
+                       CAST(NULL AS varchar(30)) AS ADDITIONAL_INFO,
                        (SELECT COUNT(*) FROM dbo.SCL_PMOV a WITH (NOLOCK)
                          WHERE a.UNICUM_PLT = p.UNICUM_PLT) AS LINE_COUNT,
                        (SELECT SUM(ISNULL(a.SUM_PREDM, 0)) FROM dbo.SCL_PMOV a WITH (NOLOCK)

@@ -81,6 +81,7 @@ GET /admin/folio/customer-documents?partnerShortName=БОНД%20АНН&dateFrom=
       "returnDocument": false,
       "paymentDirectionRaw": null,
       "operationKind": "*РОЗНИЦА",
+      "additionalInfo": "не найдено Ермолаева",
       "lineCount": 12,
       "allocatedAmount": null,
       "canRepeatOrder": true,
@@ -100,6 +101,13 @@ GET /admin/folio/customer-documents?partnerShortName=БОНД%20АНН&dateFrom=
 ```
 
 Документы отсортированы по дате от новых к старым. Если `hasMore=true`, следующий запрос должен повторить те же фильтры и передать `cursor=<nextCursor>`. Не разбирать и не изменять cursor на фронте.
+
+`additionalInfo` для `ACCOUNT` и `EXPENSE` читается напрямую из
+`SCL_NAKL.L_CP2_PLAT` — того же поля, которое detail endpoint возвращает как
+`document.additionalInfo`. Java не вычисляет его и не объединяет с
+`sourceInfo`, `comment` или другими реквизитами. Пустое значение возвращается
+как `null`. Для `PAYMENT` поле также равно `null`, поскольку у платёжного
+документа этого поля нет.
 
 ## 2. Детали документа
 

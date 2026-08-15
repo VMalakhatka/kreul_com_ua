@@ -60,6 +60,7 @@ class FolioCustomerDocumentServiceTest {
 
         assertThat(response.documents()).extracting(FolioCustomerDocumentsResponse.DocumentSummary::documentId)
                 .containsExactly(20L);
+        assertThat(response.documents().get(0).additionalInfo()).isEqualTo("не найдено Ермолаева");
         assertThat(response.hasMore()).isTrue();
         assertThat(response.nextCursor()).isNotBlank();
         assertThat(response.filters().dateTo()).isEqualTo(LocalDate.of(2026, 8, 14));
@@ -147,6 +148,7 @@ class FolioCustomerDocumentServiceTest {
                 false,
                 null,
                 null,
+                type == FolioCustomerDocumentType.PAYMENT ? null : "не найдено Ермолаева",
                 1,
                 null,
                 type.repeatable(),

@@ -46,6 +46,7 @@ public record FolioCustomerDocumentsResponse(
             Boolean returnDocument,
             Boolean paymentDirectionRaw,
             String operationKind,
+            String additionalInfo,
             int lineCount,
             BigDecimal allocatedAmount,
             boolean canRepeatOrder,
