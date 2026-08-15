@@ -1,19 +1,26 @@
 # API перерасчёта учётных цен ФОЛИО
 
+Инструкция по интеграции интерфейса и отображению диагностики:
+[FOLIO_ACCOUNTING_PRICES_FRONTEND.md](FOLIO_ACCOUNTING_PRICES_FRONTEND.md).
+
 ## Назначение и границы первого этапа
 
-API вызывает штатный точечный route ФОЛИО `dbo.i_uchet_add` с `mode=2`. Java
-не вычисляет себестоимость собственной формулой и не выполняет прямой `UPDATE`
-цены.
+API использует два разных штатных алгоритма ФОЛИО. Точечный маршрут и
+`/recalculate/full` вызывают `dbo.i_uchet_add` с `mode=2`. Отдельный
+`/recalculate/native-full` управляет полной процедурой `dbo.I_UCHET_TOVAR`.
+Java не вычисляет себестоимость собственной формулой и не выполняет прямой
+`UPDATE` цены.
 
-Предусмотрены два сценария:
+Предусмотрены три сценария:
 
 - проверка или перерасчёт одного товара на одном складе;
-- фоновая проверка или полный перерасчёт товаров склада.
+- Java-обход всех SKU склада через `i_uchet_add(mode=2)`;
+- штатный полный перерасчёт ФОЛИО через `I_UCHET_TOVAR`.
 
-Здесь слово «полный» означает **обход всех SKU выбранного склада одним Java
-job**, а не полную семантику кнопки перерасчёта в настольном ФОЛИО. Точечный и
-полный apply используют один и тот же `i_uchet_add(mode=2)`.
+Маршрут `/recalculate/full` означает **обход всех SKU выбранного склада одним
+Java job**, а не полную семантику кнопки перерасчёта в настольном ФОЛИО.
+Точечный маршрут и `/full` используют `i_uchet_add(mode=2)`. Отдельный маршрут
+`/recalculate/native-full` управляет именно `I_UCHET_TOVAR`.
 
 ### Что именно пересчитывается
 
@@ -31,12 +38,14 @@ job**, а не полную семантику кнопки перерасчёт
 
 Поэтому endpoint подходит для восстановления **итоговой учётной цены карточки**
 при корректных учётных суммах приходов. Если подозрение относится к
-`SUM_UCHET/SUM_UCVAL` приходной строки, нужен отдельный диагностический отчёт и
-штатный полный workflow ФОЛИО; данный API нельзя выдавать за его замену.
+`SUM_UCHET/SUM_UCVAL` приходной строки, Java-full нельзя выдавать за полный
+перерасчёт: следует использовать отдельный `/recalculate/native-full`, который
+управляет `I_UCHET_TOVAR`, только после его точного rollback-preview.
 
 На первом этапе применение разрешено только для подтверждённого режима
-**средней учётной цены**. Товары с неподдерживаемой настройкой не изменяются и
-возвращаются в предупреждениях.
+**средней учётной цены**. Для native-full это точная конфигурация
+`SCLAD_R.N_2=1000` при `SCLAD_R.N_4 IS NULL`. Товары и склады с другой
+настройкой не изменяются.
 
 Все маршруты административные. Их нельзя вызывать напрямую из публичного
 браузера. Перед включением записи необходимо проверить существующую внешнюю
@@ -46,17 +55,21 @@ job**, а не полную семантику кнопки перерасчёт
 
 Ключевые правила:
 
-1. `previewOnly=true` работает строго на чтение: не запускает изменяющую
-   процедуру, не пишет в `TMP_MOVE` и не меняет таблицы ФОЛИО.
+1. Для точечного route и `/full` `previewOnly=true` работает строго на чтение.
+   Для `/native-full` точный preview обязан вызвать `I_UCHET_TOVAR`, но каждая
+   порция выполняется в отдельной транзакции с обязательным rollback.
 2. Весь API закрыт отдельным `api-enabled`, по умолчанию выключенным до
    подтверждения внешней авторизации `/admin`.
 3. Реальное применение закрыто дополнительными apply-флагами, которые также по
-   умолчанию выключены. Для full apply нужен отдельный второй флаг.
-4. Перед каждым применением Java повторно проверяет хронологический остаток.
+   умолчанию выключены. Java-full и native-full имеют разные отдельные флаги.
+4. Точечный и Java-full режимы проверяют хронологический остаток перед записью
+   каждого SKU. Native-full перед apply выполняет отдельный полный проход
+   штатной процедуры с rollback всех порций.
 5. Точечный и полный запуск используют общий эксклюзивный mutex: параллельные
    перерасчёты через Java не допускаются.
-6. В полном режиме каждый SKU обрабатывается в отдельной транзакции. Ошибка
-   одного товара не откатывает уже успешно обработанные товары.
+6. В Java-full каждый SKU обрабатывается в отдельной транзакции. Native-full
+   обрабатывает диапазоны, размер которых определяет сама legacy-процедура по
+   времени выполнения; границы порций preview и apply могут различаться.
 7. Java не может заблокировать запуск перерасчёта из настольного клиента
    ФОЛИО. Реальный полный проход следует выполнять в согласованное окно, когда
    оператор не запускает эту же операцию вручную.
@@ -273,12 +286,38 @@ preview возвращает всю обнаруженную область в `
   "message": "The chronological stock becomes negative; Folio cannot safely recalculate this product",
   "details": {
     "warehouseId": 12,
-    "recno": 12547283,
-    "documentDate": [2017, 4, 22, 0, 0],
-    "runningQuantity": -21
+    "initialQuantity": 10,
+    "quantityBefore": 10,
+    "operation": {
+      "kind": "EXPENSE",
+      "documentType": "Р",
+      "quantity": 11,
+      "recno": 12547283,
+      "documentId": 753800,
+      "documentNumber": 20042799,
+      "documentDate": "2017-04-22T00:00:00",
+      "warehouseId": 12
+    },
+    "quantityAfter": -1,
+    "shortageQuantity": 1,
+    "movementPosition": 27,
+    "movementCount": 184,
+    "currentState": {
+      "physicalQuantity": 4,
+      "availableQuantity": 3,
+      "accountingQuantity": 4,
+      "accountingPrice": 800
+    }
   }
 }
 ```
+
+Это причинная диагностика, а не только текущий остаток. `quantityBefore`
+показывает расчётный хронологический остаток непосредственно перед проблемным
+движением, `operation` — строку документа, которая впервые сделала остаток
+отрицательным, а `quantityAfter` — результат после неё. `currentState` —
+текущее состояние карточки товара на момент проверки; его нельзя подменять
+историческим остатком после операции.
 
 Основные диагностические коды:
 
@@ -430,9 +469,28 @@ Endpoint возвращает текущий либо последний пол�
       "details": {
         "sku": "CON-100516109R",
         "warehouseId": 12,
-        "recno": 12547283,
-        "documentDate": [2017, 4, 22, 0, 0],
-        "runningQuantity": -21
+        "initialQuantity": 10,
+        "quantityBefore": 10,
+        "operation": {
+          "kind": "EXPENSE",
+          "documentType": "Р",
+          "quantity": 31,
+          "recno": 12547283,
+          "documentId": 753800,
+          "documentNumber": 20042799,
+          "documentDate": "2017-04-22T00:00:00",
+          "warehouseId": 12
+        },
+        "quantityAfter": -21,
+        "shortageQuantity": 21,
+        "movementPosition": 27,
+        "movementCount": 184,
+        "currentState": {
+          "physicalQuantity": 4,
+          "availableQuantity": 3,
+          "accountingQuantity": 4,
+          "accountingPrice": 800
+        }
       }
     }
   ]
@@ -442,8 +500,9 @@ Endpoint возвращает текущий либо последний пол�
 В ответе `GET` поле `accepted` всегда равно `false`: оно имеет смысл только в
 непосредственном ответе `POST`, принявшего новую задачу. Поля со значением
 `null` не сериализуются. `startedAt` и `completedAt` в status имеют строковый
-формат `yyyy-MM-dd'T'HH:mm:ss.SSS`; даты внутри свободного `details` warning
-сохраняют стандартное представление Jackson проекта.
+формат `yyyy-MM-dd'T'HH:mm:ss.SSS`. `operation.documentDate` внутри диагностики
+отрицательного остатка также возвращается ISO-строкой, например
+`2017-04-22T00:00:00`.
 
 Статусы фонового запуска:
 
@@ -480,6 +539,235 @@ job как `FAILED`/`FAILED_PARTIAL`. `continueOnNegativeStock=false` допол
 
 Cancel endpoint на первом этапе отсутствует.
 
+## 4. Штатный полный перерасчёт `I_UCHET_TOVAR`
+
+```http
+POST /admin/folio/accounting-prices/recalculate/native-full
+Content-Type: application/json
+```
+
+Этот endpoint соответствует полному перерасчёту учётных цен настольного ФОЛИО.
+Он заново вычисляет учётные суммы приходных строк из исходных сумм документов,
+налогов и валютных данных, затем пересчитывает расходы и итоги карточки.
+
+На текущем этапе endpoint по умолчанию разрешён только для базы `Paint_Rus`,
+склада с точным `SCLAD_R.N_2=1000` и `SCLAD_R.N_4 IS NULL`. Это не
+рекомендация включать запись в рабочую `Paint_Ua`: её имя отсутствует в
+стандартном allow-list.
+
+### Запрос preview
+
+```json
+{
+  "warehouseId": 12,
+  "previewOnly": true,
+  "confirmApply": false
+}
+```
+
+| Поле | Обязательный | Правило |
+|---|---:|---|
+| `warehouseId` | да | существующий склад, значение больше нуля |
+| `previewOnly` | да | `true` — точный проход с rollback; `false` — preflight и затем apply |
+| `confirmApply` | для apply | при `previewOnly=false` должно быть строго `true`; при preview можно не передавать |
+
+`previewOnly=true` — не обычный read-only precheck. Java вызывает точную
+`I_UCHET_TOVAR` порциями, читает `art`, `new_art`, `otr_date`, `n_cur`, `n_tot`,
+но помечает транзакцию каждой порции на rollback. После ответа данные ФОЛИО не
+изменены. Такой проход показывает те же остановки, которые находит штатная
+процедура, включая изменения, которые невозможно надёжно предсказать собственной
+Java-формулой.
+
+`confirmApply` при preview не используется и может быть `false` или отсутствовать.
+
+### Запрос apply
+
+```json
+{
+  "warehouseId": 12,
+  "previewOnly": false,
+  "confirmApply": true
+}
+```
+
+Для apply `confirmApply=true` обязателен. Даже после подтверждения Java сначала
+автоматически выполняет полный rollback-preflight:
+
+1. проходит весь склад штатной процедурой;
+2. откатывает каждую порцию;
+3. собирает все найденные отрицательные остатки;
+4. если найдена хотя бы одна проблема — возвращает
+   `BLOCKED_NEGATIVE_STOCK`, не фиксируя ни одной порции;
+5. только чистый preflight запускает второй проход с commit каждой успешной
+   порции.
+
+Это необходимо потому, что `I_UCHET_TOVAR` возвращает `otr_date` уже после
+частичного изменения проблемного SKU. Коммит такой порции опасен. Откатить
+порцию и продолжить apply с `new_art` тоже нельзя: тогда будут пропущены
+корректные SKU, которые находились в той же откатившейся порции.
+
+Размер порции определяется временем выполнения внутри `I_UCHET_TOVAR`.
+Следовательно, второй apply-проход не обязан вернуть те же границы
+`art`/`new_art`, что rollback-preflight. Реализация не сравнивает порции по
+номерам и не обещает их совпадение. Перед apply Java снимает защищённый
+baseline всего склада; внутри каждой apply-транзакции сверяет фактически
+обработанный диапазон, а после последней порции повторно сверяет весь baseline.
+Отдельно проверяются база, настройки склада, OUT-контракт и поступательное
+движение курсора.
+
+POST всегда ставит задачу в фон и при принятии возвращает HTTP `202`. Результат
+нужно читать здесь:
+
+```http
+GET /admin/folio/accounting-prices/recalculate/native-full/status
+```
+
+### Поля статуса
+
+| Поле | Значение |
+|---|---|
+| `phase` | стадия выполнения: `QUEUED`, `PRECHECK_RUNNING`, `PRECHECK_COMPLETED`, `APPLY_RUNNING`, `APPLY_COMPLETED`, `APPLY_STOPPED` или `FAILED` |
+| `procedureCalls` | общее число вызовов `I_UCHET_TOVAR`, включая preflight и apply |
+| `preflightChunks` | число порций, гарантированно откатившихся во время проверки |
+| `committedChunks` | число успешно зафиксированных порций apply |
+| `progressUnits` | сумма возвращённых `n_cur` текущего прохода |
+| `totalUnits` | `n_tot`, рассчитанный первым вызовом с `art=NULL` |
+| `progressPercent` | приблизительный процент текущего прохода |
+| `currentArt` | последний товар, о котором сообщила процедура |
+| `nextArt` | `new_art`, курсор следующей порции |
+| `lastCommittedArt` | последний SKU последней подтверждённой порции |
+| `checkpointArt` | входной `art` текущей/оборвавшейся порции; при неизвестном исходе не продолжать автоматически |
+| `returnCode` | return status последнего вызова |
+| `warnings` | отрицательные остатки с полной диагностикой |
+
+`progressUnits` на apply начинается заново после preflight. `procedureCalls`
+считает оба прохода, но его нельзя сравнивать с `committedChunks` как 2:1:
+границы time-based порций между проходами могут отличаться.
+
+### Статусы native job
+
+| Статус | Значение |
+|---|---|
+| `IDLE` | после старта приложения native job ещё не запускался |
+| `BUSY` | общий слот занят точечным, Java-full или native-full расчётом |
+| `QUEUED` | задача принята |
+| `RUNNING` | выполняется preflight либо apply; смотреть `phase` |
+| `PREVIEW_READY` | точный rollback-preview завершён без проблем; БД не изменена |
+| `BLOCKED_NEGATIVE_STOCK` | preflight нашёл проблемы; apply не начался, `committedChunks=0` |
+| `COMPLETED` | штатный полный перерасчёт завершён |
+| `STOPPED_ON_NEGATIVE_STOCK` | во время apply до первого commit появилась новая проблема; текущая порция откатилась |
+| `FAILED` | ошибка до первого commit |
+| `FAILED_PARTIAL` | ошибка либо новая отрицательная история после одной или нескольких зафиксированных порций; предыдущие commit сохранены |
+| `OUTCOME_UNKNOWN` | приложение не может доказать исход текущей транзакции или обнаружило нарушение её границы; автоматически повторять или продолжать нельзя |
+
+Пример заблокированного результата:
+
+```json
+{
+  "ok": false,
+  "accepted": false,
+  "running": false,
+  "jobId": "9a4705cb-7190-42af-b96e-fd83e44a2791",
+  "status": "BLOCKED_NEGATIVE_STOCK",
+  "phase": "PRECHECK_COMPLETED",
+  "database": "Paint_Rus",
+  "procedureCalls": 4,
+  "preflightChunks": 4,
+  "committedChunks": 0,
+  "warningCount": 1,
+  "warningsTruncated": false,
+  "warnings": [
+    {
+      "code": "NEGATIVE_CHRONOLOGICAL_STOCK",
+      "message": "The chronological stock becomes negative; Folio cannot safely recalculate this product",
+      "details": {
+        "procedureArt": "CON-100516109R",
+        "folioProblemDate": "22.04.2017",
+        "warehouseId": 12,
+        "initialQuantity": 10,
+        "quantityBefore": 10,
+        "operation": {
+          "kind": "EXPENSE",
+          "documentType": "Р",
+          "quantity": 31,
+          "recno": 12547283,
+          "documentId": 753800,
+          "documentNumber": 20042799,
+          "documentDate": "2017-04-22T00:00:00"
+        },
+        "quantityAfter": -21,
+        "shortageQuantity": 21,
+        "nextArt": "CON-100516110R"
+      }
+    }
+  ]
+}
+```
+
+Если Java-хронология не смогла однозначно сопоставить `otr_date` конкретной
+строке (например, сложная ветка возврата), warning имеет код
+`FOLIO_NATIVE_RECALCULATION_PROBLEM` и всё равно содержит подтверждённые самой
+процедурой `procedureArt`, `folioProblemDate`, `checkpointArt` и `nextArt`.
+
+Когда сопоставление возможно, `NEGATIVE_CHRONOLOGICAL_STOCK.details` содержит:
+
+- `initialQuantity` — количество до начала истории;
+- `quantityBefore` — расчётный остаток перед первой проблемной операцией;
+- `operation` — вид движения, технические и пользовательские номера документа,
+  `recno`, дата и количество;
+- `quantityAfter` и `shortageQuantity` — состояние сразу после операции и
+  величина дефицита;
+- `movementPosition` / `movementCount` — позиция в проверенной хронологии;
+- `currentState` — текущие физический, свободный и учётный остатки и цена;
+- `procedureArt`, `folioProblemDate`, `checkpointArt`, `nextArt` — сигналы и
+  курсоры самой `I_UCHET_TOVAR`.
+
+Это диагностика причины отрицания, а не только текущего `KON_KOLCH`.
+
+### Ограничения первого релиза
+
+- разрешён только экспериментально подтверждённый точный код средней цены
+  `SCLAD_R.N_2=1000` (`calculationMode=0`, `periodMode=0`, без налога);
+- `SCLAD_R.N_4` должен быть `NULL`; складские группы пока блокируются;
+- FIFO/LIFO и партии блокируются до отдельных golden-master тестов;
+- параметры метода, периода и учёта налога берутся только из `SCLAD_R.N_2`, а
+  не из запроса;
+- native status хранится в памяти. После рестарта он станет `IDLE`, но уже
+  зафиксированные MSSQL-порции не откатятся. Логи фиксируют только commit,
+  успешно наблюдённые приложением, и **не являются транзакционным checkpoint**:
+  процесс может завершиться между MSSQL commit и записью строки лога;
+- первый rollout разрешён только для `Paint_Rus`. Для Paint_Ua нужно отдельно
+  расширить allow-list после резервной копии и согласованного контрольного
+  запуска.
+
+## Постоянный журнал отрицательных остатков
+
+Каждый обнаруженный `NEGATIVE_CHRONOLOGICAL_STOCK` записывается отдельной
+структурированной строкой в `${LOG_DIR}/folio-accounting-price.log` с неизменным именем
+события:
+
+```text
+[folio.accounting-price] accounting_price_negative_stock sku=... warehouse=... recno=... documentId=... documentNumber=... date=... initialQuantity=... quantityBefore=... operationType=... operationQuantity=... quantityAfter=... shortageQuantity=... movementPosition=... movementCount=... currentPhysical=... currentAvailable=... currentAccountingQuantity=... currentAccountingPrice=...
+```
+
+Запись создаётся и при preview, и при apply, потому что фиксирует результат
+диагностики, а не факт изменения БД. Повторный запуск проверки создаст новую
+строку. Файл ротируется текущей конфигурацией приложения: хранение 30 дней,
+максимум 20 MB на часть и 1 GB суммарно.
+
+`max-reported-warnings` может усечь массив `warnings` в HTTP status, но не
+останавливает запись обнаруженных отрицательных остатков в
+`folio-accounting-price.log`. Native-проход дополнительно пишет событие
+`native_negative_stock` с `job`, складом и курсорами процедуры. Сам status
+фоновой задачи хранится только в памяти Java и после рестарта недоступен;
+файл лога остаётся на диске согласно политике ротации.
+
+Лог предназначен для диагностики, а не для возобновления job. Он не состоит в
+одной транзакции с MSSQL: наличие строки подтверждает наблюдение приложения, но
+отсутствие строки не доказывает отсутствие commit. После `FAILED_PARTIAL` или
+`OUTCOME_UNKNOWN` запрещено автоматически продолжать с `lastCommittedArt` или
+`checkpointArt`.
+
 ## Как это соотносится со штатным интерфейсом ФОЛИО
 
 SQL-процедура не умеет показывать диалог и сама не задаёт оператору вопрос.
@@ -489,23 +777,32 @@ SQL-процедура не умеет показывать диалог и са
 
 Документация и разбор procedures подтверждают сигнал об отрицательном остатке,
 но не подтверждают точный текст и набор кнопок каждой версии настольного
-клиента. Поэтому Java не имитирует неизвестный диалог: выбор явно передаётся в
-`continueOnNegativeStock`.
+клиента. Поэтому два Java-режима решают эту ситуацию явно и по-разному:
 
-Java не продолжает диапазон через `I_UCHET_1_TOVAR` вслепую: один такой вызов
-может успеть изменить несколько предшествующих товаров до warning. Вместо этого
-полный job сам получает упорядоченный список SKU, делает отдельный precheck и
-для разрешённого товара вызывает подтверждённый точечный route
-`dbo.i_uchet_add` с `mode=2`.
+- `/recalculate/full` сам получает список SKU, проверяет каждый товар и вызывает
+  `dbo.i_uchet_add(mode=2)`. Только этот запрос имеет
+  `continueOnNegativeStock`: проблемный SKU можно пропустить;
+- `/recalculate/native-full` вызывает `I_UCHET_TOVAR` и не принимает
+  `continueOnNegativeStock`. Preview продолжает поиск проблем только в
+  rollback-транзакциях. Любая проблема preflight блокирует весь apply, а новая
+  проблема во втором проходе откатывает текущую порцию и останавливает job.
+
+Таким образом `/full` — безопасный Java-обход из уже сохранённых учётных сумм,
+а `/native-full` — полный штатный пересчёт исходных приходных сумм. Эти режимы
+не взаимозаменяемы.
 
 ## Коды HTTP
 
 | HTTP | Код | Причина |
 |---:|---|---|
 | 400 | `VALIDATION_ERROR` | отсутствует поле или неверен формат |
+| 400 | `NATIVE_FULL_CONFIRMATION_REQUIRED` | для `previewOnly=false` не передано `confirmApply=true` |
 | 403 | `ACCOUNTING_PRICE_API_DISABLED` | весь модуль, включая preview POST, выключен до подтверждения защиты `/admin` |
 | 403 | `ACCOUNTING_PRICE_APPLY_DISABLED` | точечный apply выключен конфигурацией |
 | 403 | `ACCOUNTING_PRICE_FULL_APPLY_DISABLED` | полный apply выключен конфигурацией |
+| 403 | `ACCOUNTING_PRICE_NATIVE_FULL_DISABLED` | native-full, включая его rollback-preview, выключен отдельным флагом |
+| 403 | `ACCOUNTING_PRICE_NATIVE_FULL_APPLY_DISABLED` | native apply не разрешён одновременно общим и отдельным apply-флагами |
+| 403 | `ACCOUNTING_PRICE_NATIVE_DATABASE_NOT_ALLOWED` | текущая MSSQL-база отсутствует в native allow-list |
 | 404 | `FOLIO_PRODUCT_NOT_FOUND` | пара SKU + склад отсутствует |
 | 404 | `FOLIO_WAREHOUSE_NOT_FOUND` | склад отсутствует |
 | 409 | `ACCOUNTING_PRICE_RECALCULATION_BUSY` | точечный перерасчёт уже выполняется; full POST при занятости возвращает status body с `accepted=false` |
@@ -520,13 +817,17 @@ Java не продолжает диапазон через `I_UCHET_1_TOVAR` в�
 
 Рекомендуемая последовательность:
 
-1. после деплоя оставить `api-enabled` и оба apply-флага выключенными;
+1. после деплоя оставить `api-enabled`, `native-full-enabled` и все apply-флаги
+   выключенными;
 2. подтвердить внешнюю защиту `/admin`, затем включить только `api-enabled`;
 3. выполнить точечный `previewOnly=true` на проверенных товарах;
 4. выполнить полный `previewOnly=true`, разобрать все пропуски;
 5. включить точечное применение и сверить один товар с интерфейсом ФОЛИО;
-6. сделать резервную копию и только затем отдельно включить полный apply;
-7. первый полный apply запускать в окно без ручного перерасчёта.
+6. для native сначала отдельно включить `native-full-enabled`, оставить его
+   apply выключенным и выполнить rollback-preview только в `Paint_Rus`;
+7. сделать резервную копию и только затем отдельно включить нужный full apply;
+8. первый apply любого полного режима запускать в окно без ручного
+   перерасчёта.
 
 Используются следующие настройки:
 
@@ -534,15 +835,19 @@ Java не продолжает диапазон через `I_UCHET_1_TOVAR` в�
 lavka.folio.accounting-prices.api-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_API_ENABLED:false}
 lavka.folio.accounting-prices.apply-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_APPLY_ENABLED:false}
 lavka.folio.accounting-prices.full-apply-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_FULL_APPLY_ENABLED:false}
+lavka.folio.accounting-prices.native-full-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ENABLED:false}
+lavka.folio.accounting-prices.native-full-apply-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_APPLY_ENABLED:false}
+lavka.folio.accounting-prices.native-full-allowed-databases=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ALLOWED_DATABASES:Paint_Rus}
+lavka.folio.accounting-prices.native-full-max-chunks=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_MAX_CHUNKS:10000}
 lavka.folio.accounting-prices.lock-timeout-ms=${LAVKA_FOLIO_ACCOUNTING_PRICE_LOCK_TIMEOUT_MS:5000}
 lavka.folio.accounting-prices.query-timeout-seconds=${LAVKA_FOLIO_ACCOUNTING_PRICE_QUERY_TIMEOUT_SECONDS:120}
 lavka.folio.accounting-prices.max-reported-warnings=${LAVKA_FOLIO_ACCOUNTING_PRICE_MAX_REPORTED_WARNINGS:200}
 lavka.folio.accounting-prices.zone=${LAVKA_FOLIO_ACCOUNTING_PRICE_ZONE:Europe/Kyiv}
 ```
 
-`api-enabled` разрешает все три маршрута модуля, включая preview и status; его безопасное
-значение по умолчанию — `false`. После подтверждения внешней защиты `/admin`
-его можно включить, сохранив apply-флаги выключенными.
+`api-enabled` открывает все endpoint модуля, включая preview и status; его
+безопасное значение по умолчанию — `false`. После подтверждения внешней защиты
+`/admin` его можно включить, сохранив apply-флаги выключенными.
 
 `apply-enabled` разрешает точечный apply. Для полного apply должны одновременно
 быть `true` оба флага: `apply-enabled` и `full-apply-enabled`. Full apply намеренно
@@ -550,10 +855,22 @@ lavka.folio.accounting-prices.zone=${LAVKA_FOLIO_ACCOUNTING_PRICE_ZONE:Europe/Ky
 режима. Feature flags являются защитой от случайного запуска и не заменяют
 авторизацию.
 
+Native-full имеет отдельную лестницу защиты:
+
+- его rollback-preview требует одновременно `api-enabled=true` и
+  `native-full-enabled=true`;
+- его apply требует ещё `apply-enabled=true` и
+  `native-full-apply-enabled=true`;
+- `native-full-allowed-databases` проверяется и до запуска, и на соединении
+  внутри каждой MSSQL-транзакции. Стандартное значение — только `Paint_Rus`;
+- `native-full-max-chunks` аварийно останавливает проход, если legacy-курсор не
+  завершился за заданное число вызовов. Это safety limit, а не размер порции.
+
 `query-timeout-seconds` ограничивает одну read/write-транзакцию и один вызов
-legacy procedure. Для full job это лимит **на один SKU**, а не на весь фоновый
-проход. Тайм-аут точечного apply приводит к rollback; в full job — к `FAILED`
-или `FAILED_PARTIAL` в зависимости от уже обработанных товаров.
+legacy procedure. Для Java-full это лимит **на один SKU**, для native-full — на
+одну time-based порцию, а не на весь фоновый проход. Тайм-аут приводит к
+rollback текущей транзакции, однако при потере связи исход commit нельзя
+угадывать: status может потребовать ручной разбор как `OUTCOME_UNKNOWN`.
 
 `max-reported-warnings` ограничивает массив `warnings` в status, но полный счётчик
 остаётся в `warningCount`; признак усечения передаётся в `warningsTruncated`.
@@ -567,16 +884,23 @@ legacy procedure. Для full job это лимит **на один SKU**, а н
   внешним операционным риском.
 - Отрицательный остаток проверяется по хронологии учитываемых движений, а не по
   одному текущему `KON_KOLCH`.
-- Нельзя полагаться только на отсутствие SQL exception: после вызова Java
-  проверяет `TMP_MOVE`, защищённые остатки, структуру движений и денежные
-  postconditions. OUT-суммы procedure пока не используются как отдельный
-  критерий успеха, потому что их семантика не подтверждена для всех веток.
-- Полный apply частично фиксируемый: каждая успешная позиция commit-ится
-  отдельно. Это позволяет продолжать после плохого товара, но исключает
-  атомарный rollback всего склада.
+- Нельзя полагаться только на отсутствие SQL exception. Точечный и Java-full
+  режимы проверяют `TMP_MOVE`, остатки, структуру движений и денежные
+  postconditions. Native-full проверяет OUT-контракт, направление курсора,
+  счётчики прогресса, транзакционную границу, неизменность настроек склада,
+  защищённый baseline всего склада, фактически обработанный диапазон каждой
+  порции и финальное состояние всего склада.
+- Оба full apply частично фиксируемые, но единица commit различается:
+  `/full` фиксирует один SKU, `/native-full` — одну time-based порцию
+  `I_UCHET_TOVAR`. Атомарного rollback всего склада после первого commit нет.
 - Состояние фоновой задачи хранится в памяти процесса Java. После рестарта
   status снова будет `IDLE`; незавершённая задача автоматически не
-  возобновляется. Уже зафиксированные транзакции отдельных SKU сохраняются.
+  возобновляется. Уже зафиксированные транзакции сохраняются. Лог нельзя
+  использовать как точный реестр commit.
+- Preview и apply native-full являются двумя отдельными проходами. Из-за
+  ограничения legacy-процедуры по времени их порции не обязаны иметь одинаковые
+  границы; безопасность обеспечивается повторными проверками, а не сравнением
+  номера порции.
 - Поддержка учётных групп, LIFO, FIFO, фиксированной цены и партий требует
   отдельных golden-master экспериментов на `Paint_Rus` и не включается
   автоматически.
@@ -587,7 +911,13 @@ legacy procedure. Для full job это лимит **на один SKU**, а н
 - руководство ФОЛИО о предупреждении при отрицательном остатке;
 - воспроизводимый rollback-эксперимент на копии `Paint_Rus` для точечного
   штатного route;
+- rollback golden-master полного `I_UCHET_TOVAR` на `Paint_Rus`: чистое
+  завершение, восстановление приходных `SUM_UCHET/SUM_UCVAL` и поведение при
+  отрицательной хронологии;
 - текущая схема `SCL_ARTC`, `SCL_MOVE`, `SCLAD_R` и поведение `TMP_MOVE`.
+
+Обезличенный протокол native-эксперимента:
+[12_accounting_price_native_full_golden_master.md](../folio-experiments/12_accounting_price_native_full_golden_master.md).
 
 Ни один пример этого документа не является разрешением запускать apply в
 рабочей `Paint_Ua` без backup, включённого feature flag и операционного окна.

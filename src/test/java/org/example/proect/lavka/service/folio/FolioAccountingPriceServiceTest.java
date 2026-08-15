@@ -4,13 +4,19 @@ import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.ArticleRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.MovementRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.MovementTotals;
+import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeFullChunkOutput;
+import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeInvariantDigest;
+import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeProtectedSnapshot;
+import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeSkuProtectedState;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.WarehouseRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.WarehouseScope;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceFullRecalculationRequest;
+import org.example.proect.lavka.dto.folio.FolioAccountingPriceNativeFullRequest;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -23,6 +29,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -115,8 +122,34 @@ class FolioAccountingPriceServiceTest {
         assertThat(response.eligibleToApply()).isFalse();
         assertThat(response.procedureExecuted()).isFalse();
         assertThat(response.warnings())
-                .extracting(warning -> warning.code())
-                .contains("NEGATIVE_CHRONOLOGICAL_STOCK");
+                .filteredOn(warning -> "NEGATIVE_CHRONOLOGICAL_STOCK".equals(warning.code()))
+                .singleElement()
+                .satisfies(warning -> {
+                    assertThat(warning.details())
+                            .containsEntry("warehouseId", WAREHOUSE_ID)
+                            .containsEntry("initialQuantity", BigDecimal.TEN)
+                            .containsEntry("quantityBefore", BigDecimal.TEN)
+                            .containsEntry("quantityAfter", new BigDecimal("-1"))
+                            .containsEntry("shortageQuantity", BigDecimal.ONE)
+                            .containsEntry("movementPosition", 1)
+                            .containsEntry("movementCount", 1);
+                    assertThat(warning.details().get("operation"))
+                            .isInstanceOfSatisfying(Map.class, operation -> assertThat(operation)
+                                    .containsEntry("kind", "EXPENSE")
+                                    .containsEntry("documentType", FolioAccountingPriceDao.TYPE_EXPENSE)
+                                    .containsEntry("quantity", new BigDecimal("11"))
+                                    .containsEntry("recno", 1001L)
+                                    .containsEntry("documentId", new BigDecimal("700001"))
+                                    .containsEntry("documentNumber", new BigDecimal("1001"))
+                                    .containsEntry("documentDate", "2026-08-15T09:00:00")
+                                    .containsEntry("warehouseId", WAREHOUSE_ID));
+                    assertThat(warning.details().get("currentState"))
+                            .isInstanceOfSatisfying(Map.class, current -> assertThat(current)
+                                    .containsEntry("physicalQuantity", BigDecimal.TEN)
+                                    .containsEntry("availableQuantity", BigDecimal.TEN)
+                                    .containsEntry("accountingQuantity", BigDecimal.TEN)
+                                    .containsEntry("accountingPrice", new BigDecimal("800")));
+                });
         verify(dao, never()).rebuildOne(anyString(), anyInt(), anyInt());
     }
 
@@ -259,6 +292,394 @@ class FolioAccountingPriceServiceTest {
         verify(dao, never()).findSkus(anyInt());
     }
 
+    @Test
+    void nativePreviewRunsExactProcedureAndRollsBackEveryChunk() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 100, 100, null, null));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, false);
+
+        var accepted = service.requestNativeFull(
+                new FolioAccountingPriceNativeFullRequest(
+                        WAREHOUSE_ID, true, false));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(accepted.accepted()).isTrue();
+        assertThat(completed.status()).isEqualTo("PREVIEW_READY");
+        assertThat(completed.running()).isFalse();
+        assertThat(completed.procedureCalls()).isEqualTo(1);
+        assertThat(completed.preflightChunks()).isEqualTo(1);
+        assertThat(completed.committedChunks()).isZero();
+        assertThat(completed.progressUnits()).isEqualTo(100);
+        assertThat(completed.progressPercent()).isEqualTo(100);
+        assertThat(transactions.rollbacks).isEqualTo(1);
+        assertThat(transactions.commits).isZero();
+    }
+
+    @Test
+    void nativeApplyPerformsRollbackPreflightBeforeCommittingCleanPass() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 100, 100, null, null));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, true);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("COMPLETED");
+        assertThat(completed.procedureCalls()).isEqualTo(2);
+        assertThat(completed.preflightChunks()).isEqualTo(1);
+        assertThat(completed.committedChunks()).isEqualTo(1);
+        assertThat(completed.lastCommittedArt()).isEqualTo(CLEAN_SKU);
+        assertThat(transactions.rollbacks).isEqualTo(3);
+        assertThat(transactions.commits).isEqualTo(1);
+    }
+
+    @Test
+    void nativeApplyAllowsDifferentTimeBasedChunkBoundaries() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        NativeProtectedSnapshot completeScope = protectedSnapshot(
+                List.of("A", "B", "Z"), "article-sha256");
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, null, null)).thenReturn(completeScope);
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, null, "Z")).thenReturn(completeScope);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(
+                        nativeChunk("A", 40, 100, "B", null),
+                        nativeChunk("Z", 100, 100, null, null));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq("B"), eq(0), eq(100), eq(120)))
+                .thenReturn(nativeChunk("Z", 60, 100, null, null));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, true);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("COMPLETED");
+        assertThat(completed.preflightChunks()).isEqualTo(2);
+        assertThat(completed.committedChunks()).isEqualTo(1);
+        assertThat(completed.progressUnits()).isEqualTo(100);
+        assertThat(transactions.rollbacks).isEqualTo(4);
+        assertThat(transactions.commits).isEqualTo(1);
+    }
+
+    @Test
+    void nativeApplyIsBlockedWhenRollbackPreflightFindsNegativeStock() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        stubProduct(dao, NEGATIVE_SKU, article(NEGATIVE_SKU, "800"), List.of(
+                expense(1001L, "11")
+        ));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(
+                        NEGATIVE_SKU, 40, 100, CLEAN_SKU, "15.08.2026"));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(CLEAN_SKU), eq(0), eq(100), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 60, 100, null, null));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, true);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true));
+        var blocked = service.nativeFullStatus(false);
+
+        assertThat(blocked.status()).isEqualTo("BLOCKED_NEGATIVE_STOCK");
+        assertThat(blocked.committedChunks()).isZero();
+        assertThat(blocked.preflightChunks()).isEqualTo(2);
+        assertThat(blocked.warnings())
+                .filteredOn(warning -> "NEGATIVE_CHRONOLOGICAL_STOCK".equals(warning.code()))
+                .singleElement()
+                .satisfies(warning -> assertThat(warning.details())
+                        .containsEntry("folioProblemDate", "15.08.2026")
+                        .containsEntry("procedureArt", NEGATIVE_SKU)
+                        .containsEntry("nextArt", CLEAN_SKU));
+        assertThat(transactions.rollbacks).isEqualTo(2);
+        // The additional commit is the read-only diagnostic transaction that
+        // builds operation-before/after details after the native rollback.
+        assertThat(transactions.commits).isEqualTo(1);
+    }
+
+    @Test
+    void nativeApplyRequiresExplicitConfirmation() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        FolioAccountingPriceService service = nativeService(
+                dao, new TrackingTransactionManager(), true);
+
+        assertThatThrownBy(() -> service.requestNativeFull(
+                new FolioAccountingPriceNativeFullRequest(
+                        WAREHOUSE_ID, false, false)))
+                .isInstanceOf(FolioAccountValidationException.class)
+                .hasMessageContaining("confirmApply=true");
+
+        verify(dao, never()).currentDatabaseName();
+    }
+
+    @Test
+    void nativeTransactionBoundaryChangeProducesUnknownOutcome() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(new NativeFullChunkOutput(
+                        0, CLEAN_SKU, 100, 100, null, null, 1, 0, 0));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, false);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("OUTCOME_UNKNOWN");
+        assertThat(failed.error()).contains("transaction boundary");
+        assertThat(transactions.rollbacks).isEqualTo(1);
+        assertThat(transactions.commits).isZero();
+    }
+
+    @Test
+    void nativeApplyAlsoRequiresGlobalApplyKillSwitch() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        FolioAccountingPriceService service = nativeService(
+                dao, new TrackingTransactionManager(), false, true);
+
+        assertThatThrownBy(() -> service.requestNativeFull(
+                new FolioAccountingPriceNativeFullRequest(
+                        WAREHOUSE_ID, false, true)))
+                .isInstanceOf(FolioAccountingPriceDisabledException.class)
+                .hasMessageContaining("apply is disabled");
+
+        verify(dao, never()).currentDatabaseName();
+    }
+
+    @Test
+    void invalidNativeReturnCodeRollsBackApplyChunkBeforeCommit() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        NativeFullChunkOutput clean = nativeChunk(
+                CLEAN_SKU, 100, 100, null, null);
+        NativeFullChunkOutput invalid = new NativeFullChunkOutput(
+                10, CLEAN_SKU, 100, 100, null, null, 1, 1, 0);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(clean, invalid);
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, true);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.committedChunks()).isZero();
+        assertThat(failed.error()).contains("returned code 10");
+        assertThat(transactions.rollbacks).isEqualTo(3);
+        assertThat(transactions.commits).isZero();
+    }
+
+    @Test
+    void backwardNativeCursorIsRejectedInsideRollbackTransaction() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.isArtAfter(anyString(), anyString())).thenReturn(false);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(NEGATIVE_SKU, 40, 100, CLEAN_SKU, null));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, false);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.error()).contains("continuation cursor");
+        assertThat(transactions.rollbacks).isEqualTo(1);
+        assertThat(transactions.commits).isZero();
+    }
+
+    @Test
+    void outputArtBeforeSecondChunkInputIsRejectedInsideTransaction() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.isArtAtOrAfter("C", "B")).thenReturn(false);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk("B", 40, 100, "C", null));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq("C"), eq(0), eq(100), eq(120)))
+                .thenReturn(nativeChunk("B", 60, 100, null, null));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, false);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.error()).contains("before the input cursor");
+        assertThat(transactions.rollbacks).isEqualTo(2);
+        assertThat(transactions.commits).isZero();
+    }
+
+    @Test
+    void warehouseScopeDriftStopsBeforeNativeProcedure() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.findWarehouseForUpdate(WAREHOUSE_ID)).thenReturn(
+                new WarehouseRow(WAREHOUSE_ID, "Test warehouse", 1000, 0));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, false);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.error()).contains("scope or method changed");
+        verify(dao, never()).callNativeFullChunk(
+                org.mockito.ArgumentMatchers.nullable(Integer.class), anyInt(), anyInt(), anyInt(),
+                anyBoolean(), org.mockito.ArgumentMatchers.nullable(String.class),
+                anyInt(), anyInt(), anyInt());
+        assertThat(transactions.rollbacks).isEqualTo(1);
+    }
+
+    @Test
+    void transactionDatabaseMismatchStopsBeforeNativeProcedure() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.currentDatabaseName()).thenReturn("Paint_Rus", "Paint_Ua");
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, false);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("OUTCOME_UNKNOWN");
+        assertThat(failed.error()).contains("database changed");
+        verify(dao, never()).callNativeFullChunk(
+                org.mockito.ArgumentMatchers.nullable(Integer.class), anyInt(), anyInt(), anyInt(),
+                anyBoolean(), org.mockito.ArgumentMatchers.nullable(String.class),
+                anyInt(), anyInt(), anyInt());
+        assertThat(transactions.rollbacks).isEqualTo(1);
+    }
+
+    @Test
+    void nativeConnectionLossIsReportedAsUnknownOutcome() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenThrow(new DataAccessResourceFailureException("connection lost"));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, false);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("OUTCOME_UNKNOWN");
+        assertThat(failed.error()).contains("connection lost");
+        assertThat(transactions.rollbacks).isEqualTo(1);
+        assertThat(transactions.commits).isZero();
+    }
+
+    @Test
+    void incompleteNativeProgressRollsBackAndCannotReportCompleted() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 90, 100, null, null));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, false);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.error()).contains("ended before all progress units");
+        assertThat(transactions.rollbacks).isEqualTo(1);
+        assertThat(transactions.commits).isZero();
+    }
+
+    @Test
+    void nativeWorkWithoutOutputArtCannotBeCommitted() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(null, 100, 100, null, null));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, false);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.error()).contains("without the last processed art");
+        assertThat(transactions.rollbacks).isEqualTo(1);
+        assertThat(transactions.commits).isZero();
+    }
+
+    @Test
+    void protectedNativeRangeChangeRollsBackApplyChunk() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        NativeFullChunkOutput clean = nativeChunk(
+                CLEAN_SKU, 100, 100, null, null);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(clean);
+        NativeProtectedSnapshot before = protectedSnapshot("before-article");
+        NativeProtectedSnapshot after = protectedSnapshot("after-article");
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, null, null)).thenReturn(before);
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, null, CLEAN_SKU)).thenReturn(after);
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, true);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.committedChunks()).isZero();
+        assertThat(failed.error()).contains("protected stock or movement invariant");
+        assertThat(transactions.rollbacks).isEqualTo(3);
+        assertThat(transactions.commits).isZero();
+    }
+
     private static FolioAccountingPriceService service(FolioAccountingPriceDao dao,
                                                         boolean applyEnabled,
                                                         boolean fullApplyEnabled) {
@@ -284,11 +705,84 @@ class FolioAccountingPriceServiceTest {
         );
     }
 
+    private static FolioAccountingPriceService nativeService(
+            FolioAccountingPriceDao dao,
+            PlatformTransactionManager transactionManager,
+            boolean nativeApplyEnabled) {
+        return nativeService(dao, transactionManager, true, nativeApplyEnabled);
+    }
+
+    private static FolioAccountingPriceService nativeService(
+            FolioAccountingPriceDao dao,
+            PlatformTransactionManager transactionManager,
+            boolean globalApplyEnabled,
+            boolean nativeApplyEnabled) {
+        return new FolioAccountingPriceService(
+                dao,
+                DIRECT_EXECUTOR,
+                CLOCK,
+                transactionManager,
+                true,
+                globalApplyEnabled,
+                true,
+                true,
+                nativeApplyEnabled,
+                Set.of("Paint_Rus"),
+                100,
+                5_000,
+                120,
+                20
+        );
+    }
+
     private static void stubWarehouse(FolioAccountingPriceDao dao) {
         WarehouseRow warehouse = new WarehouseRow(
                 WAREHOUSE_ID, "Test warehouse", 1000, null);
         when(dao.findWarehouseScope(WAREHOUSE_ID))
                 .thenReturn(new WarehouseScope(warehouse, List.of(warehouse)));
+    }
+
+    private static void stubNativeWarehouse(FolioAccountingPriceDao dao) {
+        stubWarehouse(dao);
+        WarehouseRow warehouse = new WarehouseRow(
+                WAREHOUSE_ID, "Test warehouse", 1000, null);
+        when(dao.currentDatabaseName()).thenReturn("Paint_Rus");
+        when(dao.findWarehouseForUpdate(WAREHOUSE_ID)).thenReturn(warehouse);
+        when(dao.isArtAfter(anyString(), anyString())).thenReturn(true);
+        when(dao.isArtAtOrAfter(anyString(), anyString())).thenReturn(true);
+        NativeProtectedSnapshot protectedState = protectedSnapshot("article-sha256");
+        when(dao.captureNativeProtectedSnapshot(
+                anyInt(), org.mockito.ArgumentMatchers.nullable(String.class),
+                org.mockito.ArgumentMatchers.nullable(String.class)))
+                .thenReturn(protectedState);
+    }
+
+    private static NativeFullChunkOutput nativeChunk(String art,
+                                                     int current,
+                                                     int total,
+                                                     String next,
+                                                     String problemDate) {
+        return new NativeFullChunkOutput(
+                0, art, current, total, next, problemDate, 1, 1, 0);
+    }
+
+    private static NativeProtectedSnapshot protectedSnapshot(String articleHash) {
+        return protectedSnapshot(List.of(CLEAN_SKU), articleHash);
+    }
+
+    private static NativeProtectedSnapshot protectedSnapshot(List<String> skus,
+                                                              String articleHash) {
+        NativeSkuProtectedState state = new NativeSkuProtectedState(
+                new NativeInvariantDigest(1, articleHash),
+                new NativeInvariantDigest(1, "movement-sha256"));
+        Map<String, NativeSkuProtectedState> states = skus.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        sku -> sku,
+                        sku -> state,
+                        (left, right) -> left,
+                        java.util.LinkedHashMap::new));
+        return new NativeProtectedSnapshot(
+                List.copyOf(skus), Map.copyOf(states));
     }
 
     private static void stubProduct(FolioAccountingPriceDao dao,
@@ -365,7 +859,11 @@ class FolioAccountingPriceServiceTest {
 
         @Override
         public void commit(TransactionStatus status) {
-            commits++;
+            if (status.isRollbackOnly()) {
+                rollbacks++;
+            } else {
+                commits++;
+            }
         }
 
         @Override

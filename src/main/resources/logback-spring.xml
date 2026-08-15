@@ -68,7 +68,7 @@
         </encoder>
     </appender>
 
-    <!-- WARN+ но исключаем [sync.mismatch] -->
+    <!-- WARN+, кроме событий с собственным специализированным журналом -->
     <appender name="SYNC_ERRORS" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${LOG_DIR}/sync-errors.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
@@ -80,11 +80,13 @@
             <totalSizeCap>2GB</totalSizeCap>
         </rollingPolicy>
 
-        <!-- 1) Сначала отбрасываем строки с [sync.mismatch] -->
+        <!-- 1) Сначала отбрасываем строки, у которых есть отдельный журнал -->
         <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
             <evaluator class="ch.qos.logback.classic.boolex.JaninoEventEvaluator">
                 <expression><![CDATA[
-              return formattedMessage != null && formattedMessage.contains("[sync.mismatch]");
+              return formattedMessage != null
+                  && (formattedMessage.contains("[sync.mismatch]")
+                      || formattedMessage.contains("[folio.accounting-price]"));
             ]]></expression>
             </evaluator>
             <OnMatch>DENY</OnMatch>
@@ -98,6 +100,34 @@
 
         <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{reqId} %X{windowCursor} %X{batchNo}] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- запуск, прогресс и диагностика перерасчёта учётных цен ФОЛИО -->
+    <appender name="FOLIO_ACCOUNTING_PRICE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/folio-accounting-price.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/folio-accounting-price.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <timeBasedFileNamingAndTriggeringPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                <maxFileSize>20MB</maxFileSize>
+            </timeBasedFileNamingAndTriggeringPolicy>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+
+        <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
+            <evaluator class="ch.qos.logback.classic.boolex.JaninoEventEvaluator">
+                <expression><![CDATA[
+                return formattedMessage != null
+                    && formattedMessage.contains("[folio.accounting-price]");
+            ]]></expression>
+            </evaluator>
+            <OnMatch>ACCEPT</OnMatch>
+            <OnMismatch>DENY</OnMismatch>
+        </filter>
+
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{reqId}] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
@@ -140,5 +170,6 @@
         <appender-ref ref="SYNC_DEBUG"/>
         <appender-ref ref="SYNC_ERRORS"/>
         <appender-ref ref="SYNC_MISMATCH"/>
+        <appender-ref ref="FOLIO_ACCOUNTING_PRICE"/>
     </logger>
 </configuration>

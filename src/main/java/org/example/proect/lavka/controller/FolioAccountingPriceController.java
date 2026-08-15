@@ -6,6 +6,8 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceFullRecalculationRequest;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceFullStatusResponse;
+import org.example.proect.lavka.dto.folio.FolioAccountingPriceNativeFullRequest;
+import org.example.proect.lavka.dto.folio.FolioAccountingPriceNativeFullStatusResponse;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationRequest;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationResponse;
 import org.example.proect.lavka.service.folio.FolioAccountingPriceService;
@@ -55,5 +57,25 @@ public class FolioAccountingPriceController {
     @Operation(summary = "Получить прогресс полного перерасчёта учётных цен")
     public ResponseEntity<FolioAccountingPriceFullStatusResponse> fullStatus() {
         return ResponseEntity.ok(service.status(false));
+    }
+
+    @PostMapping("/recalculate/native-full")
+    @Operation(
+            summary = "Запустить штатный полный перерасчёт I_UCHET_TOVAR",
+            description = "previewOnly=true выполняет точную процедуру ФОЛИО порциями с rollback. Apply сначала делает такой же полный preflight и только затем повторяет чистые порции с commit. Если preflight находит отрицательный остаток, apply не начинается; новая проблема во втором проходе откатывает текущую порцию и останавливает job."
+    )
+    public ResponseEntity<FolioAccountingPriceNativeFullStatusResponse> recalculateNativeFull(
+            @Valid @RequestBody FolioAccountingPriceNativeFullRequest request) {
+        FolioAccountingPriceNativeFullStatusResponse response =
+                service.requestNativeFull(request);
+        return response.accepted()
+                ? ResponseEntity.accepted().body(response)
+                : ResponseEntity.status(409).body(response);
+    }
+
+    @GetMapping("/recalculate/native-full/status")
+    @Operation(summary = "Получить прогресс штатного полного перерасчёта I_UCHET_TOVAR")
+    public ResponseEntity<FolioAccountingPriceNativeFullStatusResponse> nativeFullStatus() {
+        return ResponseEntity.ok(service.nativeFullStatus(false));
     }
 }

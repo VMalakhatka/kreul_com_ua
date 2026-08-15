@@ -7,6 +7,9 @@ import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -16,6 +19,7 @@ import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +31,8 @@ public class FolioAccountingPriceDao {
     public static final String TYPE_EXPENSE = "\u0420";
     private static final String MUTEX_RESOURCE = "lavka|folio|accounting-price-recalculation";
     private static final String REBUILD_CALL = "{call dbo.i_uchet_add(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)}";
+    private static final String NATIVE_FULL_CALL =
+            "{? = call dbo.I_UCHET_TOVAR(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)}";
 
     private final JdbcTemplate jdbc;
 
@@ -73,6 +79,10 @@ public class FolioAccountingPriceDao {
                  WHERE ID_SCLAD = ?
                  ORDER BY COD_ARTIC
                 """, (rs, rowNum) -> rs.getString(1).trim(), warehouseId);
+    }
+
+    public String currentDatabaseName() {
+        return trim(jdbc.queryForObject("SELECT DB_NAME()", String.class));
     }
 
     public List<ArticleRow> findArticles(String sku,
@@ -291,6 +301,288 @@ public class FolioAccountingPriceDao {
         });
     }
 
+    /**
+     * Calls the native Folio full-accounting-price procedure. The legacy
+     * procedure emits progress exclusively through INOUT parameters, so every
+     * result set/update count must be drained before the values are read.
+     */
+    public NativeFullChunkOutput callNativeFullChunk(
+            Integer accountingGroup,
+            int warehouseId,
+            int calculationMode,
+            int periodMode,
+            boolean includeTax,
+            String startArt,
+            int currentUnits,
+            int totalUnits,
+            int queryTimeoutSeconds) {
+        return jdbc.execute((Connection connection) -> {
+            int transactionCountBefore = transactionCount(connection);
+            if (transactionCountBefore < 1) {
+                throw new SQLException(
+                        "I_UCHET_TOVAR requires an active caller transaction");
+            }
+            try (CallableStatement statement = connection.prepareCall(NATIVE_FULL_CALL)) {
+                statement.setQueryTimeout(Math.max(1, queryTimeoutSeconds));
+                statement.registerOutParameter(1, Types.INTEGER);
+                if (accountingGroup == null) {
+                    statement.setNull(2, Types.INTEGER);
+                } else {
+                    statement.setInt(2, accountingGroup);
+                }
+                statement.setInt(3, warehouseId);
+                statement.setBoolean(4, false);
+                statement.setInt(5, calculationMode);
+                statement.setInt(6, periodMode);
+                statement.setBoolean(7, includeTax);
+                registerVarcharInOut(statement, 8, startArt);
+                registerIntegerInOut(statement, 9, currentUnits);
+                registerIntegerInOut(statement, 10, totalUnits);
+                registerVarcharInOut(statement, 11, null);
+                registerVarcharInOut(statement, 12, null);
+
+                int resultRowCount = 0;
+                boolean hasResult = statement.execute();
+                while (hasResult || statement.getUpdateCount() != -1) {
+                    if (hasResult) {
+                        try (ResultSet resultSet = statement.getResultSet()) {
+                            while (resultSet != null && resultSet.next()) {
+                                resultRowCount++;
+                            }
+                        }
+                    }
+                    hasResult = statement.getMoreResults();
+                }
+
+                return new NativeFullChunkOutput(
+                        nullableOutInteger(statement, 1),
+                        trim(statement.getString(8)),
+                        nullableOutInteger(statement, 9),
+                        nullableOutInteger(statement, 10),
+                        trim(statement.getString(11)),
+                        trim(statement.getString(12)),
+                        transactionCountBefore,
+                        transactionCount(connection),
+                        resultRowCount
+                );
+            }
+        });
+    }
+
+    public NativeProtectedSnapshot captureNativeProtectedSnapshot(
+            int warehouseId,
+            String startArt,
+            String endArt) {
+        String articleStart = startArt == null
+                ? ""
+                : " AND COD_ARTIC >= ?";
+        String articleEnd = endArt == null
+                ? ""
+                : " AND COD_ARTIC <= ?";
+        String movementStart = startArt == null
+                ? ""
+                : " AND m.NAME_PREDM >= ?";
+        String movementEnd = endArt == null
+                ? ""
+                : " AND m.NAME_PREDM <= ?";
+
+        List<Object> articleArgs = new ArrayList<>();
+        articleArgs.add(warehouseId);
+        if (startArt != null) {
+            articleArgs.add(startArt);
+        }
+        if (endArt != null) {
+            articleArgs.add(endArt);
+        }
+        Map<String, NativeInvariantDigest> articleDigests = new LinkedHashMap<>();
+        List<String> orderedSkus = new ArrayList<>();
+        streamQuery("""
+                SELECT COD_ARTIC, ID_SCLAD, NACH_KOLCH, KON_KOLCH,
+                       REZ_KOLCH, UCHET_0_C, UCHET_0_VL
+                  FROM dbo.SCL_ARTC WITH (UPDLOCK, HOLDLOCK)
+                 WHERE ID_SCLAD = ?
+                   %s%s
+                 ORDER BY COD_ARTIC, ID_SCLAD
+                """.formatted(articleStart, articleEnd),
+                articleArgs.toArray(), rs -> {
+                    String sku = trim(rs.getString(1));
+                    MessageDigest digest = sha256();
+                    updateDigestRow(digest, rs, 7);
+                    orderedSkus.add(sku);
+                    articleDigests.put(sku, new NativeInvariantDigest(
+                            1, HexFormat.of().formatHex(digest.digest())));
+                });
+
+        List<Object> movementArgs = new ArrayList<>();
+        movementArgs.add(warehouseId);
+        if (startArt != null) {
+            movementArgs.add(startArt);
+        }
+        if (endArt != null) {
+            movementArgs.add(endArt);
+        }
+        Map<String, NativeInvariantDigest> movementDigests = new LinkedHashMap<>();
+        String[] activeSku = {null};
+        MessageDigest[] activeDigest = {null};
+        int[] activeRows = {0};
+        streamQuery("""
+                SELECT m.RECNO, m.UNICUM_NUM, m.NUMDOCM_PR, m.NUM_PREDMT,
+                       m.NAME_PREDM, m.ID_SCLAD, m.DATE_PREDM, m.TYPDOCM_PR,
+                       m.STND_UCHET, m.VOZVRAT_PR, m.KOLC_PREDM, m.KOLTREB_PR,
+                       m.CENA_PREDM, m.SUM_PREDM, m.VALUT_CENA, m.SUM_VALUT,
+                       m.NALOGMONEY, m.NALOGVALUT, m.ORG_PREDM, m.PARTIA, m.SROK
+                  FROM dbo.SCL_MOVE m WITH (UPDLOCK, HOLDLOCK)
+                  JOIN dbo.SCL_ARTC a WITH (UPDLOCK, HOLDLOCK)
+                    ON a.COD_ARTIC = m.NAME_PREDM
+                   AND a.ID_SCLAD = m.ID_SCLAD
+                 WHERE m.ID_SCLAD = ?
+                   %s%s
+                 ORDER BY m.NAME_PREDM, m.DATE_PREDM, m.TYPDOCM_PR,
+                          m.NUMDOCM_PR, m.RECNO
+                """.formatted(movementStart, movementEnd),
+                movementArgs.toArray(), rs -> {
+                    String sku = trim(rs.getString(5));
+                    if (activeSku[0] == null || !activeSku[0].equals(sku)) {
+                        finishDigest(activeSku[0], activeDigest[0], activeRows[0],
+                                movementDigests);
+                        activeSku[0] = sku;
+                        activeDigest[0] = sha256();
+                        activeRows[0] = 0;
+                    }
+                    updateDigestRow(activeDigest[0], rs, 21);
+                    activeRows[0]++;
+                });
+        finishDigest(activeSku[0], activeDigest[0], activeRows[0], movementDigests);
+
+        Map<String, NativeSkuProtectedState> states = new LinkedHashMap<>();
+        NativeInvariantDigest empty = emptyDigest();
+        for (String sku : orderedSkus) {
+            states.put(sku, new NativeSkuProtectedState(
+                    articleDigests.get(sku),
+                    movementDigests.getOrDefault(sku, empty)));
+        }
+        return new NativeProtectedSnapshot(
+                List.copyOf(orderedSkus), Map.copyOf(states));
+    }
+
+    private void streamQuery(String sql,
+                             Object[] args,
+                             RowCallbackHandler handler) {
+        jdbc.query(sql, statement -> {
+            statement.setFetchSize(500);
+            for (int index = 0; index < args.length; index++) {
+                statement.setObject(index + 1, args[index]);
+            }
+        }, handler);
+    }
+
+    private static void updateDigestRow(MessageDigest digest,
+                                        ResultSet rs,
+                                        int columnCount) throws SQLException {
+        for (int column = 1; column <= columnCount; column++) {
+            String value = rs.getString(column);
+            if (value == null) {
+                digest.update((byte) 0);
+            } else {
+                byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+                digest.update((byte) 1);
+                updateInt(digest, bytes.length);
+                digest.update(bytes);
+            }
+        }
+        digest.update((byte) 0x7f);
+    }
+
+    private static void updateInt(MessageDigest digest, int value) {
+        digest.update((byte) (value >>> 24));
+        digest.update((byte) (value >>> 16));
+        digest.update((byte) (value >>> 8));
+        digest.update((byte) value);
+    }
+
+    private static void finishDigest(String sku,
+                                     MessageDigest digest,
+                                     int rowCount,
+                                     Map<String, NativeInvariantDigest> target) {
+        if (sku == null || digest == null) {
+            return;
+        }
+        target.put(sku, new NativeInvariantDigest(
+                rowCount, HexFormat.of().formatHex(digest.digest())));
+    }
+
+    private static NativeInvariantDigest emptyDigest() {
+        return new NativeInvariantDigest(
+                0, HexFormat.of().formatHex(sha256().digest()));
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
+    }
+
+    public boolean isArtAfter(String previousArt, String nextArt) {
+        if (previousArt == null || nextArt == null) {
+            return false;
+        }
+        Integer result = jdbc.queryForObject(
+                "SELECT CASE WHEN ? > ? THEN 1 ELSE 0 END",
+                Integer.class, nextArt, previousArt);
+        return result != null && result == 1;
+    }
+
+    public boolean isArtAtOrAfter(String firstArt, String candidateArt) {
+        if (firstArt == null || candidateArt == null) {
+            return false;
+        }
+        Integer result = jdbc.queryForObject(
+                "SELECT CASE WHEN ? >= ? THEN 1 ELSE 0 END",
+                Integer.class, candidateArt, firstArt);
+        return result != null && result == 1;
+    }
+
+    public WarehouseRow findWarehouseForUpdate(int warehouseId) {
+        return jdbc.queryForObject("""
+                SELECT ID_SCLAD, NAME_SCLAD, N_2, N_4
+                  FROM dbo.SCLAD_R WITH (UPDLOCK, HOLDLOCK)
+                 WHERE ID_SCLAD = ?
+                """, (rs, rowNum) -> mapWarehouse(rs), warehouseId);
+    }
+
+    private static int transactionCount(Connection connection) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("SELECT @@TRANCOUNT");
+             ResultSet resultSet = statement.executeQuery()) {
+            return resultSet.next() ? resultSet.getInt(1) : -1;
+        }
+    }
+
+    private static void registerVarcharInOut(CallableStatement statement,
+                                             int index,
+                                             String value) throws SQLException {
+        statement.registerOutParameter(index, Types.VARCHAR);
+        if (value == null || value.isBlank()) {
+            statement.setNull(index, Types.VARCHAR);
+        } else {
+            statement.setString(index, value);
+        }
+    }
+
+    private static void registerIntegerInOut(CallableStatement statement,
+                                             int index,
+                                             int value) throws SQLException {
+        statement.registerOutParameter(index, Types.INTEGER);
+        statement.setInt(index, value);
+    }
+
+    private static Integer nullableOutInteger(CallableStatement statement,
+                                              int index) throws SQLException {
+        int value = statement.getInt(index);
+        return statement.wasNull() ? null : value;
+    }
+
     private static void registerFloatInOut(CallableStatement statement, int index) throws SQLException {
         statement.registerOutParameter(index, Types.DOUBLE);
         statement.setDouble(index, 0D);
@@ -394,4 +686,36 @@ public class FolioAccountingPriceDao {
             BigDecimal accountingCurrencyAmount
     ) {
     }
+
+    public record NativeFullChunkOutput(
+            Integer returnCode,
+            String art,
+            Integer currentUnits,
+            Integer totalUnits,
+            String newArt,
+            String problemDate,
+            int transactionCountBefore,
+            int transactionCountAfter,
+            int resultRowCount
+    ) {
+        public boolean hasProblem() {
+            return problemDate != null && !problemDate.isBlank();
+        }
+    }
+
+    public record NativeProtectedSnapshot(
+            List<String> orderedSkus,
+            Map<String, NativeSkuProtectedState> states
+    ) {
+    }
+
+    public record NativeSkuProtectedState(
+            NativeInvariantDigest article,
+            NativeInvariantDigest movements
+    ) {
+    }
+
+    public record NativeInvariantDigest(int rowCount, String sha256) {
+    }
+
 }

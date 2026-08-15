@@ -1,0 +1,444 @@
+# Перерасчёт учётных цен ФОЛИО: контракт для фронта
+
+## Главное различие двух полных режимов
+
+В API есть два разных фоновых прохода. Их нельзя показывать как один и тот же
+расчёт.
+
+| Режим | Endpoint | Штатная процедура | Что делает |
+|---|---|---|---|
+| Java-full | `POST /admin/folio/accounting-prices/recalculate/full` | `i_uchet_add(mode=2)` по одному SKU | восстанавливает итоги карточки из уже сохранённых `SUM_UCHET/SUM_UCVAL` |
+| Native-full | `POST /admin/folio/accounting-prices/recalculate/native-full` | `I_UCHET_TOVAR` | выполняет полный алгоритм ФОЛИО, включая пересчёт приходных учётных сумм из документов, налогов и валютных данных |
+
+Java-full умеет пропускать проблемный SKU через `continueOnNegativeStock`.
+Native-full такого параметра **не имеет**: его apply разрешён только после
+чистого полного rollback-preflight.
+
+На первом rollout native-full разрешён только для точного режима
+`SCLAD_R.N_2=1000`, `SCLAD_R.N_4 IS NULL` и по умолчанию только для базы
+`Paint_Rus`.
+
+## Что такое учётная цена
+
+Учётная цена — внутренняя себестоимость единицы товара. Это не розничная и не
+отпускная цена. ФОЛИО использует её для оценки остатка и стоимости расхода.
+
+Для средней цены учитываются начальное количество и стоимость, приходы,
+расходы и итоговая учётная сумма. Java контролирует, чтобы перерасчёт не менял
+физический `KON_KOLCH`, свободный `REZ_KOLCH`, структуру документов и другие
+защищённые исходные данные.
+
+## Рекомендуемый интерфейс
+
+Разделите экран на три действия:
+
+1. «Проверить/пересчитать один товар»;
+2. «Обход товаров из сохранённых учётных сумм» — Java-full;
+3. «Полный штатный пересчёт ФОЛИО» — native-full, с отдельным предупреждением и
+   подтверждением apply.
+
+Для фоновых режимов POST отправляется ровно один раз. После HTTP `202` фронт
+сохраняет `jobId` и опрашивает соответствующий GET status раз в 2–5 секунд.
+Повторный POST не является polling.
+
+## Один товар
+
+```http
+POST /admin/folio/accounting-prices/recalculate
+Content-Type: application/json
+```
+
+```json
+{
+  "sku": "ЕВ-МАСЛ-РАДИАТОР",
+  "warehouseId": 12,
+  "previewOnly": true
+}
+```
+
+Все поля обязательны. Сначала всегда запускать `previewOnly=true`. Такой preview
+только анализирует данные и не вызывает изменяющую процедуру.
+
+## Java-full: обход всех SKU
+
+### Запуск
+
+```http
+POST /admin/folio/accounting-prices/recalculate/full
+Content-Type: application/json
+```
+
+```json
+{
+  "warehouseId": 12,
+  "previewOnly": true,
+  "continueOnNegativeStock": true
+}
+```
+
+Для apply меняется только `previewOnly`:
+
+```json
+{
+  "warehouseId": 12,
+  "previewOnly": false,
+  "continueOnNegativeStock": true
+}
+```
+
+`continueOnNegativeStock=true` означает: не изменять проблемный SKU, записать
+warning и перейти к следующему. `false` останавливает Java-full на первом
+`NEGATIVE_CHRONOLOGICAL_STOCK`. Этот параметр относится только к Java-full.
+
+Статус:
+
+```http
+GET /admin/folio/accounting-prices/recalculate/full/status
+```
+
+Основные статусы: `IDLE`, `BUSY`, `QUEUED`, `RUNNING`, `COMPLETED`,
+`COMPLETED_WITH_WARNINGS`, `STOPPED_ON_NEGATIVE_STOCK`, `FAILED`,
+`FAILED_PARTIAL`.
+
+## Native-full: полный `I_UCHET_TOVAR`
+
+### Точный rollback-preview
+
+```http
+POST /admin/folio/accounting-prices/recalculate/native-full
+Content-Type: application/json
+```
+
+```json
+{
+  "warehouseId": 12,
+  "previewOnly": true,
+  "confirmApply": false
+}
+```
+
+Это не обычный read-only анализ. Java действительно вызывает
+`I_UCHET_TOVAR`, но каждую порцию выполняет в отдельной транзакции с
+обязательным rollback. Поэтому preview видит штатные OUT-сигналы
+`art/new_art/otr_date/n_cur/n_tot`, а постоянные данные ФОЛИО после него не
+изменяются.
+
+При preview `confirmApply` можно не передавать. Параметра
+`continueOnNegativeStock` в native request нет.
+
+### Реальный apply
+
+```json
+{
+  "warehouseId": 12,
+  "previewOnly": false,
+  "confirmApply": true
+}
+```
+
+`confirmApply=true` обязателен. После POST Java сама выполняет два прохода:
+
+1. полный точный preflight через `I_UCHET_TOVAR`, rollback каждой порции;
+2. если preflight полностью чистый — второй проход с commit безопасных порций.
+
+Если preflight находит хотя бы одну отрицательную историю, результат —
+`BLOCKED_NEGATIVE_STOCK`, `committedChunks=0`, apply не начинается.
+
+Если данные изменились между проходами и новая проблема появилась во время
+apply, текущая порция откатывается и job останавливается. До первого commit это
+`STOPPED_ON_NEGATIVE_STOCK`; после предыдущих commit — `FAILED_PARTIAL`.
+
+Legacy-процедура ограничивает порцию по времени. Поэтому границы порций preview
+и apply могут различаться. Фронт не должен сравнивать `preflightChunks` и
+`committedChunks` один к одному и не должен ожидать, что число вызовов apply
+совпадёт с preview.
+
+### Ответ на принятый POST
+
+HTTP `202 Accepted`:
+
+```json
+{
+  "ok": true,
+  "accepted": true,
+  "running": true,
+  "jobId": "9a4705cb-7190-42af-b96e-fd83e44a2791",
+  "status": "QUEUED",
+  "phase": "QUEUED",
+  "request": {
+    "warehouseId": 12,
+    "previewOnly": true,
+    "confirmApply": false
+  },
+  "startedAt": "2026-08-15T18:10:03.145",
+  "database": "Paint_Rus",
+  "procedureCalls": 0,
+  "preflightChunks": 0,
+  "committedChunks": 0,
+  "progressUnits": 0,
+  "totalUnits": 0,
+  "warningCount": 0,
+  "warningsTruncated": false,
+  "warnings": []
+}
+```
+
+Если общий слот перерасчёта занят, POST возвращает HTTP `409`,
+`accepted=false`, `status=BUSY` либо текущий выполняющийся native status.
+Автоматически повторять POST нельзя.
+
+### Polling
+
+```http
+GET /admin/folio/accounting-prices/recalculate/native-full/status
+```
+
+В ответе GET `accepted=false` — это нормально: поле означает только факт приёма
+конкретного POST. Polling продолжается, пока `running=true`.
+
+Пример процесса preflight:
+
+```json
+{
+  "ok": true,
+  "accepted": false,
+  "running": true,
+  "jobId": "9a4705cb-7190-42af-b96e-fd83e44a2791",
+  "status": "RUNNING",
+  "phase": "PRECHECK_RUNNING",
+  "request": {
+    "warehouseId": 12,
+    "previewOnly": false,
+    "confirmApply": true
+  },
+  "database": "Paint_Rus",
+  "accountingMethod": {
+    "rawCode": 1000,
+    "calculationMode": 0,
+    "periodMode": 0,
+    "includeTax": false,
+    "name": "AVERAGE"
+  },
+  "procedureCalls": 3,
+  "preflightChunks": 3,
+  "committedChunks": 0,
+  "progressUnits": 18300,
+  "totalUnits": 36738,
+  "progressPercent": 49,
+  "currentArt": "KR-16234",
+  "nextArt": "KR-16235",
+  "checkpointArt": "KR-16000",
+  "returnCode": 0,
+  "warningCount": 0,
+  "warningsTruncated": false,
+  "warnings": []
+}
+```
+
+Во время `APPLY_RUNNING` `progressUnits` начинается заново с нуля.
+
+Финальный чистый preview выглядит так:
+
+```json
+{
+  "ok": true,
+  "accepted": false,
+  "running": false,
+  "jobId": "9a4705cb-7190-42af-b96e-fd83e44a2791",
+  "status": "PREVIEW_READY",
+  "phase": "PRECHECK_COMPLETED",
+  "request": {
+    "warehouseId": 12,
+    "previewOnly": true,
+    "confirmApply": false
+  },
+  "startedAt": "2026-08-15T18:10:03.145",
+  "completedAt": "2026-08-15T18:12:41.073",
+  "database": "Paint_Rus",
+  "accountingMethod": {
+    "rawCode": 1000,
+    "calculationMode": 0,
+    "periodMode": 0,
+    "includeTax": false,
+    "name": "AVERAGE"
+  },
+  "procedureCalls": 6,
+  "preflightChunks": 6,
+  "committedChunks": 0,
+  "progressUnits": 36738,
+  "totalUnits": 36738,
+  "progressPercent": 100,
+  "returnCode": 0,
+  "warningCount": 0,
+  "warningsTruncated": false,
+  "warnings": []
+}
+```
+
+`committedChunks=0` здесь обязательно: все native-preview порции откатились.
+
+### Поля native status
+
+| Поле | Как отображать |
+|---|---|
+| `status` | итоговое состояние job |
+| `phase` | текущая стадия: очередь, preflight, apply или остановка |
+| `procedureCalls` | число вызовов `I_UCHET_TOVAR` в обоих проходах |
+| `preflightChunks` | число гарантированно откатившихся порций проверки |
+| `committedChunks` | число подтверждённых приложением commit-порций apply |
+| `progressUnits` / `totalUnits` | legacy-счётчики текущего прохода |
+| `progressPercent` | приблизительный процент; может отсутствовать до получения `n_tot` |
+| `currentArt` / `nextArt` | OUT-артикул и курсор следующей порции |
+| `lastCommittedArt` | последний артикул последней подтверждённой commit-порции |
+| `checkpointArt` | входной курсор текущей или оборвавшейся порции |
+| `returnCode` | return status последнего вызова |
+| `warningCount` | полное число найденных проблем |
+| `warningsTruncated` | `true`, если массив `warnings` показан не полностью |
+| `error` | техническая причина финальной ошибки |
+
+`lastCommittedArt` и `checkpointArt` показываются только для диагностики. Они не
+являются разрешением автоматически продолжить job.
+
+### Native статусы
+
+| Статус | Отображение и действие |
+|---|---|
+| `IDLE` | native job после рестарта ещё не запускался |
+| `BUSY` | другой перерасчёт занял общий слот; не повторять автоматически |
+| `QUEUED` | запрос принят |
+| `RUNNING` | показать `phase`, прогресс и текущий артикул |
+| `PREVIEW_READY` | точный preview завершён, данные откатились, проблем нет |
+| `BLOCKED_NEGATIVE_STOCK` | apply не начался; показать все warnings |
+| `COMPLETED` | apply завершён |
+| `STOPPED_ON_NEGATIVE_STOCK` | новая проблема до первого commit, текущая порция откатилась |
+| `FAILED` | ошибка до первого commit |
+| `FAILED_PARTIAL` | предыдущие порции уже могли быть зафиксированы; только ручная сверка |
+| `OUTCOME_UNKNOWN` | исход текущей транзакции не доказан; запретить автоматический retry и эскалировать оператору |
+
+`FAILED_PARTIAL` нельзя показывать как обычную ошибку с кнопкой «Повторить».
+Сначала оператор должен сверить ФОЛИО и резервную копию. Для
+`OUTCOME_UNKNOWN` это требование ещё строже: ни HTTP status, ни лог не дают
+достаточного транзакционного checkpoint.
+
+## Диагностика отрицательного остатка
+
+Отрицательный хронологический остаток означает, что при проигрывании истории
+расход впервые превысил количество, существовавшее на дату движения. Это не то
+же самое, что текущий нулевой остаток.
+
+```json
+{
+  "code": "NEGATIVE_CHRONOLOGICAL_STOCK",
+  "message": "The chronological stock becomes negative; Folio cannot safely recalculate this product",
+  "details": {
+    "procedureArt": "CON-100516109R",
+    "folioProblemDate": "22.04.2017",
+    "checkpointArt": "CON-100500000R",
+    "nextArt": "CON-100516110R",
+    "warehouseId": 12,
+    "initialQuantity": 10,
+    "quantityBefore": 10,
+    "operation": {
+      "kind": "EXPENSE",
+      "documentType": "Р",
+      "quantity": 31,
+      "recno": 12547283,
+      "documentId": 753800,
+      "documentNumber": 20042799,
+      "documentDate": "2017-04-22T00:00:00",
+      "warehouseId": 12
+    },
+    "quantityAfter": -21,
+    "shortageQuantity": 21,
+    "movementPosition": 27,
+    "movementCount": 184,
+    "currentState": {
+      "physicalQuantity": 4,
+      "availableQuantity": 3,
+      "accountingQuantity": 4,
+      "accountingPrice": 800
+    }
+  }
+}
+```
+
+Показывайте таблицу:
+
+| SKU | Склад | Документ | Дата | Было | Операция | Стало | Не хватает |
+|---|---:|---:|---|---:|---:|---:|---:|
+| CON-100516109R | 12 | 20042799 | 22.04.2017 | 10 | расход 31 | -21 | 21 |
+
+В деталях показывайте `documentId`, `recno`, `movementPosition`,
+`currentState`, `procedureArt`, `folioProblemDate` и курсоры.
+
+Если точное сопоставление с движением невозможно, приходит
+`FOLIO_NATIVE_RECALCULATION_PROBLEM`. Он всё равно блокирует apply и содержит
+как минимум склад, `procedureArt`, дату ФОЛИО и курсоры.
+
+## Логи
+
+Диагностика пишется в:
+
+```text
+${LOG_DIR}/folio-accounting-price.log
+```
+
+Для хронологии используется событие `accounting_price_negative_stock`, для
+контекста native-порции — `native_negative_stock`. Файл ротируется 30 дней,
+частями до 20 MB и суммарно до 1 GB.
+
+Лог **не является транзакционным checkpoint**. Он пишется отдельно от MSSQL:
+процесс может завершиться после commit, но до строки лога. Поэтому фронт не
+должен предлагать «продолжить с последнего SKU» на основании файла или status.
+
+`warningsTruncated=true` означает, что HTTP показывает только часть warnings.
+Нужно явно предупредить пользователя и предложить выгрузку доступных данных и
+просмотр серверного лога.
+
+## HTTP-ошибки
+
+| HTTP | Код/причина | Действие фронта |
+|---:|---|---|
+| `400` | validation или `NATIVE_FULL_CONFIRMATION_REQUIRED` | показать сообщение; для native apply потребовать явное подтверждение |
+| `403` | API либо нужный apply/native flag выключен | показать конфигурационную ошибку оператору |
+| `403` | `ACCOUNTING_PRICE_NATIVE_DATABASE_NOT_ALLOWED` | не предлагать обход; текущая база запрещена allow-list |
+| `404` | товар или склад не найден | показать конкретный объект |
+| `409` | общий слот занят либо применение заблокировано | показать status/warnings; не повторять автоматически |
+| `500` | нарушен postcheck/контракт процедуры | текущая транзакция откатилась; показать `reqId` |
+| `503` | MSSQL/процедура недоступна или timeout | показать `reqId`; сначала проверить БД и итог job |
+
+Фоновая ошибка после HTTP `202` приходит через status, а не в исходный POST.
+
+## Feature flags
+
+```properties
+LAVKA_FOLIO_ACCOUNTING_PRICE_API_ENABLED=true
+LAVKA_FOLIO_ACCOUNTING_PRICE_APPLY_ENABLED=false
+LAVKA_FOLIO_ACCOUNTING_PRICE_FULL_APPLY_ENABLED=false
+LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ENABLED=false
+LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_APPLY_ENABLED=false
+LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ALLOWED_DATABASES=Paint_Rus
+LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_MAX_CHUNKS=10000
+```
+
+- все endpoint требуют `API_ENABLED=true`;
+- Java-full apply требует также `APPLY_ENABLED=true` и
+  `FULL_APPLY_ENABLED=true`;
+- native rollback-preview требует `NATIVE_FULL_ENABLED=true`;
+- native apply требует одновременно `APPLY_ENABLED=true` и
+  `NATIVE_FULL_APPLY_ENABLED=true`;
+- стандартный native allow-list содержит только `Paint_Rus`.
+
+Флаги не заменяют авторизацию: публичный браузер не должен иметь прямой доступ
+к административному `/admin`.
+
+## Порядок ввода native-full
+
+1. Оставить apply-флаги выключенными.
+2. Включить API и native-full только на `Paint_Rus`.
+3. Запустить rollback-preview и разобрать все warnings.
+4. Исправить отрицательную историю и повторить preview.
+5. Подтвердить резервную копию и окно без ручного перерасчёта ФОЛИО.
+6. Только после этого отдельно включить native apply.
+7. После `FAILED_PARTIAL` или `OUTCOME_UNKNOWN` ничего не повторять
+   автоматически; выполнить ручную сверку.
