@@ -15,8 +15,8 @@ Native-full такого параметра **не имеет**: его apply р
 чистого полного rollback-preflight.
 
 На первом rollout native-full разрешён только для точного режима
-`SCLAD_R.N_2=1000`, `SCLAD_R.N_4 IS NULL` и по умолчанию только для базы
-`Paint_Rus`.
+`SCLAD_R.N_2=1000`, `SCLAD_R.N_4 IS NULL`. Rollback-preview доступен в
+`Paint_Rus` и `Paint_Ua`; apply управляется отдельными флагами.
 
 ## Что такое учётная цена
 
@@ -415,9 +415,9 @@ ${LOG_DIR}/folio-accounting-price.log
 LAVKA_FOLIO_ACCOUNTING_PRICE_API_ENABLED=true
 LAVKA_FOLIO_ACCOUNTING_PRICE_APPLY_ENABLED=false
 LAVKA_FOLIO_ACCOUNTING_PRICE_FULL_APPLY_ENABLED=false
-LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ENABLED=false
+LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ENABLED=true
 LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_APPLY_ENABLED=false
-LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ALLOWED_DATABASES=Paint_Rus
+LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ALLOWED_DATABASES=Paint_Rus,Paint_Ua
 LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_MAX_CHUNKS=10000
 ```
 
@@ -427,15 +427,18 @@ LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_MAX_CHUNKS=10000
 - native rollback-preview требует `NATIVE_FULL_ENABLED=true`;
 - native apply требует одновременно `APPLY_ENABLED=true` и
   `NATIVE_FULL_APPLY_ENABLED=true`;
-- стандартный native allow-list содержит только `Paint_Rus`.
+- стандартный native allow-list содержит `Paint_Rus` и `Paint_Ua`;
+- status и preview включены по умолчанию для VPN/internal network;
+- оба apply-флага по умолчанию остаются выключенными.
 
-Флаги не заменяют авторизацию: публичный браузер не должен иметь прямой доступ
-к административному `/admin`.
+Маршруты вызываются только через защищённый VPN/internal network. Без VPN доступ
+к административному `/admin` отсутствует.
 
 ## Порядок ввода native-full
 
 1. Оставить apply-флаги выключенными.
-2. Включить API и native-full только на `Paint_Rus`.
+2. Выполнить rollback-preview на нужной базе; для `Paint_Ua` запускать его вне
+   активной ручной работы ФОЛИО.
 3. Запустить rollback-preview и разобрать все warnings.
 4. Исправить отрицательную историю и повторить preview.
 5. Подтвердить резервную копию и окно без ручного перерасчёта ФОЛИО.

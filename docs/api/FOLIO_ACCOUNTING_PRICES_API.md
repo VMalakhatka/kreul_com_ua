@@ -47,9 +47,9 @@ Java job**, а не полную семантику кнопки перерас�
 `SCLAD_R.N_2=1000` при `SCLAD_R.N_4 IS NULL`. Товары и склады с другой
 настройкой не изменяются.
 
-Все маршруты административные. Их нельзя вызывать напрямую из публичного
-браузера. Перед включением записи необходимо проверить существующую внешнюю
-аутентификацию и авторизацию `/admin`.
+Все маршруты административные и доступны только через защищённый VPN/internal
+network проекта. Отдельная прикладная авторизация для этого deployment не
+требуется; отключение VPN прекращает доступ к API.
 
 ## Безопасность
 
@@ -58,8 +58,8 @@ Java job**, а не полную семантику кнопки перерас�
 1. Для точечного route и `/full` `previewOnly=true` работает строго на чтение.
    Для `/native-full` точный preview обязан вызвать `I_UCHET_TOVAR`, но каждая
    порция выполняется в отдельной транзакции с обязательным rollback.
-2. Весь API закрыт отдельным `api-enabled`, по умолчанию выключенным до
-   подтверждения внешней авторизации `/admin`.
+2. `api-enabled` оставлен как аварийный server-side выключатель. В текущем
+   VPN/internal deployment он по умолчанию включён для status и preview.
 3. Реальное применение закрыто дополнительными apply-флагами, которые также по
    умолчанию выключены. Java-full и native-full имеют разные отдельные флаги.
 4. Точечный и Java-full режимы проверяют хронологический остаток перед записью
@@ -550,10 +550,10 @@ Content-Type: application/json
 Он заново вычисляет учётные суммы приходных строк из исходных сумм документов,
 налогов и валютных данных, затем пересчитывает расходы и итоги карточки.
 
-На текущем этапе endpoint по умолчанию разрешён только для базы `Paint_Rus`,
-склада с точным `SCLAD_R.N_2=1000` и `SCLAD_R.N_4 IS NULL`. Это не
-рекомендация включать запись в рабочую `Paint_Ua`: её имя отсутствует в
-стандартном allow-list.
+На текущем этапе rollback-preview разрешён для `Paint_Rus` и `Paint_Ua`, но
+только для склада с точным `SCLAD_R.N_2=1000` и `SCLAD_R.N_4 IS NULL`.
+Разрешение preview не включает реальную запись: apply требует двух отдельных
+server-side флагов.
 
 ### Запрос preview
 
@@ -736,9 +736,8 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
   зафиксированные MSSQL-порции не откатятся. Логи фиксируют только commit,
   успешно наблюдённые приложением, и **не являются транзакционным checkpoint**:
   процесс может завершиться между MSSQL commit и записью строки лога;
-- первый rollout разрешён только для `Paint_Rus`. Для Paint_Ua нужно отдельно
-  расширить allow-list после резервной копии и согласованного контрольного
-  запуска.
+- rollback-preview разрешён для `Paint_Rus` и `Paint_Ua`; реальный apply в
+  рабочей базе требует резервной копии и согласованного контрольного окна.
 
 ## Постоянный журнал отрицательных остатков
 
@@ -817,14 +816,15 @@ SQL-процедура не умеет показывать диалог и са
 
 Рекомендуемая последовательность:
 
-1. после деплоя оставить `api-enabled`, `native-full-enabled` и все apply-флаги
-   выключенными;
-2. подтвердить внешнюю защиту `/admin`, затем включить только `api-enabled`;
+1. status и preview доступны по защищённому VPN/internal каналу; при аварийной
+   необходимости их можно выключить через `api-enabled=false`;
+2. оставить оба apply-флага выключенными до резервной копии и согласованного
+   окна;
 3. выполнить точечный `previewOnly=true` на проверенных товарах;
 4. выполнить полный `previewOnly=true`, разобрать все пропуски;
 5. включить точечное применение и сверить один товар с интерфейсом ФОЛИО;
-6. для native сначала отдельно включить `native-full-enabled`, оставить его
-   apply выключенным и выполнить rollback-preview только в `Paint_Rus`;
+6. для native сначала выполнить rollback-preview; он доступен и в `Paint_Rus`,
+   и в `Paint_Ua`, но может создавать нагрузку и блокировки;
 7. сделать резервную копию и только затем отдельно включить нужный full apply;
 8. первый apply любого полного режима запускать в окно без ручного
    перерасчёта.
@@ -832,12 +832,12 @@ SQL-процедура не умеет показывать диалог и са
 Используются следующие настройки:
 
 ```properties
-lavka.folio.accounting-prices.api-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_API_ENABLED:false}
+lavka.folio.accounting-prices.api-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_API_ENABLED:true}
 lavka.folio.accounting-prices.apply-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_APPLY_ENABLED:false}
 lavka.folio.accounting-prices.full-apply-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_FULL_APPLY_ENABLED:false}
-lavka.folio.accounting-prices.native-full-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ENABLED:false}
+lavka.folio.accounting-prices.native-full-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ENABLED:true}
 lavka.folio.accounting-prices.native-full-apply-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_APPLY_ENABLED:false}
-lavka.folio.accounting-prices.native-full-allowed-databases=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ALLOWED_DATABASES:Paint_Rus}
+lavka.folio.accounting-prices.native-full-allowed-databases=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ALLOWED_DATABASES:Paint_Rus,Paint_Ua}
 lavka.folio.accounting-prices.native-full-max-chunks=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_MAX_CHUNKS:10000}
 lavka.folio.accounting-prices.lock-timeout-ms=${LAVKA_FOLIO_ACCOUNTING_PRICE_LOCK_TIMEOUT_MS:5000}
 lavka.folio.accounting-prices.query-timeout-seconds=${LAVKA_FOLIO_ACCOUNTING_PRICE_QUERY_TIMEOUT_SECONDS:120}
@@ -845,9 +845,9 @@ lavka.folio.accounting-prices.max-reported-warnings=${LAVKA_FOLIO_ACCOUNTING_PRI
 lavka.folio.accounting-prices.zone=${LAVKA_FOLIO_ACCOUNTING_PRICE_ZONE:Europe/Kyiv}
 ```
 
-`api-enabled` открывает все endpoint модуля, включая preview и status; его
-безопасное значение по умолчанию — `false`. После подтверждения внешней защиты
-`/admin` его можно включить, сохранив apply-флаги выключенными.
+`api-enabled` открывает все endpoint модуля, включая preview и status. В текущей
+архитектуре доступ ограничен VPN/internal network, поэтому значение по умолчанию
+`true`; флаг остаётся аварийным выключателем.
 
 `apply-enabled` разрешает точечный apply. Для полного apply должны одновременно
 быть `true` оба флага: `apply-enabled` и `full-apply-enabled`. Full apply намеренно
@@ -862,7 +862,7 @@ Native-full имеет отдельную лестницу защиты:
 - его apply требует ещё `apply-enabled=true` и
   `native-full-apply-enabled=true`;
 - `native-full-allowed-databases` проверяется и до запуска, и на соединении
-  внутри каждой MSSQL-транзакции. Стандартное значение — только `Paint_Rus`;
+  внутри каждой MSSQL-транзакции. Стандартное значение — `Paint_Rus,Paint_Ua`;
 - `native-full-max-chunks` аварийно останавливает проход, если legacy-курсор не
   завершился за заданное число вызовов. Это safety limit, а не размер порции.
 

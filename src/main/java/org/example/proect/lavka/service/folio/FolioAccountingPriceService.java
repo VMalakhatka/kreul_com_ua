@@ -91,12 +91,12 @@ public class FolioAccountingPriceService {
             FolioAccountingPriceDao dao,
             @Qualifier("folioAccountingPriceExecutor") TaskExecutor executor,
             @Qualifier("mssqlTransactionManager") PlatformTransactionManager transactionManager,
-            @Value("${lavka.folio.accounting-prices.api-enabled:false}") boolean apiEnabled,
+            @Value("${lavka.folio.accounting-prices.api-enabled:true}") boolean apiEnabled,
             @Value("${lavka.folio.accounting-prices.apply-enabled:false}") boolean applyEnabled,
             @Value("${lavka.folio.accounting-prices.full-apply-enabled:false}") boolean fullApplyEnabled,
-            @Value("${lavka.folio.accounting-prices.native-full-enabled:false}") boolean nativeFullEnabled,
+            @Value("${lavka.folio.accounting-prices.native-full-enabled:true}") boolean nativeFullEnabled,
             @Value("${lavka.folio.accounting-prices.native-full-apply-enabled:false}") boolean nativeFullApplyEnabled,
-            @Value("${lavka.folio.accounting-prices.native-full-allowed-databases:Paint_Rus}") String nativeFullAllowedDatabases,
+            @Value("${lavka.folio.accounting-prices.native-full-allowed-databases:Paint_Rus,Paint_Ua}") String nativeFullAllowedDatabases,
             @Value("${lavka.folio.accounting-prices.native-full-max-chunks:10000}") int nativeFullMaxChunks,
             @Value("${lavka.folio.accounting-prices.lock-timeout-ms:5000}") int lockTimeoutMs,
             @Value("${lavka.folio.accounting-prices.query-timeout-seconds:120}") int queryTimeoutSeconds,
@@ -1386,7 +1386,7 @@ public class FolioAccountingPriceService {
         if (!apiEnabled) {
             throw new FolioAccountingPriceDisabledException(
                     "ACCOUNTING_PRICE_API_DISABLED",
-                    "Folio accounting-price API is disabled until external /admin authorization is confirmed"
+                    "Folio accounting-price API is disabled by server configuration"
             );
         }
     }
