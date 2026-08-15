@@ -27,13 +27,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class FolioCustomerBalanceSnapshotService {
 
     private static final int SNAPSHOT_WRITE_BATCH_SIZE = 200;
+    private static final int LEASE_RENEW_EVERY_CLIENTS = 25;
+    private static final String INTERRUPTED_MESSAGE =
+            "Interrupted before completion; a clean recovery generation was started";
+    private static final String RECOVERY_LIMIT_MESSAGE =
+            "Interrupted before completion; automatic recovery limit reached";
 
     private final FolioCustomerBalanceDao balanceDao;
     private final FolioCustomerBalanceSnapshotDao snapshotDao;
     private final TaskExecutor executor;
     private final Clock clock;
     private final boolean scheduledEnabled;
+    private final boolean recoveryEnabled;
     private final int leaseSeconds;
+    private final int maxRecoveryAttemptsPerDay;
     private final AtomicBoolean localRefreshRunning = new AtomicBoolean(false);
 
     public FolioCustomerBalanceSnapshotService(
@@ -42,13 +49,18 @@ public class FolioCustomerBalanceSnapshotService {
             @Qualifier("folioBalanceSnapshotExecutor") TaskExecutor executor,
             @Qualifier("folioBalanceClock") Clock clock,
             @Value("${lavka.folio.balance-snapshot.scheduled-enabled:true}") boolean scheduledEnabled,
-            @Value("${lavka.folio.balance-snapshot.lease-seconds:7200}") int leaseSeconds) {
+            @Value("${lavka.folio.balance-snapshot.lease-seconds:7200}") int leaseSeconds,
+            @Value("${lavka.folio.balance-snapshot.recovery-enabled:true}") boolean recoveryEnabled,
+            @Value("${lavka.folio.balance-snapshot.max-recovery-attempts-per-day:2}")
+            int maxRecoveryAttemptsPerDay) {
         this.balanceDao = balanceDao;
         this.snapshotDao = snapshotDao;
         this.executor = executor;
         this.clock = clock;
         this.scheduledEnabled = scheduledEnabled;
         this.leaseSeconds = Math.max(300, leaseSeconds);
+        this.recoveryEnabled = recoveryEnabled;
+        this.maxRecoveryAttemptsPerDay = Math.max(1, maxRecoveryAttemptsPerDay);
     }
 
     @Scheduled(
@@ -59,6 +71,42 @@ public class FolioCustomerBalanceSnapshotService {
         if (scheduledEnabled) {
             requestRefresh("SCHEDULED");
         }
+    }
+
+    @Scheduled(
+            fixedDelayString = "${lavka.folio.balance-snapshot.recovery-check-ms:300000}",
+            initialDelayString = "${lavka.folio.balance-snapshot.recovery-initial-delay-ms:30000}"
+    )
+    public void recoverInterruptedRefresh() {
+        if (!recoveryEnabled || localRefreshRunning.get()) {
+            return;
+        }
+        var latest = snapshotDao.findLatestGeneration();
+        if (latest.isEmpty() || !"BUILDING".equals(latest.orElseThrow().status())) {
+            return;
+        }
+        if (snapshotDao.isLeaseActive()) {
+            return;
+        }
+
+        LocalDate today = LocalDate.now(clock);
+        int attempts = snapshotDao.countRecoveryGenerations(today);
+        if (attempts >= maxRecoveryAttemptsPerDay) {
+            log.error("[folio.balance.snapshot] automatic recovery limit reached date={} attempts={}",
+                    today, attempts);
+            boolean markedFailed = snapshotDao.failAbandonedGenerationIfLeaseExpired(
+                    latest.orElseThrow().generationId(),
+                    RECOVERY_LIMIT_MESSAGE,
+                    LocalDateTime.now(clock)
+            );
+            if (!markedFailed) {
+                log.info("[folio.balance.snapshot] recovery-limit failure mark skipped: lease became active");
+            }
+            return;
+        }
+        log.warn("[folio.balance.snapshot] abandoned generation={} detected; scheduling recovery attempt={}",
+                latest.orElseThrow().generationId(), attempts + 1);
+        requestRefresh("RECOVERY");
     }
 
     public boolean requestRefresh(String triggerSource) {
@@ -92,13 +140,17 @@ public class FolioCustomerBalanceSnapshotService {
             );
         }
         var generation = latest.orElseThrow();
-        boolean running = localRefreshRunning.get() || "BUILDING".equals(generation.status());
+        boolean leaseActive = "BUILDING".equals(generation.status()) && snapshotDao.isLeaseActive();
+        boolean running = localRefreshRunning.get() || leaseActive;
         Building building = "BUILDING".equals(generation.status())
                 ? new Building(
                         generation.generationId(),
                         generation.triggerSource(),
                         generation.asOfDate(),
-                        generation.startedAt()
+                        generation.startedAt(),
+                        generation.processedClients(),
+                        generation.lastHeartbeatAt(),
+                        leaseActive
                 )
                 : null;
         return new FolioBalanceSnapshotStatusResponse(
@@ -142,12 +194,21 @@ public class FolioCustomerBalanceSnapshotService {
 
             LocalDate asOfDate = LocalDate.now(clock);
             LocalDateTime startedAt = LocalDateTime.now(clock);
-            generationId = snapshotDao.createGeneration(asOfDate, triggerSource, startedAt);
+            var generationStart = snapshotDao.createGenerationReplacingAbandoned(
+                    asOfDate, triggerSource, startedAt, INTERRUPTED_MESSAGE
+            );
+            generationId = generationStart.generationId();
+            int abandoned = generationStart.abandonedGenerations();
+            if (abandoned > 0) {
+                log.warn("[folio.balance.snapshot] marked abandoned generations failed count={}", abandoned);
+            }
             long buildingGenerationId = generationId;
             log.info("[folio.balance.snapshot] generation={} started asOfDate={} trigger={}",
                     generationId, asOfDate, triggerSource);
 
             List<SnapshotClient> buffer = new ArrayList<>(SNAPSHOT_WRITE_BATCH_SIZE);
+            java.util.concurrent.atomic.AtomicInteger processedClients =
+                    new java.util.concurrent.atomic.AtomicInteger();
             int totalClients = balanceDao.forEachPartnerBalance(
                     null,
                     List.of(),
@@ -172,14 +233,26 @@ public class FolioCustomerBalanceSnapshotService {
                         summary.payableNow(),
                         LocalDateTime.now(clock)
                 ));
+                int processed = processedClients.incrementAndGet();
                 if (buffer.size() >= SNAPSHOT_WRITE_BATCH_SIZE) {
                     snapshotDao.saveClients(buildingGenerationId, buffer);
                     buffer.clear();
+                    snapshotDao.recordProgress(
+                            buildingGenerationId, processed, LocalDateTime.now(clock)
+                    );
+                    requireLeaseRenewal(ownerId);
+                } else if (processed % LEASE_RENEW_EVERY_CLIENTS == 0) {
+                    snapshotDao.recordProgress(
+                            buildingGenerationId, processed, LocalDateTime.now(clock)
+                    );
                     requireLeaseRenewal(ownerId);
                 }
             });
 
             snapshotDao.saveClients(buildingGenerationId, buffer);
+            snapshotDao.recordProgress(
+                    buildingGenerationId, processedClients.get(), LocalDateTime.now(clock)
+            );
             requireLeaseRenewal(ownerId);
             if (totalClients <= 0) {
                 throw new IllegalStateException("Balance snapshot contains no Folio partners");

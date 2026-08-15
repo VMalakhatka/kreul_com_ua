@@ -409,7 +409,7 @@ GET /admin/folio/customer-debtors/snapshot/status
 {
   "ok": true,
   "refreshAccepted": false,
-  "running": false,
+  "running": true,
   "generationId": 43,
   "status": "BUILDING",
   "triggerSource": "SCHEDULED",
@@ -422,7 +422,10 @@ GET /admin/folio/customer-debtors/snapshot/status
     "generationId": 43,
     "triggerSource": "SCHEDULED",
     "asOfDate": "2026-08-15",
-    "startedAt": "2026-08-15T00:10:00.007"
+    "startedAt": "2026-08-15T00:10:00.007",
+    "processedClients": 600,
+    "lastHeartbeatAt": "2026-08-15T09:55:00.000",
+    "leaseActive": true
   },
   "activeSnapshot": {
     "generationId": 42,
@@ -434,6 +437,12 @@ GET /admin/folio/customer-debtors/snapshot/status
 ```
 
 Возможные `status`: `NOT_READY`, `BUILDING`, `ACTIVE`, `FAILED`, `SUPERSEDED`. Во время `BUILDING` предыдущая активная генерация остаётся доступной. Новая генерация становится активной только после полного успешного расчёта и записи всех клиентов.
+
+`running` больше не выводится только из текста `BUILDING`: он означает локально
+запущенную задачу либо действующую MariaDB lease. `building.processedClients`
+показывает количество уже рассчитанных клиентов, а `lastHeartbeatAt` — время
+последнего подтверждённого прогресса. До завершения `totalClients` может быть `0`,
+поэтому процент готовности вычислять нельзя.
 
 Фронт не должен блокировать отчёт только из-за `status=BUILDING`. Если
 `activeSnapshot != null`, запрос списка должников уже безопасно читает эту активную
@@ -486,6 +495,22 @@ POST /admin/folio/customer-debtors/snapshot/refresh
 
 Endpoint сразу отвечает `HTTP 202`. Полный расчёт продолжается в отдельном потоке. `refreshAccepted=true` означает, что задача принята этим экземпляром приложения; `false` — локальная задача уже запущена. Межсерверная lease-блокировка в MariaDB не позволяет двум экземплярам одновременно публиковать полную генерацию.
 
+### Автоматическое восстановление после рестарта
+
+Backend каждые пять минут проверяет последнюю генерацию. Если она осталась
+`BUILDING`, но lease уже не действует, генерация признаётся прерванной:
+
+1. старая частичная генерация получает `FAILED` и причину
+   `Interrupted before completion; a clean recovery generation was started`;
+2. запускается новая чистая генерация с `triggerSource=RECOVERY`;
+3. старый `activeSnapshot` продолжает обслуживать отчёт до успешной публикации.
+
+Частичные строки не продолжаются и не публикуются: без надёжного курсора это
+могло бы смешать данные, рассчитанные в разное время. По умолчанию разрешено не
+более двух автоматических recovery-попыток за бизнес-день.
+Если обе recovery-попытки также прерваны, последняя генерация получает
+`FAILED`; следующий запуск выполняется вручную либо очередным суточным расписанием.
+
 После первого деплоя нужно один раз вызвать `POST .../snapshot/refresh`, дождаться `status=ACTIVE` через status endpoint и только затем открывать общий список. Пока активной генерации нет, список возвращает `503` с кодом `BALANCE_SNAPSHOT_NOT_READY`.
 
 ### Обновление при запросе одного клиента
@@ -515,6 +540,10 @@ GET /admin/folio/customer-balance?partnerShortName=БОНД%20АНН
 | `lavka.folio.balance-snapshot.cron` | `0 10 0 * * *` | cron полной пересборки |
 | `lavka.folio.balance-snapshot.zone` | `Europe/Kyiv` | бизнес-дата и зона расписания |
 | `lavka.folio.balance-snapshot.lease-seconds` | `7200` | срок межсерверной lease; во время расчёта она продлевается |
+| `lavka.folio.balance-snapshot.recovery-enabled` | `true` | включает watchdog прерванных генераций |
+| `lavka.folio.balance-snapshot.recovery-check-ms` | `300000` | период проверки recovery, 5 минут |
+| `lavka.folio.balance-snapshot.recovery-initial-delay-ms` | `30000` | первая проверка через 30 секунд после старта приложения |
+| `lavka.folio.balance-snapshot.max-recovery-attempts-per-day` | `2` | защита от бесконечного автоматического перезапуска |
 
 ## Ошибки
 

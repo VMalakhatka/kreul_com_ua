@@ -38,7 +38,10 @@ GET /admin/folio/customer-debtors/snapshot/status
     "generationId": 2,
     "triggerSource": "SCHEDULED",
     "asOfDate": "2026-08-15",
-    "startedAt": "2026-08-15T00:10:00.007"
+    "startedAt": "2026-08-15T00:10:00.007",
+    "processedClients": 600,
+    "lastHeartbeatAt": "2026-08-15T09:55:00.000",
+    "leaseActive": true
   },
   "activeSnapshot": {
     "generationId": 1,
@@ -53,6 +56,10 @@ GET /admin/folio/customer-debtors/snapshot/status
 совместимости и описывают последнюю генерацию. Для нового интерфейса источниками
 являются именно `building` и `activeSnapshot`.
 
+Значение `running` теперь основано на реально запущенной локальной задаче или
+действующей MariaDB lease. Само наличие старой строки `BUILDING` больше не
+означает, что расчёт выполняется.
+
 ## Логика интерфейса
 
 ### Есть `activeSnapshot`
@@ -65,6 +72,22 @@ GET /admin/folio/customer-debtors/snapshot/status
 
 - дату показанных данных брать из `activeSnapshot.asOfDate`, а не из верхнего
   `asOfDate` строящейся генерации.
+- если `building.processedClients > 0`, можно показать «Рассчитано клиентов: 600»;
+- не вычислять процент: общее количество становится окончательно известно
+  только после завершения.
+
+### Есть `building`, но `running=false`
+
+Это брошенная генерация после рестарта или аварии. Backend самостоятельно
+пометит её ошибочной и запустит чистую генерацию `RECOVERY` после освобождения
+lease. Фронт не должен вызывать `POST /snapshot/refresh` автоматически.
+
+Если `activeSnapshot` присутствует, продолжать показывать отчёт и вывести:
+
+> Обновление было прервано. Показаны последние готовые данные; сервер автоматически восстанавливает расчёт.
+
+Оставить polling статуса раз в 30 секунд. После восстановления изменится
+`building.generationId`, а `building.triggerSource` станет `RECOVERY`.
 
 ### Нет `activeSnapshot`, но есть `building`
 
@@ -89,9 +112,15 @@ GET /admin/folio/customer-debtors/snapshot/status
 - вывести предупреждение, что обновление не завершилось;
 - не скрывать рабочий отчёт.
 
+Если `error` содержит `automatic recovery limit reached`, автоматические попытки
+на этот бизнес-день закончились. Показывать администратору кнопку ручного запуска,
+но не нажимать её без действия пользователя.
+
 ## Частота опроса
 
-Статус достаточно проверять раз в 30–60 секунд только пока есть `building`.
+Статус достаточно проверять раз в 30–60 секунд, пока есть `building`. После
+`status=FAILED` polling нужно остановить; новый опрос начинается только после
+принятого ручного запуска либо при появлении новой генерации.
 Опрос каждые 5 секунд не ускоряет расчёт и создаёт лишний шум в логах. После
 завершения фоновой генерации polling нужно остановить.
 
@@ -124,9 +153,14 @@ if (status.activeSnapshot) {
   await loadDebtors();
   showSnapshotDate(status.activeSnapshot.asOfDate);
 
-  if (status.building) {
+  if (status.building && status.running) {
     showRefreshNotice(status.building, status.activeSnapshot);
     startStatusPolling(30000);
+  } else if (status.building) {
+    showAutomaticRecoveryNotice(status.building, status.activeSnapshot);
+    startStatusPolling(30000);
+  } else if (status.status === 'FAILED') {
+    showRefreshFailedWarning(status.error, status.activeSnapshot);
   }
 } else if (status.building) {
   disableReportUntilFirstSnapshot();

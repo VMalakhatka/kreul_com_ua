@@ -37,12 +37,13 @@ public class FolioCustomerBalanceSnapshotDao {
         jdbc.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO folio_balance_snapshot_generation
-                        (status, trigger_source, as_of_date, started_at)
-                    VALUES ('BUILDING', ?, ?, ?)
+                        (status, trigger_source, as_of_date, started_at, last_heartbeat_at)
+                    VALUES ('BUILDING', ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS);
             statement.setString(1, triggerSource);
             statement.setObject(2, asOfDate);
             statement.setTimestamp(3, Timestamp.valueOf(startedAt));
+            statement.setTimestamp(4, Timestamp.valueOf(startedAt));
             return statement;
         }, keyHolder);
         Number key = keyHolder.getKey();
@@ -50,6 +51,21 @@ public class FolioCustomerBalanceSnapshotDao {
             throw new IllegalStateException("Cannot read generated balance snapshot generation id");
         }
         return key.longValue();
+    }
+
+    @Transactional(transactionManager = "wpTransactionManager")
+    public GenerationStart createGenerationReplacingAbandoned(
+            LocalDate asOfDate,
+            String triggerSource,
+            LocalDateTime startedAt,
+            String abandonedMessage) {
+        long generationId = createGeneration(asOfDate, triggerSource, startedAt);
+        int abandoned = jdbc.update("""
+                UPDATE folio_balance_snapshot_generation
+                SET status = 'FAILED', completed_at = ?, error_message = ?
+                WHERE status = 'BUILDING' AND id <> ?
+                """, Timestamp.valueOf(startedAt), truncate(abandonedMessage, 1000), generationId);
+        return new GenerationStart(generationId, abandoned);
     }
 
     public void saveClients(long generationId, List<SnapshotClient> clients) {
@@ -113,9 +129,11 @@ public class FolioCustomerBalanceSnapshotDao {
 
         int activated = jdbc.update("""
                 UPDATE folio_balance_snapshot_generation
-                SET status = 'ACTIVE', completed_at = ?, total_clients = ?, error_message = NULL
+                SET status = 'ACTIVE', completed_at = ?, total_clients = ?,
+                    processed_clients = ?, last_heartbeat_at = ?, error_message = NULL
                 WHERE id = ? AND status = 'BUILDING'
-                """, Timestamp.valueOf(completedAt), totalClients, generationId);
+                """, Timestamp.valueOf(completedAt), totalClients, totalClients,
+                Timestamp.valueOf(completedAt), generationId);
         if (activated != 1) {
             throw new IllegalStateException("Balance snapshot generation is not publishable: " + generationId);
         }
@@ -143,6 +161,28 @@ public class FolioCustomerBalanceSnapshotDao {
                 """, Timestamp.valueOf(completedAt), truncate(message, 1000), generationId);
     }
 
+    public boolean failAbandonedGenerationIfLeaseExpired(
+            long generationId,
+            String message,
+            LocalDateTime completedAt) {
+        return jdbc.update("""
+                UPDATE folio_balance_snapshot_generation g
+                JOIN folio_balance_snapshot_lock l ON l.id = 1
+                SET g.status = 'FAILED', g.completed_at = ?, g.error_message = ?
+                WHERE g.id = ?
+                  AND g.status = 'BUILDING'
+                  AND (l.owner_id IS NULL OR l.locked_until IS NULL OR l.locked_until < NOW(3))
+                """, Timestamp.valueOf(completedAt), truncate(message, 1000), generationId) == 1;
+    }
+
+    public void recordProgress(long generationId, int processedClients, LocalDateTime heartbeatAt) {
+        jdbc.update("""
+                UPDATE folio_balance_snapshot_generation
+                SET processed_clients = ?, last_heartbeat_at = ?
+                WHERE id = ? AND status = 'BUILDING'
+                """, processedClients, Timestamp.valueOf(heartbeatAt), generationId);
+    }
+
     public Optional<ActiveSnapshot> findActiveSnapshot() {
         List<ActiveSnapshot> result = jdbc.query("""
                 SELECT g.id, g.status, g.as_of_date, g.started_at, g.completed_at, g.total_clients
@@ -163,7 +203,8 @@ public class FolioCustomerBalanceSnapshotDao {
     public Optional<GenerationStatus> findLatestGeneration() {
         List<GenerationStatus> result = jdbc.query("""
                 SELECT g.id, g.status, g.trigger_source, g.as_of_date, g.started_at,
-                       g.completed_at, g.total_clients, g.error_message,
+                       g.completed_at, g.total_clients, g.processed_clients,
+                       g.last_heartbeat_at, g.error_message,
                        CASE WHEN s.active_generation_id = g.id THEN 1 ELSE 0 END AS is_active
                 FROM folio_balance_snapshot_generation g
                 LEFT JOIN folio_balance_snapshot_state s ON s.id = 1
@@ -178,6 +219,9 @@ public class FolioCustomerBalanceSnapshotDao {
                 rs.getTimestamp("completed_at") == null
                         ? null : rs.getTimestamp("completed_at").toLocalDateTime(),
                 rs.getInt("total_clients"),
+                rs.getInt("processed_clients"),
+                rs.getTimestamp("last_heartbeat_at") == null
+                        ? null : rs.getTimestamp("last_heartbeat_at").toLocalDateTime(),
                 rs.getString("error_message"),
                 rs.getBoolean("is_active")
         ));
@@ -325,6 +369,27 @@ public class FolioCustomerBalanceSnapshotDao {
                 """, ownerId, leaseSeconds, ownerId) == 1;
     }
 
+    public boolean isLeaseActive() {
+        Boolean active = jdbc.queryForObject("""
+                SELECT CASE
+                         WHEN owner_id IS NOT NULL AND locked_until >= NOW(3) THEN 1
+                         ELSE 0
+                       END
+                FROM folio_balance_snapshot_lock
+                WHERE id = 1
+                """, Boolean.class);
+        return Boolean.TRUE.equals(active);
+    }
+
+    public int countRecoveryGenerations(LocalDate asOfDate) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM folio_balance_snapshot_generation
+                WHERE as_of_date = ? AND trigger_source = 'RECOVERY'
+                """, Integer.class, asOfDate);
+        return count == null ? 0 : count;
+    }
+
     public boolean renewLease(String ownerId, int leaseSeconds) {
         return jdbc.update("""
                 UPDATE folio_balance_snapshot_lock
@@ -365,6 +430,9 @@ public class FolioCustomerBalanceSnapshotDao {
     ) {
     }
 
+    public record GenerationStart(long generationId, int abandonedGenerations) {
+    }
+
     public record SnapshotSummary(
             long matchedClients,
             BigDecimal commonDebtTotal,
@@ -396,6 +464,8 @@ public class FolioCustomerBalanceSnapshotDao {
             LocalDateTime startedAt,
             LocalDateTime completedAt,
             int totalClients,
+            int processedClients,
+            LocalDateTime lastHeartbeatAt,
             String errorMessage,
             boolean active
     ) {

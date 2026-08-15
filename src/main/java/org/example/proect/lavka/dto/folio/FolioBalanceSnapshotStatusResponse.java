@@ -29,7 +29,11 @@ public record FolioBalanceSnapshotStatusResponse(
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
             LocalDate asOfDate,
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS")
-            LocalDateTime startedAt
+            LocalDateTime startedAt,
+            int processedClients,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS")
+            LocalDateTime lastHeartbeatAt,
+            boolean leaseActive
     ) {
     }
 

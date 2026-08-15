@@ -8,6 +8,7 @@ import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao;
 import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao.SnapshotClient;
 import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao.ActiveSnapshot;
 import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao.GenerationStatus;
+import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao.GenerationStart;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.core.task.TaskExecutor;
@@ -50,8 +51,10 @@ class FolioCustomerBalanceSnapshotServiceTest {
         LocalDateTime activeCompleted = LocalDateTime.of(2026, 8, 14, 21, 41, 25, 646_000_000);
         when(snapshotDao.findLatestGeneration()).thenReturn(Optional.of(new GenerationStatus(
                 2L, "BUILDING", "SCHEDULED", LocalDate.of(2026, 8, 15),
-                buildingStarted, null, 0, null, false
+                buildingStarted, null, 0, 600,
+                LocalDateTime.of(2026, 8, 15, 9, 55), null, false
         )));
+        when(snapshotDao.isLeaseActive()).thenReturn(true);
         when(snapshotDao.findActiveSnapshot()).thenReturn(Optional.of(new ActiveSnapshot(
                 1L, "ACTIVE", LocalDate.of(2026, 8, 14),
                 LocalDateTime.of(2026, 8, 14, 20, 0), activeCompleted, 1698
@@ -62,9 +65,102 @@ class FolioCustomerBalanceSnapshotServiceTest {
         assertThat(response.running()).isTrue();
         assertThat(response.building()).isNotNull();
         assertThat(response.building().generationId()).isEqualTo(2L);
+        assertThat(response.building().processedClients()).isEqualTo(600);
+        assertThat(response.building().leaseActive()).isTrue();
         assertThat(response.activeSnapshot()).isNotNull();
         assertThat(response.activeSnapshot().generationId()).isEqualTo(1L);
         assertThat(response.activeSnapshot().totalClients()).isEqualTo(1698);
+    }
+
+    @Test
+    void staleBuildingGenerationIsNotReportedAsRunning() {
+        FolioCustomerBalanceDao balanceDao = mock(FolioCustomerBalanceDao.class);
+        FolioCustomerBalanceSnapshotDao snapshotDao = mock(FolioCustomerBalanceSnapshotDao.class);
+        when(snapshotDao.findLatestGeneration()).thenReturn(Optional.of(new GenerationStatus(
+                2L, "BUILDING", "SCHEDULED", LocalDate.of(2026, 8, 14),
+                LocalDateTime.of(2026, 8, 14, 0, 10), null, 0, 400,
+                LocalDateTime.of(2026, 8, 14, 9, 30), null, false
+        )));
+        when(snapshotDao.findActiveSnapshot()).thenReturn(Optional.empty());
+        when(snapshotDao.isLeaseActive()).thenReturn(false);
+
+        var response = service(balanceDao, snapshotDao).status(false);
+
+        assertThat(response.running()).isFalse();
+        assertThat(response.status()).isEqualTo("BUILDING");
+        assertThat(response.building().leaseActive()).isFalse();
+    }
+
+    @Test
+    void automaticallyReplacesAbandonedGenerationWithCleanRecovery() {
+        FolioCustomerBalanceDao balanceDao = mock(FolioCustomerBalanceDao.class);
+        FolioCustomerBalanceSnapshotDao snapshotDao = mock(FolioCustomerBalanceSnapshotDao.class);
+        when(snapshotDao.findLatestGeneration()).thenReturn(Optional.of(new GenerationStatus(
+                2L, "BUILDING", "SCHEDULED", AS_OF.minusDays(1),
+                LocalDateTime.of(2026, 8, 13, 0, 10), null, 0, 200,
+                LocalDateTime.of(2026, 8, 13, 2, 0), null, false
+        )));
+        when(snapshotDao.isLeaseActive()).thenReturn(false);
+        when(snapshotDao.countRecoveryGenerations(AS_OF)).thenReturn(0);
+        when(snapshotDao.tryAcquireLease(any(), anyInt())).thenReturn(true);
+        when(snapshotDao.renewLease(any(), anyInt())).thenReturn(true);
+        when(snapshotDao.createGenerationReplacingAbandoned(
+                eq(AS_OF), eq("RECOVERY"), any(LocalDateTime.class), any()
+        )).thenReturn(new GenerationStart(80L, 1));
+        when(balanceDao.forEachPartnerBalance(any(), anyList(), any(), any(), eq(true), any()))
+                .thenReturn(1);
+
+        service(balanceDao, snapshotDao).recoverInterruptedRefresh();
+
+        verify(snapshotDao).createGenerationReplacingAbandoned(
+                eq(AS_OF),
+                eq("RECOVERY"),
+                any(LocalDateTime.class),
+                eq("Interrupted before completion; a clean recovery generation was started")
+        );
+        verify(snapshotDao).publishGeneration(eq(80L), eq(1), any(LocalDateTime.class));
+    }
+
+    @Test
+    void doesNotRecoverWhileLeaseIsStillActive() {
+        FolioCustomerBalanceDao balanceDao = mock(FolioCustomerBalanceDao.class);
+        FolioCustomerBalanceSnapshotDao snapshotDao = mock(FolioCustomerBalanceSnapshotDao.class);
+        when(snapshotDao.findLatestGeneration()).thenReturn(Optional.of(new GenerationStatus(
+                2L, "BUILDING", "SCHEDULED", AS_OF,
+                LocalDateTime.of(2026, 8, 14, 0, 10), null, 0, 25,
+                LocalDateTime.of(2026, 8, 14, 9, 59), null, false
+        )));
+        when(snapshotDao.isLeaseActive()).thenReturn(true);
+
+        service(balanceDao, snapshotDao).recoverInterruptedRefresh();
+
+        verify(snapshotDao, never()).tryAcquireLease(any(), anyInt());
+        verify(snapshotDao, never()).createGenerationReplacingAbandoned(any(), any(), any(), any());
+    }
+
+    @Test
+    void marksAbandonedGenerationFailedWhenRecoveryLimitIsReached() {
+        FolioCustomerBalanceDao balanceDao = mock(FolioCustomerBalanceDao.class);
+        FolioCustomerBalanceSnapshotDao snapshotDao = mock(FolioCustomerBalanceSnapshotDao.class);
+        when(snapshotDao.findLatestGeneration()).thenReturn(Optional.of(new GenerationStatus(
+                4L, "BUILDING", "RECOVERY", AS_OF,
+                LocalDateTime.of(2026, 8, 14, 8, 0), null, 0, 100,
+                LocalDateTime.of(2026, 8, 14, 9, 0), null, false
+        )));
+        when(snapshotDao.isLeaseActive()).thenReturn(false);
+        when(snapshotDao.countRecoveryGenerations(AS_OF)).thenReturn(2);
+        when(snapshotDao.failAbandonedGenerationIfLeaseExpired(
+                eq(4L), any(), any(LocalDateTime.class)
+        )).thenReturn(true);
+
+        service(balanceDao, snapshotDao).recoverInterruptedRefresh();
+
+        verify(snapshotDao).failAbandonedGenerationIfLeaseExpired(
+                eq(4L),
+                eq("Interrupted before completion; automatic recovery limit reached"),
+                any(LocalDateTime.class)
+        );
+        verify(snapshotDao, never()).tryAcquireLease(any(), anyInt());
     }
 
     @Test
@@ -73,8 +169,9 @@ class FolioCustomerBalanceSnapshotServiceTest {
         FolioCustomerBalanceSnapshotDao snapshotDao = mock(FolioCustomerBalanceSnapshotDao.class);
         when(snapshotDao.tryAcquireLease(any(), anyInt())).thenReturn(true);
         when(snapshotDao.renewLease(any(), anyInt())).thenReturn(true);
-        when(snapshotDao.createGeneration(eq(AS_OF), eq("MANUAL"), any(LocalDateTime.class)))
-                .thenReturn(77L);
+        when(snapshotDao.createGenerationReplacingAbandoned(
+                eq(AS_OF), eq("MANUAL"), any(LocalDateTime.class), any()
+        )).thenReturn(new GenerationStart(77L, 0));
         PartnerBalanceResult result = new PartnerBalanceResult(
                 new PartnerCandidate("CLIENT", "Client name", "Д", "Kyiv", "+380"),
                 new ProcedureResult(
@@ -113,8 +210,9 @@ class FolioCustomerBalanceSnapshotServiceTest {
         FolioCustomerBalanceSnapshotDao snapshotDao = mock(FolioCustomerBalanceSnapshotDao.class);
         when(snapshotDao.tryAcquireLease(any(), anyInt())).thenReturn(true);
         when(snapshotDao.renewLease(any(), anyInt())).thenReturn(true);
-        when(snapshotDao.createGeneration(eq(AS_OF), eq("SCHEDULED"), any(LocalDateTime.class)))
-                .thenReturn(78L);
+        when(snapshotDao.createGenerationReplacingAbandoned(
+                eq(AS_OF), eq("SCHEDULED"), any(LocalDateTime.class), any()
+        )).thenReturn(new GenerationStart(78L, 0));
         when(balanceDao.forEachPartnerBalance(any(), anyList(), any(), any(), eq(true), any()))
                 .thenThrow(new IllegalStateException("folio unavailable"));
 
@@ -138,7 +236,7 @@ class FolioCustomerBalanceSnapshotServiceTest {
         assertThat(service.requestRefresh("manual")).isTrue();
 
         verify(balanceDao, never()).forEachPartnerBalance(any(), anyList(), any(), any(), eq(true), any());
-        verify(snapshotDao, never()).createGeneration(any(), any(), any());
+        verify(snapshotDao, never()).createGenerationReplacingAbandoned(any(), any(), any(), any());
         verify(snapshotDao).releaseLease(any());
     }
 
@@ -147,8 +245,9 @@ class FolioCustomerBalanceSnapshotServiceTest {
         FolioCustomerBalanceDao balanceDao = mock(FolioCustomerBalanceDao.class);
         FolioCustomerBalanceSnapshotDao snapshotDao = mock(FolioCustomerBalanceSnapshotDao.class);
         when(snapshotDao.tryAcquireLease(any(), anyInt())).thenReturn(true);
-        when(snapshotDao.createGeneration(eq(AS_OF), eq("MANUAL"), any(LocalDateTime.class)))
-                .thenReturn(79L);
+        when(snapshotDao.createGenerationReplacingAbandoned(
+                eq(AS_OF), eq("MANUAL"), any(LocalDateTime.class), any()
+        )).thenReturn(new GenerationStart(79L, 0));
         when(balanceDao.forEachPartnerBalance(any(), anyList(), any(), any(), eq(true), any()))
                 .thenReturn(0);
         when(snapshotDao.renewLease(any(), anyInt())).thenReturn(false);
@@ -167,7 +266,8 @@ class FolioCustomerBalanceSnapshotServiceTest {
             FolioCustomerBalanceDao balanceDao,
             FolioCustomerBalanceSnapshotDao snapshotDao) {
         return new FolioCustomerBalanceSnapshotService(
-                balanceDao, snapshotDao, DIRECT_EXECUTOR, CLOCK, true, 7200
+                balanceDao, snapshotDao, DIRECT_EXECUTOR, CLOCK,
+                true, 7200, true, 2
         );
     }
 
