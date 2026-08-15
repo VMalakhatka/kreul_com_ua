@@ -396,25 +396,87 @@ payableNow = commonDebt - deferredAmount
 GET /admin/folio/customer-debtors/snapshot/status
 ```
 
-Пример активного снимка:
+Ответ сохраняет прежние плоские поля для совместимости. Они описывают последнюю
+генерацию. Дополнительно возвращаются два независимых объекта:
+
+- `building` — новая генерация, которая сейчас строится; иначе `null`;
+- `activeSnapshot` — последний полностью готовый снимок, из которого уже можно
+  показывать отчёт; `null` только до первой успешной публикации.
+
+Пример во время пересчёта, когда предыдущий снимок остаётся доступным:
 
 ```json
 {
   "ok": true,
   "refreshAccepted": false,
   "running": false,
-  "generationId": 42,
-  "status": "ACTIVE",
+  "generationId": 43,
+  "status": "BUILDING",
   "triggerSource": "SCHEDULED",
-  "asOfDate": "2026-08-14",
-  "startedAt": "2026-08-14T00:10:00.000",
-  "completedAt": "2026-08-14T00:20:00.000",
-  "totalClients": 418,
-  "error": null
+  "asOfDate": "2026-08-15",
+  "startedAt": "2026-08-15T00:10:00.007",
+  "completedAt": null,
+  "totalClients": 0,
+  "error": null,
+  "building": {
+    "generationId": 43,
+    "triggerSource": "SCHEDULED",
+    "asOfDate": "2026-08-15",
+    "startedAt": "2026-08-15T00:10:00.007"
+  },
+  "activeSnapshot": {
+    "generationId": 42,
+    "asOfDate": "2026-08-14",
+    "completedAt": "2026-08-14T21:41:25.646",
+    "totalClients": 1698
+  }
 }
 ```
 
 Возможные `status`: `NOT_READY`, `BUILDING`, `ACTIVE`, `FAILED`, `SUPERSEDED`. Во время `BUILDING` предыдущая активная генерация остаётся доступной. Новая генерация становится активной только после полного успешного расчёта и записи всех клиентов.
+
+Фронт не должен блокировать отчёт только из-за `status=BUILDING`. Если
+`activeSnapshot != null`, запрос списка должников уже безопасно читает эту активную
+генерацию. Блокировать отчёт нужно лишь до первого готового снимка, когда
+`activeSnapshot == null`.
+
+### Диагностика выполнения I_DOLG_DOC
+
+```http
+GET /admin/folio/customer-debtors/snapshot/database-activity
+```
+
+Endpoint выполняет разовую read-only проверку через `sp_who2` и
+`DBCC INPUTBUFFER`. В ответ намеренно не попадают логины, имена компьютеров,
+программы, текст SQL и параметры клиента.
+
+```json
+{
+  "ok": true,
+  "checkedAt": "2026-08-15T11:30:00.000",
+  "procedure": "I_DOLG_DOC",
+  "state": "RUNNING",
+  "detectedSessions": 1,
+  "activeSessions": 1,
+  "blockedSessions": 0,
+  "idleSessions": 0,
+  "warnings": []
+}
+```
+
+Значения `state`:
+
+- `RUNNING` — выполнение процедуры обнаружено;
+- `BLOCKED` — обнаруженная процедура ждёт блокирующую сессию;
+- `IDLE_SESSION` — последним запросом сессии была `I_DOLG_DOC`, но в момент
+  проверки сессия `sleeping`; это может быть короткая пауза между клиентами;
+- `NOT_DETECTED` — в данную миллисекунду процедура не найдена;
+- `UNAVAILABLE` — SQL Server недоступен, не хватило прав либо сессии нельзя
+  безопасно проверить.
+
+Это точечная диагностика, а не источник бизнес-состояния. Её нельзя опрашивать
+каждые несколько секунд и нельзя использовать для разрешения/запрета просмотра
+старого активного снимка.
 
 ### Ручной полный пересчёт
 

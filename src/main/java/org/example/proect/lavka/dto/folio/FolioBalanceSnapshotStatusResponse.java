@@ -19,6 +19,27 @@ public record FolioBalanceSnapshotStatusResponse(
         @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS")
         LocalDateTime completedAt,
         Integer totalClients,
-        String error
+        String error,
+        Building building,
+        ActiveSnapshot activeSnapshot
 ) {
+    public record Building(
+            long generationId,
+            String triggerSource,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
+            LocalDate asOfDate,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS")
+            LocalDateTime startedAt
+    ) {
+    }
+
+    public record ActiveSnapshot(
+            long generationId,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
+            LocalDate asOfDate,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS")
+            LocalDateTime completedAt,
+            int totalClients
+    ) {
+    }
 }

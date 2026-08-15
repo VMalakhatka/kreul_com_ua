@@ -4,7 +4,9 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import lombok.RequiredArgsConstructor;
 import org.example.proect.lavka.dto.folio.FolioBalanceSnapshotStatusResponse;
+import org.example.proect.lavka.dto.folio.FolioBalanceDatabaseActivityResponse;
 import org.example.proect.lavka.dto.folio.FolioCustomerDebtorsResponse;
+import org.example.proect.lavka.service.folio.FolioBalanceDatabaseActivityService;
 import org.example.proect.lavka.service.folio.FolioCustomerBalanceSnapshotService;
 import org.example.proect.lavka.service.folio.FolioCustomerDebtorsService;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +25,7 @@ public class FolioCustomerDebtorsController {
 
     private final FolioCustomerDebtorsService service;
     private final FolioCustomerBalanceSnapshotService snapshotService;
+    private final FolioBalanceDatabaseActivityService databaseActivityService;
 
     @GetMapping
     @Operation(
@@ -52,6 +55,15 @@ public class FolioCustomerDebtorsController {
     )
     public ResponseEntity<FolioBalanceSnapshotStatusResponse> snapshotStatus() {
         return ResponseEntity.ok(snapshotService.status(false));
+    }
+
+    @GetMapping("/snapshot/database-activity")
+    @Operation(
+            summary = "Проверить выполнение I_DOLG_DOC в SQL Server",
+            description = "Однократно выполняет безопасную диагностику sp_who2/DBCC INPUTBUFFER и возвращает только агрегированный статус без SQL, логинов, хостов и параметров процедуры"
+    )
+    public ResponseEntity<FolioBalanceDatabaseActivityResponse> databaseActivity() {
+        return ResponseEntity.ok(databaseActivityService.inspect());
     }
 
     @PostMapping("/snapshot/refresh")

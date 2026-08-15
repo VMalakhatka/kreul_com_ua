@@ -5,6 +5,8 @@ import org.example.proect.lavka.dao.folio.FolioCustomerBalanceDao;
 import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao;
 import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao.SnapshotClient;
 import org.example.proect.lavka.dto.folio.FolioBalanceSnapshotStatusResponse;
+import org.example.proect.lavka.dto.folio.FolioBalanceSnapshotStatusResponse.ActiveSnapshot;
+import org.example.proect.lavka.dto.folio.FolioBalanceSnapshotStatusResponse.Building;
 import org.example.proect.lavka.dto.folio.FolioCustomerBalanceResponse;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -74,14 +76,31 @@ public class FolioCustomerBalanceSnapshotService {
 
     public FolioBalanceSnapshotStatusResponse status(boolean refreshAccepted) {
         var latest = snapshotDao.findLatestGeneration();
+        ActiveSnapshot activeSnapshot = snapshotDao.findActiveSnapshot()
+                .map(active -> new ActiveSnapshot(
+                        active.generationId(),
+                        active.asOfDate(),
+                        active.completedAt(),
+                        active.totalClients()
+                ))
+                .orElse(null);
         if (latest.isEmpty()) {
             return new FolioBalanceSnapshotStatusResponse(
                     true, refreshAccepted, localRefreshRunning.get(), null,
-                    "NOT_READY", null, null, null, null, 0, null
+                    "NOT_READY", null, null, null, null, 0, null,
+                    null, activeSnapshot
             );
         }
         var generation = latest.orElseThrow();
         boolean running = localRefreshRunning.get() || "BUILDING".equals(generation.status());
+        Building building = "BUILDING".equals(generation.status())
+                ? new Building(
+                        generation.generationId(),
+                        generation.triggerSource(),
+                        generation.asOfDate(),
+                        generation.startedAt()
+                )
+                : null;
         return new FolioBalanceSnapshotStatusResponse(
                 true,
                 refreshAccepted,
@@ -93,7 +112,9 @@ public class FolioCustomerBalanceSnapshotService {
                 generation.startedAt(),
                 generation.completedAt(),
                 generation.totalClients(),
-                generation.errorMessage()
+                generation.errorMessage(),
+                building,
+                activeSnapshot
         );
     }
 

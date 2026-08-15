@@ -6,6 +6,8 @@ import org.example.proect.lavka.dao.folio.FolioCustomerBalanceDao.PartnerCandida
 import org.example.proect.lavka.dao.folio.FolioCustomerBalanceDao.ProcedureResult;
 import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao;
 import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao.SnapshotClient;
+import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao.ActiveSnapshot;
+import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao.GenerationStatus;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.core.task.TaskExecutor;
@@ -17,6 +19,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,6 +41,31 @@ class FolioCustomerBalanceSnapshotServiceTest {
             ZoneOffset.UTC
     );
     private static final TaskExecutor DIRECT_EXECUTOR = Runnable::run;
+
+    @Test
+    void statusShowsBuildingGenerationAndPreviousActiveSnapshotTogether() {
+        FolioCustomerBalanceDao balanceDao = mock(FolioCustomerBalanceDao.class);
+        FolioCustomerBalanceSnapshotDao snapshotDao = mock(FolioCustomerBalanceSnapshotDao.class);
+        LocalDateTime buildingStarted = LocalDateTime.of(2026, 8, 15, 0, 10);
+        LocalDateTime activeCompleted = LocalDateTime.of(2026, 8, 14, 21, 41, 25, 646_000_000);
+        when(snapshotDao.findLatestGeneration()).thenReturn(Optional.of(new GenerationStatus(
+                2L, "BUILDING", "SCHEDULED", LocalDate.of(2026, 8, 15),
+                buildingStarted, null, 0, null, false
+        )));
+        when(snapshotDao.findActiveSnapshot()).thenReturn(Optional.of(new ActiveSnapshot(
+                1L, "ACTIVE", LocalDate.of(2026, 8, 14),
+                LocalDateTime.of(2026, 8, 14, 20, 0), activeCompleted, 1698
+        )));
+
+        var response = service(balanceDao, snapshotDao).status(false);
+
+        assertThat(response.running()).isTrue();
+        assertThat(response.building()).isNotNull();
+        assertThat(response.building().generationId()).isEqualTo(2L);
+        assertThat(response.activeSnapshot()).isNotNull();
+        assertThat(response.activeSnapshot().generationId()).isEqualTo(1L);
+        assertThat(response.activeSnapshot().totalClients()).isEqualTo(1698);
+    }
 
     @Test
     void buildsAndAtomicallyPublishesCanonicalGeneration() {
