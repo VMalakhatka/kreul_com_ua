@@ -467,7 +467,7 @@ public class FolioCustomerDocumentDao {
                        CAST(NULL AS bit) AS RETURN_DOCUMENT,
                        p.TYPE_POR AS PAYMENT_DIRECTION_RAW,
                        p.VID_DOC AS OPERATION_KIND,
-                       CAST(NULL AS varchar(30)) AS ADDITIONAL_INFO,
+                       p.DOCUMN_POR AS ADDITIONAL_INFO,
                        (SELECT COUNT(*) FROM dbo.SCL_PMOV a WITH (NOLOCK)
                          WHERE a.UNICUM_PLT = p.UNICUM_PLT) AS LINE_COUNT,
                        (SELECT SUM(ISNULL(a.SUM_PREDM, 0)) FROM dbo.SCL_PMOV a WITH (NOLOCK)

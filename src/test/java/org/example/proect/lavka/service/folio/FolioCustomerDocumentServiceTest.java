@@ -84,7 +84,9 @@ class FolioCustomerDocumentServiceTest {
         )).thenReturn(List.of(first, summary(
                 FolioCustomerDocumentType.ACCOUNT, 76, LocalDateTime.of(2026, 8, 12, 10, 0)
         )));
-        String cursor = service.list("A", null, null, null, 1, null).nextCursor();
+        var firstPage = service.list("A", null, null, null, 1, null);
+        assertThat(firstPage.documents().get(0).additionalInfo()).isEqualTo("Оплата замовлення");
+        String cursor = firstPage.nextCursor();
 
         service.list("A", null, null, null, 10, cursor);
 
@@ -148,7 +150,9 @@ class FolioCustomerDocumentServiceTest {
                 false,
                 null,
                 null,
-                type == FolioCustomerDocumentType.PAYMENT ? null : "не найдено Ермолаева",
+                type == FolioCustomerDocumentType.PAYMENT
+                        ? "Оплата замовлення"
+                        : "не найдено Ермолаева",
                 1,
                 null,
                 type.repeatable(),

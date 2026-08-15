@@ -105,9 +105,10 @@ GET /admin/folio/customer-documents?partnerShortName=БОНД%20АНН&dateFrom=
 `additionalInfo` для `ACCOUNT` и `EXPENSE` читается напрямую из
 `SCL_NAKL.L_CP2_PLAT` — того же поля, которое detail endpoint возвращает как
 `document.additionalInfo`. Java не вычисляет его и не объединяет с
-`sourceInfo`, `comment` или другими реквизитами. Пустое значение возвращается
-как `null`. Для `PAYMENT` поле также равно `null`, поскольку у платёжного
-документа этого поля нет.
+`sourceInfo`, `comment` или другими реквизитами. Для `PAYMENT` в
+`additionalInfo` напрямую возвращается экранное поле «Примечание» из
+`SCL_PLAT.DOCUMN_POR`; detail endpoint уже возвращает его как `document.note`.
+Пустое значение любого типа документа возвращается как `null`.
 
 ## 2. Детали документа
 
