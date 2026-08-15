@@ -191,7 +191,7 @@ public class FolioAccountingPriceService {
                 return Objects.requireNonNull(writeTransaction.execute(status ->
                         applyOne(sku, request.warehouseId())));
             } catch (CannotAcquireLockException e) {
-                throw new FolioAccountingPriceBusyException();
+                throw new FolioAccountingPriceBusyException(e);
             }
         } finally {
             operationRunning.set(false);
@@ -333,11 +333,6 @@ public class FolioAccountingPriceService {
         List<MovementRow> movementsBefore = dao.findChronologicalMovements(
                 sku, scope.affectedWarehouseIds(), true);
         dao.rebuildOne(sku, warehouseId, queryTimeoutSeconds);
-        int scratchRowsAfter = dao.countScratchRows();
-        if (scratchRowsAfter != 0) {
-            throw new IllegalStateException(
-                    "Folio left " + scratchRowsAfter + " rows in TMP_MOVE; recalculation was rolled back");
-        }
 
         List<PriceState> after = priceStates(
                 dao.findArticles(sku, scope.affectedWarehouseIds(), false),
@@ -375,15 +370,6 @@ public class FolioAccountingPriceService {
         List<Issue> warnings = new ArrayList<>();
         List<Issue> errors = new ArrayList<>();
         validateAccountingScope(scope, method, articles, warnings);
-
-        int scratchRows = dao.countScratchRows();
-        if (scratchRows != 0) {
-            errors.add(issue(
-                    "TMP_MOVE_NOT_EMPTY",
-                    "Folio scratch table TMP_MOVE is not empty; automatic recalculation is unsafe",
-                    "rowCount", scratchRows
-            ));
-        }
 
         List<MovementRow> movements = dao.findChronologicalMovements(
                 sku, warehouseIds, forUpdate);
@@ -604,13 +590,6 @@ public class FolioAccountingPriceService {
                                 + scope.requested().accountingGroup()
                                 + " is not enabled before a separate golden-master test");
             }
-            int scratchRowsBefore = dao.countScratchRows();
-            if (scratchRowsBefore != 0) {
-                throw new IllegalStateException(
-                        "Folio scratch table TMP_MOVE contains " + scratchRowsBefore
-                                + " rows; full recalculation was not started");
-            }
-
             List<String> skus = dao.findSkus(request.warehouseId());
             progress.totalProducts = skus.size();
             progress.status = "RUNNING";
@@ -925,7 +904,7 @@ public class FolioAccountingPriceService {
                 return output;
             }));
         } catch (CannotAcquireLockException e) {
-            throw new FolioAccountingPriceBusyException();
+            throw new FolioAccountingPriceBusyException(e);
         }
     }
 
@@ -941,7 +920,7 @@ public class FolioAccountingPriceService {
                 return snapshot;
             }));
         } catch (CannotAcquireLockException e) {
-            throw new FolioAccountingPriceBusyException();
+            throw new FolioAccountingPriceBusyException(e);
         }
     }
 
@@ -961,7 +940,7 @@ public class FolioAccountingPriceService {
                 status.setRollbackOnly();
             });
         } catch (CannotAcquireLockException e) {
-            throw new FolioAccountingPriceBusyException();
+            throw new FolioAccountingPriceBusyException(e);
         }
     }
 

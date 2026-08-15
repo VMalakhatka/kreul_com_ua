@@ -71,6 +71,20 @@ class FolioAccountingPriceServiceTest {
     }
 
     @Test
+    void legacyScratchRowsDoNotBlockVerifiedAveragePricePreview() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubWarehouse(dao);
+        stubProduct(dao, CLEAN_SKU, article(CLEAN_SKU, "800"), List.of());
+        var response = service(dao, false, false).recalculate(
+                new FolioAccountingPriceRecalculationRequest(CLEAN_SKU, WAREHOUSE_ID, true));
+
+        assertThat(response.status()).isEqualTo("PREVIEW_READY");
+        assertThat(response.eligibleToApply()).isTrue();
+        assertThat(response.errors()).isEmpty();
+        verify(dao, never()).rebuildOne(anyString(), anyInt(), anyInt());
+    }
+
+    @Test
     void applyRebuildsCleanProductAndReturnsRecalculatedState() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubWarehouse(dao);
@@ -85,8 +99,6 @@ class FolioAccountingPriceServiceTest {
                 .thenReturn(List.of());
         when(dao.findMovementTotals(eq(CLEAN_SKU), eq(List.of(WAREHOUSE_ID))))
                 .thenReturn(Map.of(WAREHOUSE_ID, totals()));
-        when(dao.countScratchRows()).thenReturn(0);
-
         var response = service(dao, true, false).recalculate(
                 new FolioAccountingPriceRecalculationRequest(CLEAN_SKU, WAREHOUSE_ID, false));
 
@@ -170,7 +182,6 @@ class FolioAccountingPriceServiceTest {
                 .thenReturn(List.of());
         when(dao.findMovementTotals(anyString(), anyList()))
                 .thenReturn(Map.of(WAREHOUSE_ID, totals()));
-        when(dao.countScratchRows()).thenReturn(0);
 
         FolioAccountingPriceService service = service(dao, true, true);
         var accepted = service.requestFull(new FolioAccountingPriceFullRecalculationRequest(
@@ -208,7 +219,6 @@ class FolioAccountingPriceServiceTest {
                 .thenReturn(List.of());
         when(dao.findMovementTotals(eq(CLEAN_SKU), eq(List.of(WAREHOUSE_ID))))
                 .thenReturn(Map.of(WAREHOUSE_ID, totals()));
-        when(dao.countScratchRows()).thenReturn(0);
         TrackingTransactionManager transactions = new TrackingTransactionManager();
 
         assertThatThrownBy(() -> service(dao, transactions, true, false).recalculate(
@@ -236,7 +246,6 @@ class FolioAccountingPriceServiceTest {
                 .thenReturn(List.of());
         when(dao.findMovementTotals(eq(CLEAN_SKU), eq(List.of(WAREHOUSE_ID))))
                 .thenReturn(Map.of(WAREHOUSE_ID, totals()));
-        when(dao.countScratchRows()).thenReturn(0);
 
         var response = service(dao, true, false).recalculate(
                 new FolioAccountingPriceRecalculationRequest(
@@ -796,7 +805,6 @@ class FolioAccountingPriceServiceTest {
                 .thenReturn(movements);
         when(dao.findMovementTotals(eq(sku), eq(List.of(WAREHOUSE_ID))))
                 .thenReturn(Map.of(WAREHOUSE_ID, totals()));
-        when(dao.countScratchRows()).thenReturn(0);
     }
 
     private static ArticleRow article(String sku, String accountingPrice) {

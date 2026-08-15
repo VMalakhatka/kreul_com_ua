@@ -238,15 +238,21 @@ public class FolioAccountingPriceDao {
         ), args.toArray());
     }
 
-    public int countScratchRows() {
-        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM dbo.TMP_MOVE", Integer.class);
-        return count == null ? 0 : count;
-    }
-
     public void acquireRecalculationMutex(int timeoutMs) {
         Integer result = jdbc.execute((Connection connection) -> {
+            if (connection.getAutoCommit()) {
+                throw new CannotAcquireLockException(
+                        "Folio accounting-price mutex requires a managed JDBC transaction");
+            }
             try (PreparedStatement statement = connection.prepareStatement("""
                     DECLARE @rc int
+                    -- With jTDS/SQL Server 2000, setAutoCommit(false) does not
+                    -- necessarily create a server-side transaction before the
+                    -- first statement. Transaction-owned application locks
+                    -- require @@TRANCOUNT > 0, so start the Spring-managed
+                    -- transaction explicitly when it has not materialised yet.
+                    IF @@TRANCOUNT = 0
+                        BEGIN TRANSACTION
                     EXEC @rc = sp_getapplock
                          @Resource = ?,
                          @LockMode = 'Exclusive',
