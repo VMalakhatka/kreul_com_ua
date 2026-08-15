@@ -1,0 +1,4 @@
+interface:
+  display_name: "Работа с ФОЛИО MS SQL"
+  short_description: "ФОЛИО: документы, долги и учётные цены"
+  default_prompt: "Используй $work-with-folio-mssql для безопасного анализа, моделирования или проверки бизнес-процесса ФОЛИО."
