@@ -6,7 +6,9 @@ import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.PreparedStatementSetter;
 import org.springframework.jdbc.core.RowCallbackHandler;
+import org.springframework.jdbc.core.RowMapper;
 
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -108,5 +110,47 @@ class FolioAccountingPriceDaoTest {
         assertThat(sql.getValue())
                 .contains("CASE COD_ARTIC")
                 .contains("COD_ARTIC IN (?, ?)");
+    }
+
+    @Test
+    void zeroPricePreflightFindsOnlyEmptyUnsafeProductCards() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ResultSet resultSet = mock(ResultSet.class);
+        when(resultSet.getString("COD_ARTIC")).thenReturn("ЯЯАР-657");
+        when(resultSet.getInt("ID_SCLAD")).thenReturn(5);
+        when(resultSet.getBigDecimal(anyString())).thenAnswer(invocation -> switch (
+                invocation.<String>getArgument(0)) {
+            case "CENA_ARTIC" -> new BigDecimal("57");
+            case "CENA_VALT" -> new BigDecimal("51.81");
+            default -> BigDecimal.ZERO;
+        });
+        when(resultSet.getBoolean("PRIZN_VALT")).thenReturn(false);
+        when(resultSet.getBoolean("FIX_NACEN")).thenReturn(false);
+        doAnswer(invocation -> {
+            RowMapper<?> mapper = invocation.getArgument(2);
+            return java.util.List.of(mapper.mapRow(resultSet, 0));
+        }).when(jdbc).query(
+                anyString(), any(PreparedStatementSetter.class), any(RowMapper.class));
+
+        var problems = new FolioAccountingPriceDao(jdbc)
+                .findNativeZeroPriceProblems(5, 900);
+
+        assertThat(problems)
+                .singleElement()
+                .satisfies(problem -> {
+                    assertThat(problem.sku()).isEqualTo("ЯЯАР-657");
+                    assertThat(problem.accountingPrice()).isZero();
+                    assertThat(problem.salePrice()).isEqualByComparingTo("57");
+                    assertThat(problem.currencyBased()).isFalse();
+                });
+        var sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc).query(
+                sql.capture(), any(PreparedStatementSetter.class), any(RowMapper.class));
+        assertThat(sql.getValue())
+                .contains("ISNULL(a.NACH_KOLCH, 0) = 0")
+                .contains("ISNULL(a.UCHET_CENA, 0) = 0")
+                .contains("ISNULL(a.CENA_ARTIC, 0) <> 0")
+                .contains("NOT EXISTS")
+                .contains("m.STND_UCHET = 1");
     }
 }

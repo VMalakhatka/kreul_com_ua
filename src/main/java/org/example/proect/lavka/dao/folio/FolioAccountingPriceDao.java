@@ -471,6 +471,81 @@ public class FolioAccountingPriceDao {
                 .toList();
     }
 
+    /**
+     * Finds empty legacy product cards which are unsafe for the final markup
+     * update performed by I_UCHET_TOVAR. The procedure recalculates NDS_ARTIC
+     * from sale price / accounting price after replaying movements. For an
+     * empty card the replay leaves the applicable accounting price at zero.
+     * Paint_Ua has demonstrated that such a native chunk can fail with SQL
+     * Server error 8134, so these cards are conservatively quarantined before
+     * the exact procedure is called.
+     */
+    public List<NativeZeroPriceProblem> findNativeZeroPriceProblems(
+            int warehouseId,
+            int queryTimeoutSeconds) {
+        return jdbc.query("""
+                SELECT a.COD_ARTIC,
+                       a.ID_SCLAD,
+                       a.NACH_KOLCH,
+                       a.KON_KOLCH,
+                       a.REZ_KOLCH,
+                       a.KOL_SUM,
+                       a.UCHET_CENA,
+                       a.UCHET_VALT,
+                       a.CENA_ARTIC,
+                       a.CENA_VALT,
+                       a.PRIZN_VALT,
+                       a.FIX_NACEN
+                  FROM dbo.SCL_ARTC a
+                 WHERE a.ID_SCLAD = ?
+                   AND ISNULL(a.NACH_KOLCH, 0) = 0
+                   AND ISNULL(a.FIX_NACEN, 0) = 0
+                   AND (
+                       (ISNULL(a.PRIZN_VALT, 0) = 0
+                        AND ISNULL(a.UCHET_CENA, 0) = 0
+                        AND ISNULL(a.CENA_ARTIC, 0) <> 0)
+                       OR
+                       (a.PRIZN_VALT = 1
+                        AND ISNULL(a.UCHET_VALT, 0) = 0
+                        AND ISNULL(a.CENA_VALT, 0) <> 0)
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM dbo.SCL_MOVE m
+                        WHERE m.ID_SCLAD = a.ID_SCLAD
+                          AND m.NAME_PREDM = a.COD_ARTIC
+                          AND m.STND_UCHET = 1
+                          AND m.TYPDOCM_PR <> ?
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM dbo.TIP_TOVR t
+                        WHERE t.SIGNIFIC = a.TIP_TOVR
+                          AND t.CHECK_SAVE = 0
+                          AND t.SHOW_OSTATOK = 0
+                   )
+                 ORDER BY a.COD_ARTIC
+                """, statement -> {
+            statement.setQueryTimeout(Math.max(600, queryTimeoutSeconds));
+            statement.setInt(1, warehouseId);
+            statement.setString(2, TYPE_ACCOUNT);
+        }, (rs, rowNum) -> new NativeZeroPriceProblem(
+                trim(rs.getString("COD_ARTIC")),
+                rs.getInt("ID_SCLAD"),
+                decimal(rs, "NACH_KOLCH"),
+                decimal(rs, "KON_KOLCH"),
+                decimal(rs, "REZ_KOLCH"),
+                decimal(rs, "KON_KOLCH").subtract(decimal(rs, "REZ_KOLCH")),
+                decimal(rs, "KOL_SUM"),
+                decimal(rs, "UCHET_CENA"),
+                decimal(rs, "UCHET_VALT"),
+                decimal(rs, "CENA_ARTIC"),
+                decimal(rs, "CENA_VALT"),
+                rs.getBoolean("PRIZN_VALT"),
+                rs.getBoolean("FIX_NACEN")
+        ));
+    }
+
     public String findUnusedProductTypeMarker() {
         java.util.Set<String> used = new java.util.HashSet<>();
         for (String value : jdbc.query("""
@@ -971,6 +1046,23 @@ public class FolioAccountingPriceDao {
                     movementPosition, value, initialQuantity, physicalQuantity,
                     availableQuantity, accountingQuantity, accountingPrice);
         }
+    }
+
+    public record NativeZeroPriceProblem(
+            String sku,
+            int warehouseId,
+            BigDecimal initialQuantity,
+            BigDecimal physicalQuantity,
+            BigDecimal reservedQuantity,
+            BigDecimal availableQuantity,
+            BigDecimal accountingQuantity,
+            BigDecimal accountingPrice,
+            BigDecimal accountingCurrencyPrice,
+            BigDecimal salePrice,
+            BigDecimal saleCurrencyPrice,
+            boolean currencyBased,
+            boolean fixedMarkup
+    ) {
     }
 
     public record NativeProtectedSnapshot(

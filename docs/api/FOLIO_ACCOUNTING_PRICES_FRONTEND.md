@@ -123,6 +123,11 @@ Content-Type: application/json
 `art/new_art/otr_date/n_cur/n_tot`, а постоянные данные ФОЛИО после него не
 изменяются.
 
+Перед запуском фронт должен показать обязательное предупреждение: во время
+native preview менеджеры не должны создавать, сохранять или исправлять документы
+в настольной ФОЛИО. Preview не оставляет постоянных изменений, но временно
+выполняет DML и держит блокировки до rollback каждой порции.
+
 При preview `confirmApply` можно не передавать. Параметра
 `continueOnNegativeStock` в native request нет.
 
@@ -386,9 +391,16 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 |---|---:|---:|---|---:|---:|---:|---:|
 | CON-100516109R | 12 | 20042799 | 22.04.2017 | 10 | расход 31 | -21 | 21 |
 
-Таким же образом выводите `ZERO_ACCOUNTING_QUANTITY_DENOMINATOR` и
-`AMBIGUOUS_MOVEMENT_ORDER`. Если `details.skipped=true`, это не падение всего
-job: товар пропущен, остальные SKU продолжают перерасчитываться.
+Таким же образом выводите `ZERO_ACCOUNTING_QUANTITY_DENOMINATOR`,
+`AMBIGUOUS_MOVEMENT_ORDER` и `ZERO_ACCOUNTING_PRICE_WITH_SALE_PRICE`. Если
+`details.skipped=true`, это не падение всего job: товар пропущен, остальные SKU
+продолжают перерасчитываться.
+
+Для `ZERO_ACCOUNTING_PRICE_WITH_SALE_PRICE` отдельного документа или движения
+нет: это пустая карточка товара. Покажите SKU, склад, `accountingPrice`,
+`salePrice`, `priceBasis` и пояснение: «Товар пропущен: у пустой карточки
+продажная цена задана, а учётная цена равна нулю». Не показывайте
+`checkpointArt` как виновный SKU: при SQL exception это только начало порции.
 
 В деталях показывайте `documentId`, `recno`, `movementPosition`,
 `currentState`, `procedureArt`, `folioProblemDate` и курсоры.
