@@ -9,7 +9,6 @@ import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeFullChun
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeInvariantDigest;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeProtectedSnapshot;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeSkuProtectedState;
-import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeZeroPriceProblem;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.WarehouseRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.WarehouseScope;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceFullRecalculationRequest;
@@ -353,7 +352,6 @@ class FolioAccountingPriceServiceTest {
 
         assertThat(service.nativeFullStatus(false).status()).isEqualTo("PREVIEW_READY");
         verify(dao).findNativeChronologyProblems(WAREHOUSE_ID, 900);
-        verify(dao).findNativeZeroPriceProblems(WAREHOUSE_ID, 900);
         verify(dao).callNativeFullChunk(
                 eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
                 eq(null), eq(0), eq(0), eq(900));
@@ -401,49 +399,6 @@ class FolioAccountingPriceServiceTest {
         verify(dao).restoreNativeSkus(
                 WAREHOUSE_ID, Map.of(NEGATIVE_SKU, "1"));
         verify(dao).deleteNativeQuarantineType("9");
-    }
-
-    @Test
-    void nativePreviewQuarantinesEmptyProductWithZeroAccountingPrice() {
-        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
-        stubNativeWarehouse(dao);
-        when(dao.findNativeZeroPriceProblems(WAREHOUSE_ID, 120))
-                .thenReturn(List.of(nativeZeroPriceProblem("ЯЯАР-657")));
-        when(dao.findUnusedProductTypeMarker()).thenReturn("9");
-        when(dao.quarantineNativeSkus(
-                WAREHOUSE_ID, Set.of("ЯЯАР-657"), "9"))
-                .thenReturn(Map.of("ЯЯАР-657", "0"));
-        when(dao.callNativeFullChunk(
-                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
-                eq(null), eq(0), eq(0), eq(120)))
-                .thenReturn(nativeChunk(CLEAN_SKU, 100, 100, null, null));
-
-        FolioAccountingPriceService service = nativeService(
-                dao, new TrackingTransactionManager(), false);
-        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
-                WAREHOUSE_ID, true, false));
-        var completed = service.nativeFullStatus(false);
-
-        assertThat(completed.status()).isEqualTo("PREVIEW_READY_WITH_WARNINGS");
-        assertThat(completed.warningCount()).isEqualTo(1);
-        assertThat(completed.warnings())
-                .singleElement()
-                .satisfies(issue -> {
-                    assertThat(issue.code())
-                            .isEqualTo("ZERO_ACCOUNTING_PRICE_WITH_SALE_PRICE");
-                    assertThat(issue.details())
-                            .containsEntry("sku", "ЯЯАР-657")
-                            .containsEntry("movementCount", 0)
-                            .containsEntry("accountingPrice", BigDecimal.ZERO)
-                            .containsEntry("salePrice", new BigDecimal("57"))
-                            .containsEntry("priceBasis", "RUB")
-                            .containsEntry("skipped", true)
-                            .containsEntry("source", "JAVA_ZERO_PRICE_PREFLIGHT");
-                });
-        verify(dao).quarantineNativeSkus(
-                WAREHOUSE_ID, Set.of("ЯЯАР-657"), "9");
-        verify(dao).restoreNativeSkus(
-                WAREHOUSE_ID, Map.of("ЯЯАР-657", "0"));
     }
 
     @Test
@@ -969,15 +924,6 @@ class FolioAccountingPriceServiceTest {
                 new BigDecimal(operationQuantity), new BigDecimal(quantityBefore),
                 new BigDecimal(quantityAfter), 7, 12, BigDecimal.TEN, BigDecimal.TEN,
                 BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("800"));
-    }
-
-    private static NativeZeroPriceProblem nativeZeroPriceProblem(String sku) {
-        return new NativeZeroPriceProblem(
-                sku, WAREHOUSE_ID,
-                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                new BigDecimal("57"), new BigDecimal("51.81"),
-                false, false);
     }
 
     private static NativeProtectedSnapshot protectedSnapshot(String articleHash) {

@@ -391,16 +391,16 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 |---|---:|---:|---|---:|---:|---:|---:|
 | CON-100516109R | 12 | 20042799 | 22.04.2017 | 10 | расход 31 | -21 | 21 |
 
-Таким же образом выводите `ZERO_ACCOUNTING_QUANTITY_DENOMINATOR`,
-`AMBIGUOUS_MOVEMENT_ORDER` и `ZERO_ACCOUNTING_PRICE_WITH_SALE_PRICE`. Если
+Таким же образом выводите `ZERO_ACCOUNTING_QUANTITY_DENOMINATOR` и
+`AMBIGUOUS_MOVEMENT_ORDER`. Если
 `details.skipped=true`, это не падение всего job: товар пропущен, остальные SKU
 продолжают перерасчитываться.
 
-Для `ZERO_ACCOUNTING_PRICE_WITH_SALE_PRICE` отдельного документа или движения
-нет: это пустая карточка товара. Покажите SKU, склад, `accountingPrice`,
-`salePrice`, `priceBasis` и пояснение: «Товар пропущен: у пустой карточки
-продажная цена задана, а учётная цена равна нулю». Не показывайте
-`checkpointArt` как виновный SKU: при SQL exception это только начало порции.
+Не показывайте предупреждение только потому, что у новой карточки ещё нет
+движений и учётная цена равна нулю, а продажная уже задана. Это нормальное
+состояние товара до первого прихода и API больше не помечает его как ошибку.
+Не показывайте `checkpointArt` как виновный SKU: при SQL exception это только
+начало порции.
 
 В деталях показывайте `documentId`, `recno`, `movementPosition`,
 `currentState`, `procedureArt`, `folioProblemDate` и курсоры.

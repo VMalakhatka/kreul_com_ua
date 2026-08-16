@@ -9,7 +9,6 @@ import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeFullChun
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeChronologyProblem;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeProtectedSnapshot;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeSkuProtectedState;
-import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeZeroPriceProblem;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.WarehouseRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.WarehouseScope;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceFullRecalculationRequest;
@@ -712,9 +711,6 @@ public class FolioAccountingPriceService {
             List<NativeChronologyProblem> knownProblems =
                     dao.findNativeChronologyProblems(
                             progress.request.warehouseId(), nativeFullTimeoutSeconds);
-            List<NativeZeroPriceProblem> zeroPriceProblems =
-                    dao.findNativeZeroPriceProblems(
-                            progress.request.warehouseId(), nativeFullTimeoutSeconds);
             Set<String> skippedSkus = new LinkedHashSet<>();
             for (NativeChronologyProblem problem : knownProblems) {
                 skippedSkus.add(problem.sku());
@@ -729,18 +725,6 @@ public class FolioAccountingPriceService {
                         problem.movementCount(), problem.physicalQuantity(),
                         problem.availableQuantity(), problem.accountingQuantity(),
                         problem.accountingPrice());
-            }
-            for (NativeZeroPriceProblem problem : zeroPriceProblems) {
-                skippedSkus.add(problem.sku());
-                addNativeIssue(progress, nativeZeroPriceIssue(problem));
-                log.warn("[folio.accounting-price] native_sku_skipped job={} warehouse={} sku={} code=ZERO_ACCOUNTING_PRICE_WITH_SALE_PRICE initialQuantity={} currentPhysical={} currentReserved={} currentAvailable={} currentAccountingQuantity={} accountingPrice={} accountingCurrencyPrice={} salePrice={} saleCurrencyPrice={} currencyBased={} movementCount=0",
-                        progress.jobId, problem.warehouseId(), problem.sku(),
-                        problem.initialQuantity(), problem.physicalQuantity(),
-                        problem.reservedQuantity(), problem.availableQuantity(),
-                        problem.accountingQuantity(),
-                        problem.accountingPrice(), problem.accountingCurrencyPrice(),
-                        problem.salePrice(), problem.saleCurrencyPrice(),
-                        problem.currencyBased());
             }
             String quarantineMarker = skippedSkus.isEmpty()
                     ? null
@@ -1196,37 +1180,6 @@ public class FolioAccountingPriceService {
         return new Issue(
                 problem.code(),
                 "The Folio average-price denominator becomes zero; the product will be skipped and other products will continue",
-                Map.copyOf(details));
-    }
-
-    private static Issue nativeZeroPriceIssue(NativeZeroPriceProblem problem) {
-        Map<String, Object> currentState = new LinkedHashMap<>();
-        currentState.put("physicalQuantity", problem.physicalQuantity());
-        currentState.put("reservedQuantity", problem.reservedQuantity());
-        currentState.put("availableQuantity", problem.availableQuantity());
-        currentState.put("accountingQuantity", problem.accountingQuantity());
-        currentState.put("accountingPrice", problem.accountingPrice());
-        currentState.put("accountingCurrencyPrice",
-                problem.accountingCurrencyPrice());
-
-        Map<String, Object> details = new LinkedHashMap<>();
-        details.put("sku", problem.sku());
-        details.put("warehouseId", problem.warehouseId());
-        details.put("initialQuantity", problem.initialQuantity());
-        details.put("movementCount", 0);
-        details.put("accountingPrice", problem.accountingPrice());
-        details.put("accountingCurrencyPrice",
-                problem.accountingCurrencyPrice());
-        details.put("salePrice", problem.salePrice());
-        details.put("saleCurrencyPrice", problem.saleCurrencyPrice());
-        details.put("priceBasis", problem.currencyBased() ? "CURRENCY" : "RUB");
-        details.put("fixedMarkup", problem.fixedMarkup());
-        details.put("currentState", Map.copyOf(currentState));
-        details.put("skipped", true);
-        details.put("source", "JAVA_ZERO_PRICE_PREFLIGHT");
-        return new Issue(
-                "ZERO_ACCOUNTING_PRICE_WITH_SALE_PRICE",
-                "The empty Folio product has a sale price but zero accounting price; the product will be skipped to prevent native divide by zero",
                 Map.copyOf(details));
     }
 
