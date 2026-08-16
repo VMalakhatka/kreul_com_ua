@@ -136,13 +136,25 @@ Content-Type: application/json
 }
 ```
 
-`confirmApply=true` обязателен. После POST Java сама выполняет два прохода:
+`confirmApply=true` обязателен. После POST Java сначала строит полную диагностику
+хронологии, а затем выполняет два прохода:
 
-1. полный точный preflight через `I_UCHET_TOVAR`, rollback каждой порции;
-2. если preflight полностью чистый — второй проход с commit безопасных порций.
+1. находит SKU с отрицательным хронологическим остатком или нулевым
+   знаменателем средней цены;
+2. помечает их как `skipped=true` и сохраняет полную диагностику;
+3. выполняет точный preflight через `I_UCHET_TOVAR`, rollback каждой порции,
+   временно исключая известные проблемные SKU;
+4. если остальная область чистая — повторяет проход с commit безопасных SKU.
 
-Если preflight находит хотя бы одну отрицательную историю, результат —
-`BLOCKED_NEGATIVE_STOCK`, `committedChunks=0`, apply не начинается.
+Наличие таких warnings не блокирует apply. Успешный preview с пропусками имеет
+`PREVIEW_READY_WITH_WARNINGS`, а успешный apply —
+`COMPLETED_WITH_WARNINGS`. Проблемные товары остаются без перерасчёта, остальные
+товары склада пересчитываются. Менеджер может исправить документы из warnings и
+запустить расчёт ещё раз.
+
+`BLOCKED_NEGATIVE_STOCK` означает, что сама процедура нашла неожиданную
+проблему, которую предварительная диагностика не смогла безопасно исключить.
+Тогда apply не начинается.
 
 Если данные изменились между проходами и новая проблема появилась во время
 apply, текущая порция откатывается и job останавливается. До первого commit это
@@ -282,7 +294,7 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 | Поле | Как отображать |
 |---|---|
 | `status` | итоговое состояние job |
-| `phase` | текущая стадия: очередь, preflight, apply или остановка |
+| `phase` | текущая стадия: `QUEUED`, `DIAGNOSTIC_SCAN`, preflight, apply или остановка |
 | `procedureCalls` | число вызовов `I_UCHET_TOVAR` в обоих проходах |
 | `preflightChunks` | число гарантированно откатившихся порций проверки |
 | `committedChunks` | число подтверждённых приложением commit-порций apply |
@@ -308,8 +320,10 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 | `QUEUED` | запрос принят |
 | `RUNNING` | показать `phase`, прогресс и текущий артикул |
 | `PREVIEW_READY` | точный preview завершён, данные откатились, проблем нет |
-| `BLOCKED_NEGATIVE_STOCK` | apply не начался; показать все warnings |
+| `PREVIEW_READY_WITH_WARNINGS` | preview завершён; показать пропущенные SKU и разрешить подтверждённый apply |
+| `BLOCKED_NEGATIVE_STOCK` | неожиданная остановка процедуры; apply не начался |
 | `COMPLETED` | apply завершён |
+| `COMPLETED_WITH_WARNINGS` | безопасные SKU пересчитаны; показать пропущенные SKU |
 | `STOPPED_ON_NEGATIVE_STOCK` | новая проблема до первого commit, текущая порция откатилась |
 | `FAILED` | ошибка до первого commit |
 | `FAILED_PARTIAL` | предыдущие порции уже могли быть зафиксированы; только ручная сверка |
@@ -329,12 +343,9 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 ```json
 {
   "code": "NEGATIVE_CHRONOLOGICAL_STOCK",
-  "message": "The chronological stock becomes negative; Folio cannot safely recalculate this product",
+  "message": "The chronological stock becomes negative; the product will be skipped and other products will continue",
   "details": {
-    "procedureArt": "CON-100516109R",
-    "folioProblemDate": "22.04.2017",
-    "checkpointArt": "CON-100500000R",
-    "nextArt": "CON-100516110R",
+    "sku": "CON-100516109R",
     "warehouseId": 12,
     "initialQuantity": 10,
     "quantityBefore": 10,
@@ -350,6 +361,8 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
     },
     "quantityAfter": -21,
     "shortageQuantity": 21,
+    "skipped": true,
+    "source": "JAVA_CHRONOLOGY_PREFLIGHT",
     "movementPosition": 27,
     "movementCount": 184,
     "currentState": {
@@ -368,11 +381,15 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 |---|---:|---:|---|---:|---:|---:|---:|
 | CON-100516109R | 12 | 20042799 | 22.04.2017 | 10 | расход 31 | -21 | 21 |
 
+Таким же образом выводите `ZERO_ACCOUNTING_QUANTITY_DENOMINATOR` и
+`AMBIGUOUS_MOVEMENT_ORDER`. Если `details.skipped=true`, это не падение всего
+job: товар пропущен, остальные SKU продолжают перерасчитываться.
+
 В деталях показывайте `documentId`, `recno`, `movementPosition`,
 `currentState`, `procedureArt`, `folioProblemDate` и курсоры.
 
-Если точное сопоставление с движением невозможно, приходит
-`FOLIO_NATIVE_RECALCULATION_PROBLEM`. Он всё равно блокирует apply и содержит
+Если сама процедура находит проблему, которой не было в диагностическом скане,
+приходит `FOLIO_NATIVE_RECALCULATION_PROBLEM`. Она блокирует apply и содержит
 как минимум склад, `procedureArt`, дату ФОЛИО и курсоры.
 
 ## Логи
@@ -383,8 +400,8 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 ${LOG_DIR}/folio-accounting-price.log
 ```
 
-Для хронологии используется событие `accounting_price_negative_stock`, для
-контекста native-порции — `native_negative_stock`. Файл ротируется 30 дней,
+Для каждого пропущенного товара используется событие `native_sku_skipped`, для
+неожиданной остановки native-порции — `native_negative_stock`. Файл ротируется 30 дней,
 частями до 20 MB и суммарно до 1 GB.
 
 Лог **не является транзакционным checkpoint**. Он пишется отдельно от MSSQL:
@@ -440,8 +457,10 @@ LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_MAX_CHUNKS=10000
 2. Выполнить rollback-preview на нужной базе; для `Paint_Ua` запускать его вне
    активной ручной работы ФОЛИО.
 3. Запустить rollback-preview и разобрать все warnings.
-4. Исправить отрицательную историю и повторить preview.
+4. При `PREVIEW_READY_WITH_WARNINGS` показать оператору список пропускаемых
+   товаров, но не блокировать кнопку apply.
 5. Подтвердить резервную копию и окно без ручного перерасчёта ФОЛИО.
-6. Только после этого отдельно включить native apply.
+6. После `PREVIEW_READY` или `PREVIEW_READY_WITH_WARNINGS` отдельно включить и
+   запустить native apply.
 7. После `FAILED_PARTIAL` или `OUTCOME_UNKNOWN` ничего не повторять
    автоматически; выполнить ручную сверку.

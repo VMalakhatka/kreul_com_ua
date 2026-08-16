@@ -4,6 +4,7 @@ import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.ArticleRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.MovementRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.MovementTotals;
+import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeChronologyProblem;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeFullChunkOutput;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeInvariantDigest;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeProtectedSnapshot;
@@ -40,6 +41,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -327,6 +329,113 @@ class FolioAccountingPriceServiceTest {
         assertThat(completed.progressPercent()).isEqualTo(100);
         assertThat(transactions.rollbacks).isEqualTo(1);
         assertThat(transactions.commits).isZero();
+    }
+
+    @Test
+    void nativePreviewQuarantinesKnownProblemAndCompletesWithWarnings() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.findNativeChronologyProblems(WAREHOUSE_ID, 120))
+                .thenReturn(List.of(nativeProblem(
+                        "ZERO_ACCOUNTING_QUANTITY_DENOMINATOR", NEGATIVE_SKU,
+                        FolioAccountingPriceDao.TYPE_RECEIPT, "-10", "10", "0")));
+        when(dao.findUnusedProductTypeMarker()).thenReturn("9");
+        when(dao.quarantineNativeSkus(
+                WAREHOUSE_ID, Set.of(NEGATIVE_SKU), "9"))
+                .thenReturn(Map.of(NEGATIVE_SKU, "1"));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 100, 100, null, null));
+
+        FolioAccountingPriceService service = nativeService(
+                dao, new TrackingTransactionManager(), false);
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("PREVIEW_READY_WITH_WARNINGS");
+        assertThat(completed.committedChunks()).isZero();
+        assertThat(completed.warnings())
+                .singleElement()
+                .satisfies(issue -> {
+                    assertThat(issue.code())
+                            .isEqualTo("ZERO_ACCOUNTING_QUANTITY_DENOMINATOR");
+                    assertThat(issue.details())
+                            .containsEntry("sku", NEGATIVE_SKU)
+                            .containsEntry("skipped", true)
+                            .containsEntry("denominator", BigDecimal.ZERO);
+                });
+        verify(dao).quarantineNativeSkus(
+                WAREHOUSE_ID, Set.of(NEGATIVE_SKU), "9");
+        verify(dao).createNativeQuarantineType("9");
+        verify(dao).restoreNativeSkus(
+                WAREHOUSE_ID, Map.of(NEGATIVE_SKU, "1"));
+        verify(dao).deleteNativeQuarantineType("9");
+    }
+
+    @Test
+    void nativeApplySkipsKnownNegativeSkuAndCommitsOtherProducts() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.findNativeChronologyProblems(WAREHOUSE_ID, 120))
+                .thenReturn(List.of(nativeProblem(
+                        "NEGATIVE_CHRONOLOGICAL_STOCK", NEGATIVE_SKU,
+                        FolioAccountingPriceDao.TYPE_EXPENSE, "11", "10", "-1")));
+        when(dao.findUnusedProductTypeMarker()).thenReturn("9");
+        when(dao.quarantineNativeSkus(
+                WAREHOUSE_ID, Set.of(NEGATIVE_SKU), "9"))
+                .thenReturn(Map.of(NEGATIVE_SKU, "1"));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 100, 100, null, null));
+
+        FolioAccountingPriceService service = nativeService(
+                dao, new TrackingTransactionManager(), true);
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("COMPLETED_WITH_WARNINGS");
+        assertThat(completed.committedChunks()).isEqualTo(1);
+        assertThat(completed.warningCount()).isEqualTo(1);
+        verify(dao, times(2)).quarantineNativeSkus(
+                WAREHOUSE_ID, Set.of(NEGATIVE_SKU), "9");
+        verify(dao, times(2)).createNativeQuarantineType("9");
+        verify(dao, times(2)).restoreNativeSkus(
+                WAREHOUSE_ID, Map.of(NEGATIVE_SKU, "1"));
+        verify(dao, times(2)).deleteNativeQuarantineType("9");
+    }
+
+    @Test
+    void nativeProcedureFailureRestoresTemporaryQuarantineBeforeRollback() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.findNativeChronologyProblems(WAREHOUSE_ID, 120))
+                .thenReturn(List.of(nativeProblem(
+                        "NEGATIVE_CHRONOLOGICAL_STOCK", NEGATIVE_SKU,
+                        FolioAccountingPriceDao.TYPE_EXPENSE, "11", "10", "-1")));
+        when(dao.findUnusedProductTypeMarker()).thenReturn("9");
+        when(dao.quarantineNativeSkus(
+                WAREHOUSE_ID, Set.of(NEGATIVE_SKU), "9"))
+                .thenReturn(Map.of(NEGATIVE_SKU, "1"));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenThrow(new IllegalStateException("legacy procedure failed"));
+
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(
+                dao, transactions, false);
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+
+        assertThat(service.nativeFullStatus(false).status()).isEqualTo("FAILED");
+        assertThat(transactions.rollbacks).isEqualTo(1);
+        verify(dao).restoreNativeSkus(
+                WAREHOUSE_ID, Map.of(NEGATIVE_SKU, "1"));
+        verify(dao).deleteNativeQuarantineType("9");
     }
 
     @Test
@@ -773,6 +882,21 @@ class FolioAccountingPriceServiceTest {
                                                      String problemDate) {
         return new NativeFullChunkOutput(
                 0, art, current, total, next, problemDate, 1, 1, 0);
+    }
+
+    private static NativeChronologyProblem nativeProblem(String code,
+                                                         String sku,
+                                                         String documentType,
+                                                         String operationQuantity,
+                                                         String quantityBefore,
+                                                         String quantityAfter) {
+        return new NativeChronologyProblem(
+                code, sku, WAREHOUSE_ID, 1001L,
+                new BigDecimal("700001"), new BigDecimal("47"),
+                LocalDateTime.of(2026, 8, 15, 9, 0), documentType, false,
+                new BigDecimal(operationQuantity), new BigDecimal(quantityBefore),
+                new BigDecimal(quantityAfter), 7, 12, BigDecimal.TEN, BigDecimal.TEN,
+                BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("800"));
     }
 
     private static NativeProtectedSnapshot protectedSnapshot(String articleHash) {

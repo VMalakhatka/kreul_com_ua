@@ -62,7 +62,7 @@ public class FolioAccountingPriceController {
     @PostMapping("/recalculate/native-full")
     @Operation(
             summary = "Запустить штатный полный перерасчёт I_UCHET_TOVAR",
-            description = "previewOnly=true выполняет точную процедуру ФОЛИО порциями с rollback. Apply сначала делает такой же полный preflight и только затем повторяет чистые порции с commit. Если preflight находит отрицательный остаток, apply не начинается; новая проблема во втором проходе откатывает текущую порцию и останавливает job."
+            description = "Java сначала диагностирует проблемные SKU, сохраняет подробные warnings и безопасно пропускает их. previewOnly=true выполняет точную процедуру ФОЛИО для остальных товаров порциями с rollback. Apply повторяет проверку, затем фиксирует безопасные порции. Неожиданная проблема, отсутствовавшая в диагностике, откатывает текущую порцию и останавливает job."
     )
     public ResponseEntity<FolioAccountingPriceNativeFullStatusResponse> recalculateNativeFull(
             @Valid @RequestBody FolioAccountingPriceNativeFullRequest request) {

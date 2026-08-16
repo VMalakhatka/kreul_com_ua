@@ -6,6 +6,7 @@ import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.ArticleRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.MovementRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.MovementTotals;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeFullChunkOutput;
+import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeChronologyProblem;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeProtectedSnapshot;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeSkuProtectedState;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.WarehouseRow;
@@ -669,11 +670,42 @@ public class FolioAccountingPriceService {
             validateNativeScope(scope, method);
             progress.accountingMethod = method;
 
+            progress.phase = "DIAGNOSTIC_SCAN";
+            progress.status = "RUNNING";
+            publishNative(progress, true, true, null);
+            List<NativeChronologyProblem> knownProblems =
+                    dao.findNativeChronologyProblems(
+                            progress.request.warehouseId(), queryTimeoutSeconds);
+            Set<String> skippedSkus = new LinkedHashSet<>();
+            for (NativeChronologyProblem problem : knownProblems) {
+                skippedSkus.add(problem.sku());
+                Issue issue = nativeChronologyIssue(problem);
+                addNativeIssue(progress, issue);
+                log.warn("[folio.accounting-price] native_sku_skipped job={} warehouse={} sku={} code={} recno={} documentId={} documentNumber={} date={} initialQuantity={} quantityBefore={} operationQuantity={} quantityAfter={} movementPosition={} movementCount={} currentPhysical={} currentAvailable={} currentAccountingQuantity={} currentAccountingPrice={}",
+                        progress.jobId, problem.warehouseId(), problem.sku(), problem.code(),
+                        problem.recno(), problem.documentId(), problem.documentNumber(),
+                        formatDate(problem.documentDate()), problem.initialQuantity(),
+                        problem.quantityBefore(), problem.operationQuantity(),
+                        problem.quantityAfter(), problem.movementPosition(),
+                        problem.movementCount(), problem.physicalQuantity(),
+                        problem.availableQuantity(), problem.accountingQuantity(),
+                        problem.accountingPrice());
+            }
+            String quarantineMarker = skippedSkus.isEmpty()
+                    ? null
+                    : dao.findUnusedProductTypeMarker();
+            if (!skippedSkus.isEmpty()
+                    && (quarantineMarker == null || quarantineMarker.isBlank())) {
+                throw new IllegalStateException(
+                        "Folio has no unused product-type marker for safe recalculation quarantine");
+            }
+
             progress.phase = "PRECHECK_RUNNING";
             progress.status = "RUNNING";
             publishNative(progress, true, true, null);
             NativePassResult preflight = runNativePass(
-                    progress, method, true, 0);
+                    progress, method, true, 0, null,
+                    skippedSkus, quarantineMarker);
 
             if (preflight.problemDetected()) {
                 progress.status = "BLOCKED_NEGATIVE_STOCK";
@@ -688,7 +720,9 @@ public class FolioAccountingPriceService {
             }
 
             if (progress.request.previewOnly()) {
-                progress.status = "PREVIEW_READY";
+                progress.status = progress.warningCount == 0
+                        ? "PREVIEW_READY"
+                        : "PREVIEW_READY_WITH_WARNINGS";
                 progress.phase = "PRECHECK_COMPLETED";
                 progress.currentArt = null;
                 progress.nextArt = null;
@@ -713,11 +747,13 @@ public class FolioAccountingPriceService {
             progress.checkpointArt = null;
             publishNative(progress, true, true, null);
             runNativePass(progress, method, false, preflight.totalUnits(),
-                    protectedBaseline);
+                    protectedBaseline, skippedSkus, quarantineMarker);
             verifyNativeBaseline(progress.database, progress.request.warehouseId(),
                     method, protectedBaseline);
 
-            progress.status = "COMPLETED";
+            progress.status = progress.warningCount == 0
+                    ? "COMPLETED"
+                    : "COMPLETED_WITH_WARNINGS";
             progress.phase = "APPLY_COMPLETED";
             progress.currentArt = null;
             progress.nextArt = null;
@@ -752,16 +788,10 @@ public class FolioAccountingPriceService {
     private NativePassResult runNativePass(NativeProgress progress,
                                            AccountingMethod method,
                                            boolean rollbackOnly,
-                                           int requiredTotalUnits) {
-        return runNativePass(progress, method, rollbackOnly,
-                requiredTotalUnits, null);
-    }
-
-    private NativePassResult runNativePass(NativeProgress progress,
-                                           AccountingMethod method,
-                                           boolean rollbackOnly,
                                            int requiredTotalUnits,
-                                           NativeProtectedSnapshot protectedBaseline) {
+                                           NativeProtectedSnapshot protectedBaseline,
+                                           Set<String> skippedSkus,
+                                           String quarantineMarker) {
         String cursor = null;
         int passTotalUnits = 0;
         int passProgressUnits = 0;
@@ -787,7 +817,7 @@ public class FolioAccountingPriceService {
                     progress.database, progress.request.warehouseId(), method,
                     cursor, passTotalUnits, passProgressUnits,
                     seenCursors, rollbackOnly, requiredTotalUnits,
-                    protectedBaseline);
+                    protectedBaseline, skippedSkus, quarantineMarker);
             progress.procedureCalls++;
             passChunks++;
             if (rollbackOnly) {
@@ -848,7 +878,9 @@ public class FolioAccountingPriceService {
                                                      Set<String> seenCursors,
                                                      boolean rollbackOnly,
                                                      int requiredTotalUnits,
-                                                     NativeProtectedSnapshot protectedBaseline) {
+                                                     NativeProtectedSnapshot protectedBaseline,
+                                                     Set<String> skippedSkus,
+                                                     String quarantineMarker) {
         try {
             return Objects.requireNonNull(writeTransaction.execute(status -> {
                 dao.acquireRecalculationMutex(lockTimeoutMs);
@@ -867,10 +899,28 @@ public class FolioAccountingPriceService {
                     throw new IllegalStateException(
                             "Folio warehouse accounting scope or method changed while the native job was running");
                 }
-                NativeFullChunkOutput output = dao.callNativeFullChunk(
-                        null, warehouseId,
-                        method.calculationMode(), method.periodMode(), method.includeTax(),
-                        cursor, 0, totalUnits, queryTimeoutSeconds);
+                Map<String, String> quarantined = Map.of();
+                boolean quarantineTypeCreated = false;
+                NativeFullChunkOutput output;
+                try {
+                    if (!skippedSkus.isEmpty()) {
+                        dao.createNativeQuarantineType(quarantineMarker);
+                        quarantineTypeCreated = true;
+                        quarantined = dao.quarantineNativeSkus(
+                                warehouseId, skippedSkus, quarantineMarker);
+                    }
+                    output = dao.callNativeFullChunk(
+                            null, warehouseId,
+                            method.calculationMode(), method.periodMode(), method.includeTax(),
+                            cursor, 0, totalUnits, queryTimeoutSeconds);
+                } finally {
+                    if (!quarantined.isEmpty()) {
+                        dao.restoreNativeSkus(warehouseId, quarantined);
+                    }
+                    if (quarantineTypeCreated) {
+                        dao.deleteNativeQuarantineType(quarantineMarker);
+                    }
+                }
                 WarehouseRow after = dao.findWarehouseForUpdate(warehouseId);
 
                 if (output.transactionCountBefore() != output.transactionCountAfter()) {
@@ -1036,6 +1086,59 @@ public class FolioAccountingPriceService {
                 "checkpointArt", checkpointArt,
                 "nextArt", output.newArt()
         );
+    }
+
+    private static Issue nativeChronologyIssue(NativeChronologyProblem problem) {
+        Map<String, Object> operation = new LinkedHashMap<>();
+        operation.put("recno", problem.recno());
+        operation.put("documentId", problem.documentId());
+        if (problem.documentNumber() != null) {
+            operation.put("documentNumber", problem.documentNumber());
+        }
+        operation.put("documentDate", formatDate(problem.documentDate()));
+        operation.put("documentType", problem.documentType());
+        operation.put("kind", FolioAccountingPriceDao.TYPE_RECEIPT.equals(
+                problem.documentType()) ? "RECEIPT" : "EXPENSE");
+        operation.put("returnMovement", problem.returnMovement());
+        operation.put("quantity", problem.operationQuantity());
+        operation.put("warehouseId", problem.warehouseId());
+
+        Map<String, Object> currentState = new LinkedHashMap<>();
+        currentState.put("physicalQuantity", problem.physicalQuantity());
+        currentState.put("availableQuantity", problem.availableQuantity());
+        currentState.put("accountingQuantity", problem.accountingQuantity());
+        currentState.put("accountingPrice", problem.accountingPrice());
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("sku", problem.sku());
+        details.put("warehouseId", problem.warehouseId());
+        details.put("initialQuantity", problem.initialQuantity());
+        details.put("quantityBefore", problem.quantityBefore());
+        details.put("operation", Map.copyOf(operation));
+        details.put("quantityAfter", problem.quantityAfter());
+        details.put("movementPosition", problem.movementPosition());
+        details.put("movementCount", problem.movementCount());
+        details.put("currentState", Map.copyOf(currentState));
+        details.put("skipped", true);
+        details.put("source", "JAVA_CHRONOLOGY_PREFLIGHT");
+        if ("NEGATIVE_CHRONOLOGICAL_STOCK".equals(problem.code())) {
+            details.put("shortageQuantity", problem.quantityAfter().abs());
+            return new Issue(
+                    problem.code(),
+                    "The chronological stock becomes negative; the product will be skipped and other products will continue",
+                    Map.copyOf(details));
+        }
+        if ("AMBIGUOUS_MOVEMENT_ORDER".equals(problem.code())) {
+            return new Issue(
+                    problem.code(),
+                    "Folio has movements with the same legacy sort key; the product will be skipped because their execution order is not deterministic",
+                    Map.copyOf(details));
+        }
+        details.put("denominator", problem.quantityAfter());
+        return new Issue(
+                problem.code(),
+                "The Folio average-price denominator becomes zero; the product will be skipped and other products will continue",
+                Map.copyOf(details));
     }
 
     private void addNativeIssue(NativeProgress progress, Issue issue) {

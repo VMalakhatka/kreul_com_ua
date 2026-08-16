@@ -595,16 +595,23 @@ Java-формулой.
 }
 ```
 
-Для apply `confirmApply=true` обязателен. Даже после подтверждения Java сначала
-автоматически выполняет полный rollback-preflight:
+Для apply `confirmApply=true` обязателен. Перед штатной процедурой Java сначала
+проигрывает хронологию движений и находит SKU, которые гарантированно остановят
+`I_UCHET_TOVAR`: отрицательный остаток либо нулевой знаменатель средней цены.
+Каждая такая проблема сохраняется в `warnings` и в отдельной строке лога, а SKU
+временно исключается из расчёта только внутри текущей MSSQL-транзакции. Исходный
+тип товара возвращается до завершения транзакции; служебный тип также удаляется.
+
+После этого Java автоматически выполняет полный rollback-preflight:
 
 1. проходит весь склад штатной процедурой;
 2. откатывает каждую порцию;
-3. собирает все найденные отрицательные остатки;
-4. если найдена хотя бы одна проблема — возвращает
-   `BLOCKED_NEGATIVE_STOCK`, не фиксируя ни одной порции;
-5. только чистый preflight запускает второй проход с commit каждой успешной
-   порции.
+3. пропускает заранее диагностированные проблемные SKU и проверяет весь
+   остальной склад;
+4. если процедура обнаружила новую, не распознанную предварительной диагностикой
+   проблему, возвращает `BLOCKED_NEGATIVE_STOCK`, не фиксируя ни одной порции;
+5. успешный preflight запускает второй проход с commit каждой успешной порции,
+   по-прежнему пропуская известные проблемные SKU.
 
 Это необходимо потому, что `I_UCHET_TOVAR` возвращает `otr_date` уже после
 частичного изменения проблемного SKU. Коммит такой порции опасен. Откатить
@@ -631,7 +638,7 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 
 | Поле | Значение |
 |---|---|
-| `phase` | стадия выполнения: `QUEUED`, `PRECHECK_RUNNING`, `PRECHECK_COMPLETED`, `APPLY_RUNNING`, `APPLY_COMPLETED`, `APPLY_STOPPED` или `FAILED` |
+| `phase` | стадия выполнения: `QUEUED`, `DIAGNOSTIC_SCAN`, `PRECHECK_RUNNING`, `PRECHECK_COMPLETED`, `APPLY_RUNNING`, `APPLY_COMPLETED`, `APPLY_STOPPED` или `FAILED` |
 | `procedureCalls` | общее число вызовов `I_UCHET_TOVAR`, включая preflight и apply |
 | `preflightChunks` | число порций, гарантированно откатившихся во время проверки |
 | `committedChunks` | число успешно зафиксированных порций apply |
@@ -643,7 +650,7 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 | `lastCommittedArt` | последний SKU последней подтверждённой порции |
 | `checkpointArt` | входной `art` текущей/оборвавшейся порции; при неизвестном исходе не продолжать автоматически |
 | `returnCode` | return status последнего вызова |
-| `warnings` | отрицательные остатки с полной диагностикой |
+| `warnings` | пропущенные SKU и неожиданные проблемы процедуры с полной диагностикой |
 
 `progressUnits` на apply начинается заново после preflight. `procedureCalls`
 считает оба прохода, но его нельзя сравнивать с `committedChunks` как 2:1:
@@ -658,22 +665,24 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 | `QUEUED` | задача принята |
 | `RUNNING` | выполняется preflight либо apply; смотреть `phase` |
 | `PREVIEW_READY` | точный rollback-preview завершён без проблем; БД не изменена |
-| `BLOCKED_NEGATIVE_STOCK` | preflight нашёл проблемы; apply не начался, `committedChunks=0` |
+| `PREVIEW_READY_WITH_WARNINGS` | preview завершён; известные проблемные SKU пропущены и перечислены в `warnings`; БД не изменена |
+| `BLOCKED_NEGATIVE_STOCK` | процедура нашла проблему, которую предварительный скан не смог безопасно обойти; apply не начался |
 | `COMPLETED` | штатный полный перерасчёт завершён |
+| `COMPLETED_WITH_WARNINGS` | все безопасные SKU пересчитаны, проблемные SKU пропущены и перечислены в `warnings` |
 | `STOPPED_ON_NEGATIVE_STOCK` | во время apply до первого commit появилась новая проблема; текущая порция откатилась |
 | `FAILED` | ошибка до первого commit |
 | `FAILED_PARTIAL` | ошибка либо новая отрицательная история после одной или нескольких зафиксированных порций; предыдущие commit сохранены |
 | `OUTCOME_UNKNOWN` | приложение не может доказать исход текущей транзакции или обнаружило нарушение её границы; автоматически повторять или продолжать нельзя |
 
-Пример заблокированного результата:
+Пример успешного preview с пропущенным проблемным товаром:
 
 ```json
 {
-  "ok": false,
+  "ok": true,
   "accepted": false,
   "running": false,
   "jobId": "9a4705cb-7190-42af-b96e-fd83e44a2791",
-  "status": "BLOCKED_NEGATIVE_STOCK",
+  "status": "PREVIEW_READY_WITH_WARNINGS",
   "phase": "PRECHECK_COMPLETED",
   "database": "Paint_Rus",
   "procedureCalls": 4,
@@ -684,10 +693,9 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
   "warnings": [
     {
       "code": "NEGATIVE_CHRONOLOGICAL_STOCK",
-      "message": "The chronological stock becomes negative; Folio cannot safely recalculate this product",
+      "message": "The chronological stock becomes negative; the product will be skipped and other products will continue",
       "details": {
-        "procedureArt": "CON-100516109R",
-        "folioProblemDate": "22.04.2017",
+        "sku": "CON-100516109R",
         "warehouseId": 12,
         "initialQuantity": 10,
         "quantityBefore": 10,
@@ -702,17 +710,20 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
         },
         "quantityAfter": -21,
         "shortageQuantity": 21,
-        "nextArt": "CON-100516110R"
+        "movementPosition": 27,
+        "movementCount": 184,
+        "skipped": true,
+        "source": "JAVA_CHRONOLOGY_PREFLIGHT"
       }
     }
   ]
 }
 ```
 
-Если Java-хронология не смогла однозначно сопоставить `otr_date` конкретной
-строке (например, сложная ветка возврата), warning имеет код
-`FOLIO_NATIVE_RECALCULATION_PROBLEM` и всё равно содержит подтверждённые самой
-процедурой `procedureArt`, `folioProblemDate`, `checkpointArt` и `nextArt`.
+Если точная процедура всё же возвращает `otr_date` для SKU, отсутствовавшего в
+предварительном списке, warning имеет код `FOLIO_NATIVE_RECALCULATION_PROBLEM`
+либо `NEGATIVE_CHRONOLOGICAL_STOCK`. Такая неожиданная проблема не обходится:
+текущая порция откатывается и job останавливается.
 
 Когда сопоставление возможно, `NEGATIVE_CHRONOLOGICAL_STOCK.details` содержит:
 
@@ -729,6 +740,17 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 
 Это диагностика причины отрицания, а не только текущего `KON_KOLCH`.
 
+Предварительный native-скан может вернуть три кода безопасного пропуска:
+
+| Код | Причина |
+|---|---|
+| `NEGATIVE_CHRONOLOGICAL_STOCK` | расход делает хронологический остаток отрицательным |
+| `ZERO_ACCOUNTING_QUANTITY_DENOMINATOR` | приход приводит знаменатель средней цены к нулю и штатная процедура упала бы с divide by zero |
+| `AMBIGUOUS_MOVEMENT_ORDER` | несколько движений имеют одинаковый legacy sort key; точный порядок SQL Server не доказан |
+
+У всех трёх `details.skipped=true`: этот SKU не изменяется, но обработка других
+товаров продолжается.
+
 ### Ограничения первого релиза
 
 - разрешён только экспериментально подтверждённый точный код средней цены
@@ -744,11 +766,24 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 - rollback-preview разрешён для `Paint_Rus` и `Paint_Ua`; реальный apply в
   рабочей базе требует резервной копии и согласованного контрольного окна.
 
-## Постоянный журнал отрицательных остатков
+### Минимальные права MSSQL
 
-Каждый обнаруженный `NEGATIVE_CHRONOLOGICAL_STOCK` записывается отдельной
-структурированной строкой в `${LOG_DIR}/folio-accounting-price.log` с неизменным именем
-события:
+Помимо чтения `SCL_MOVE`, `SCL_ARTC`, `SCLAD_R` и выполнения
+`dbo.I_UCHET_TOVAR`, native-full теперь требует строго ограниченные права:
+
+- `UPDATE` на `dbo.SCL_ARTC` — временно назначить и вернуть тип только
+  диагностированным SKU;
+- `SELECT`, `INSERT`, `DELETE` на `dbo.TIP_TOVR` — создать и удалить одну
+  служебную строку внутри той же транзакции.
+
+`db_owner` для этого не нужен. Если этих прав нет, job завершится `FAILED` до
+первого commit. Не выдавайте широкие права на всю базу.
+
+## Постоянный журнал пропущенных товаров
+
+Точечный и Java-full маршруты записывают каждый обнаруженный
+`NEGATIVE_CHRONOLOGICAL_STOCK` отдельной структурированной строкой в
+`${LOG_DIR}/folio-accounting-price.log` с неизменным именем события:
 
 ```text
 [folio.accounting-price] accounting_price_negative_stock sku=... warehouse=... recno=... documentId=... documentNumber=... date=... initialQuantity=... quantityBefore=... operationType=... operationQuantity=... quantityAfter=... shortageQuantity=... movementPosition=... movementCount=... currentPhysical=... currentAvailable=... currentAccountingQuantity=... currentAccountingPrice=...
@@ -761,10 +796,17 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 
 `max-reported-warnings` может усечь массив `warnings` в HTTP status, но не
 останавливает запись обнаруженных отрицательных остатков в
-`folio-accounting-price.log`. Native-проход дополнительно пишет событие
+`folio-accounting-price.log`. Native-full для каждого автоматически пропущенного SKU
+native-проход пишет событие `native_sku_skipped` с `job`, складом, SKU, кодом
+причины, документом, количеством до операции, самой операцией и количеством
+после неё. Неожиданная остановка процедуры дополнительно пишет
 `native_negative_stock` с `job`, складом и курсорами процедуры. Сам status
 фоновой задачи хранится только в памяти Java и после рестарта недоступен;
 файл лога остаётся на диске согласно политике ротации.
+
+```text
+[folio.accounting-price] native_sku_skipped job=... warehouse=... sku=... code=... recno=... documentId=... documentNumber=... date=... initialQuantity=... quantityBefore=... operationQuantity=... quantityAfter=... movementPosition=... movementCount=... currentPhysical=... currentAvailable=... currentAccountingQuantity=... currentAccountingPrice=...
+```
 
 Лог предназначен для диагностики, а не для возобновления job. Он не состоит в
 одной транзакции с MSSQL: наличие строки подтверждает наблюдение приложения, но
@@ -787,9 +829,11 @@ SQL-процедура не умеет показывать диалог и са
   `dbo.i_uchet_add(mode=2)`. Только этот запрос имеет
   `continueOnNegativeStock`: проблемный SKU можно пропустить;
 - `/recalculate/native-full` вызывает `I_UCHET_TOVAR` и не принимает
-  `continueOnNegativeStock`. Preview продолжает поиск проблем только в
-  rollback-транзакциях. Любая проблема preflight блокирует весь apply, а новая
-  проблема во втором проходе откатывает текущую порцию и останавливает job.
+  `continueOnNegativeStock`: безопасный пропуск известных проблем выполняется
+  автоматически после диагностического скана. Preview продолжает в
+  rollback-транзакциях. Только неожиданная проблема самой процедуры блокирует
+  apply; новая проблема во втором проходе откатывает текущую порцию и
+  останавливает job.
 
 Таким образом `/full` — безопасный Java-обход из уже сохранённых учётных сумм,
 а `/native-full` — полный штатный пересчёт исходных приходных сумм. Эти режимы

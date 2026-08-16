@@ -19,16 +19,20 @@ import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 @Repository
 public class FolioAccountingPriceDao {
 
     public static final String TYPE_RECEIPT = "\u041f";
     public static final String TYPE_EXPENSE = "\u0420";
+    public static final String TYPE_ACCOUNT = "\u0421";
     private static final String MUTEX_RESOURCE = "lavka|folio|accounting-price-recalculation";
     private static final String REBUILD_CALL = "{call dbo.i_uchet_add(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)}";
     private static final String NATIVE_FULL_CALL =
@@ -375,6 +379,188 @@ public class FolioAccountingPriceDao {
         });
     }
 
+    public List<NativeChronologyProblem> findNativeChronologyProblems(
+            int warehouseId,
+            int queryTimeoutSeconds) {
+        List<NativeChronologyProblem> problems = new ArrayList<>();
+        Map<String, BigDecimal> runningBySku = new LinkedHashMap<>();
+        Map<String, Integer> movementCounts = new LinkedHashMap<>();
+        Map<String, String> lastSortKeys = new HashMap<>();
+        java.util.Set<String> reportedSkus = new java.util.HashSet<>();
+        BigDecimal epsilon = new BigDecimal("0.00000000001");
+
+        jdbc.query("""
+                SELECT m.NAME_PREDM, m.RECNO, m.UNICUM_NUM, m.NUMDOCM_PR,
+                       m.DATE_PREDM, m.TYPDOCM_PR, m.VOZVRAT_PR,
+                       m.KOLC_PREDM, a.NACH_KOLCH, a.KON_KOLCH,
+                       a.REZ_KOLCH, a.KOL_SUM, a.UCHET_CENA
+                  FROM dbo.SCL_MOVE m
+                  JOIN dbo.SCL_ARTC a
+                    ON a.COD_ARTIC = m.NAME_PREDM
+                   AND a.ID_SCLAD = m.ID_SCLAD
+                 WHERE m.ID_SCLAD = ?
+                   AND m.STND_UCHET = 1
+                   AND m.TYPDOCM_PR <> ?
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM dbo.TIP_TOVR t
+                        WHERE t.SIGNIFIC = a.TIP_TOVR
+                          AND t.CHECK_SAVE = 0
+                          AND t.SHOW_OSTATOK = 0
+                   )
+                 ORDER BY m.NAME_PREDM, m.DATE_PREDM,
+                          m.TYPDOCM_PR, m.NUMDOCM_PR, m.RECNO
+                """, statement -> {
+            statement.setFetchSize(500);
+            statement.setQueryTimeout(Math.max(600, queryTimeoutSeconds));
+            statement.setInt(1, warehouseId);
+            statement.setString(2, TYPE_ACCOUNT);
+        }, rs -> {
+            String sku = trim(rs.getString("NAME_PREDM"));
+            int movementPosition = movementCounts.merge(sku, 1, Integer::sum);
+            String sortKey = String.valueOf(rs.getTimestamp("DATE_PREDM"))
+                    + '\u0000' + trim(rs.getString("TYPDOCM_PR"))
+                    + '\u0000' + String.valueOf(rs.getBigDecimal("NUMDOCM_PR"));
+            boolean ambiguousOrder = sortKey.equals(lastSortKeys.put(sku, sortKey));
+            BigDecimal before = runningBySku.get(sku);
+            if (before == null) {
+                before = decimal(rs, "NACH_KOLCH");
+            }
+            BigDecimal quantity = decimal(rs, "KOLC_PREDM");
+            String documentType = trim(rs.getString("TYPDOCM_PR"));
+            BigDecimal after = TYPE_RECEIPT.equals(documentType)
+                    ? before.add(quantity)
+                    : before.subtract(quantity);
+            runningBySku.put(sku, after);
+
+            if (reportedSkus.contains(sku)) {
+                return;
+            }
+            String code = null;
+            if (ambiguousOrder) {
+                code = "AMBIGUOUS_MOVEMENT_ORDER";
+            } else if (TYPE_RECEIPT.equals(documentType)
+                    && after.abs().compareTo(epsilon) <= 0) {
+                code = "ZERO_ACCOUNTING_QUANTITY_DENOMINATOR";
+            } else if (TYPE_EXPENSE.equals(documentType)
+                    && (before.compareTo(BigDecimal.ZERO) <= 0
+                    || after.compareTo(epsilon.negate()) < 0)) {
+                code = "NEGATIVE_CHRONOLOGICAL_STOCK";
+            }
+            if (code == null) {
+                return;
+            }
+            reportedSkus.add(sku);
+            problems.add(new NativeChronologyProblem(
+                    code, sku, warehouseId, rs.getLong("RECNO"),
+                    decimal(rs, "UNICUM_NUM"), decimalNullable(rs, "NUMDOCM_PR"),
+                    timestamp(rs, "DATE_PREDM"), documentType,
+                    rs.getBoolean("VOZVRAT_PR"), quantity, before, after,
+                    movementPosition, 0,
+                    decimal(rs, "NACH_KOLCH"), decimal(rs, "KON_KOLCH"),
+                    decimal(rs, "REZ_KOLCH"), decimal(rs, "KOL_SUM"),
+                    decimal(rs, "UCHET_CENA")
+            ));
+        });
+        return problems.stream()
+                .map(problem -> problem.withMovementCount(
+                        movementCounts.getOrDefault(problem.sku(), 0)))
+                .toList();
+    }
+
+    public String findUnusedProductTypeMarker() {
+        java.util.Set<String> used = new java.util.HashSet<>();
+        for (String value : jdbc.query("""
+                SELECT TIP_TOVR AS value FROM dbo.SCL_ARTC
+                UNION
+                SELECT SIGNIFIC AS value FROM dbo.TIP_TOVR
+                UNION
+                SELECT TIP_TOVAR AS value FROM dbo.TIP_TOVR
+                """, (rs, rowNum) -> trim(rs.getString(1)))) {
+            if (value != null) {
+                used.add(value.toUpperCase(Locale.ROOT));
+            }
+        }
+        for (String candidate : List.of("9", "8", "7", "6", "5", "4", "3", "Z", "Y", "X")) {
+            if (!used.contains(candidate.toUpperCase(Locale.ROOT))) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    public Map<String, String> quarantineNativeSkus(int warehouseId,
+                                                     Set<String> skus,
+                                                     String unusedProductTypeMarker) {
+        Map<String, String> originalTypes = new LinkedHashMap<>();
+        for (String sku : skus) {
+            List<String> values = jdbc.query("""
+                    SELECT TIP_TOVR
+                      FROM dbo.SCL_ARTC WITH (UPDLOCK, HOLDLOCK)
+                     WHERE ID_SCLAD = ?
+                       AND COD_ARTIC = ?
+                    """, (rs, rowNum) -> trim(rs.getString(1)), warehouseId, sku);
+            if (values.size() != 1) {
+                throw new IllegalStateException(
+                        "Cannot quarantine Folio product " + sku + " in warehouse " + warehouseId);
+            }
+            originalTypes.put(sku, values.get(0));
+            int updated = jdbc.update("""
+                    UPDATE dbo.SCL_ARTC
+                       SET TIP_TOVR = ?
+                     WHERE ID_SCLAD = ?
+                       AND COD_ARTIC = ?
+                    """, unusedProductTypeMarker, warehouseId, sku);
+            if (updated != 1) {
+                throw new IllegalStateException(
+                        "Cannot quarantine Folio product " + sku + " in warehouse " + warehouseId);
+            }
+        }
+        return originalTypes;
+    }
+
+    public void createNativeQuarantineType(String marker) {
+        int inserted = jdbc.update("""
+                INSERT INTO dbo.TIP_TOVR
+                       (SIGNIFIC, TIP_TOVAR, CHECK_SAVE, SHOW_OSTATOK)
+                VALUES (?, ?, 0, 0)
+                """, marker, marker);
+        if (inserted != 1) {
+            throw new IllegalStateException(
+                    "Cannot create temporary Folio quarantine product type");
+        }
+    }
+
+    public void restoreNativeSkus(int warehouseId, Map<String, String> originalTypes) {
+        for (Map.Entry<String, String> entry : originalTypes.entrySet()) {
+            int updated = jdbc.update("""
+                    UPDATE dbo.SCL_ARTC
+                       SET TIP_TOVR = ?
+                     WHERE ID_SCLAD = ?
+                       AND COD_ARTIC = ?
+                    """, entry.getValue(), warehouseId, entry.getKey());
+            if (updated != 1) {
+                throw new IllegalStateException(
+                        "Cannot restore Folio product " + entry.getKey()
+                                + " in warehouse " + warehouseId);
+            }
+        }
+    }
+
+    public void deleteNativeQuarantineType(String marker) {
+        int deleted = jdbc.update("""
+                DELETE FROM dbo.TIP_TOVR
+                 WHERE SIGNIFIC = ?
+                   AND TIP_TOVAR = ?
+                   AND CHECK_SAVE = 0
+                   AND SHOW_OSTATOK = 0
+                """, marker, marker);
+        if (deleted != 1) {
+            throw new IllegalStateException(
+                    "Cannot remove temporary Folio quarantine product type");
+        }
+    }
+
     public NativeProtectedSnapshot captureNativeProtectedSnapshot(
             int warehouseId,
             String startArt,
@@ -404,7 +590,7 @@ public class FolioAccountingPriceDao {
         List<String> orderedSkus = new ArrayList<>();
         streamQuery("""
                 SELECT COD_ARTIC, ID_SCLAD, NACH_KOLCH, KON_KOLCH,
-                       REZ_KOLCH, UCHET_0_C, UCHET_0_VL
+                       REZ_KOLCH, UCHET_0_C, UCHET_0_VL, TIP_TOVR
                   FROM dbo.SCL_ARTC WITH (UPDLOCK, HOLDLOCK)
                  WHERE ID_SCLAD = ?
                    %s%s
@@ -413,7 +599,7 @@ public class FolioAccountingPriceDao {
                 articleArgs.toArray(), rs -> {
                     String sku = trim(rs.getString(1));
                     MessageDigest digest = sha256();
-                    updateDigestRow(digest, rs, 7);
+                    updateDigestRow(digest, rs, 8);
                     orderedSkus.add(sku);
                     articleDigests.put(sku, new NativeInvariantDigest(
                             1, HexFormat.of().formatHex(digest.digest())));
@@ -706,6 +892,37 @@ public class FolioAccountingPriceDao {
     ) {
         public boolean hasProblem() {
             return problemDate != null && !problemDate.isBlank();
+        }
+    }
+
+    public record NativeChronologyProblem(
+            String code,
+            String sku,
+            int warehouseId,
+            long recno,
+            BigDecimal documentId,
+            BigDecimal documentNumber,
+            LocalDateTime documentDate,
+            String documentType,
+            boolean returnMovement,
+            BigDecimal operationQuantity,
+            BigDecimal quantityBefore,
+            BigDecimal quantityAfter,
+            int movementPosition,
+            int movementCount,
+            BigDecimal initialQuantity,
+            BigDecimal physicalQuantity,
+            BigDecimal availableQuantity,
+            BigDecimal accountingQuantity,
+            BigDecimal accountingPrice
+    ) {
+        NativeChronologyProblem withMovementCount(int value) {
+            return new NativeChronologyProblem(
+                    code, sku, warehouseId, recno, documentId, documentNumber,
+                    documentDate, documentType, returnMovement,
+                    operationQuantity, quantityBefore, quantityAfter,
+                    movementPosition, value, initialQuantity, physicalQuantity,
+                    availableQuantity, accountingQuantity, accountingPrice);
         }
     }
 
