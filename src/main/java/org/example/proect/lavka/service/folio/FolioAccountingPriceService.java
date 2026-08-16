@@ -71,6 +71,7 @@ public class FolioAccountingPriceService {
     private final Clock clock;
     private final TransactionTemplate readTransaction;
     private final TransactionTemplate writeTransaction;
+    private final TransactionTemplate nativeWriteTransaction;
     private final boolean apiEnabled;
     private final boolean applyEnabled;
     private final boolean fullApplyEnabled;
@@ -80,6 +81,7 @@ public class FolioAccountingPriceService {
     private final int nativeFullMaxChunks;
     private final int lockTimeoutMs;
     private final int queryTimeoutSeconds;
+    private final int nativeFullTimeoutSeconds;
     private final int maxReportedWarnings;
     private final AtomicBoolean operationRunning = new AtomicBoolean(false);
     private final AtomicReference<FolioAccountingPriceFullStatusResponse> fullStatus =
@@ -101,6 +103,7 @@ public class FolioAccountingPriceService {
             @Value("${lavka.folio.accounting-prices.native-full-max-chunks:10000}") int nativeFullMaxChunks,
             @Value("${lavka.folio.accounting-prices.lock-timeout-ms:5000}") int lockTimeoutMs,
             @Value("${lavka.folio.accounting-prices.query-timeout-seconds:120}") int queryTimeoutSeconds,
+            @Value("${lavka.folio.accounting-prices.native-full-timeout-seconds:900}") int nativeFullTimeoutSeconds,
             @Value("${lavka.folio.accounting-prices.max-reported-warnings:200}") int maxReportedWarnings,
             @Value("${lavka.folio.accounting-prices.zone:Europe/Kyiv}") String zone
     ) {
@@ -108,7 +111,8 @@ public class FolioAccountingPriceService {
                 apiEnabled, applyEnabled, fullApplyEnabled,
                 nativeFullEnabled, nativeFullApplyEnabled,
                 parseDatabaseNames(nativeFullAllowedDatabases), nativeFullMaxChunks,
-                lockTimeoutMs, queryTimeoutSeconds, maxReportedWarnings);
+                lockTimeoutMs, queryTimeoutSeconds, nativeFullTimeoutSeconds,
+                maxReportedWarnings);
     }
 
     FolioAccountingPriceService(
@@ -126,7 +130,8 @@ public class FolioAccountingPriceService {
         this(dao, executor, clock, transactionManager,
                 apiEnabled, applyEnabled, fullApplyEnabled,
                 false, false, Set.of("Paint_Rus"), 10_000,
-                lockTimeoutMs, queryTimeoutSeconds, maxReportedWarnings);
+                lockTimeoutMs, queryTimeoutSeconds, queryTimeoutSeconds,
+                maxReportedWarnings);
     }
 
     FolioAccountingPriceService(
@@ -145,6 +150,31 @@ public class FolioAccountingPriceService {
             int queryTimeoutSeconds,
             int maxReportedWarnings
     ) {
+        this(dao, executor, clock, transactionManager,
+                apiEnabled, applyEnabled, fullApplyEnabled,
+                nativeFullEnabled, nativeFullApplyEnabled,
+                nativeFullAllowedDatabases, nativeFullMaxChunks,
+                lockTimeoutMs, queryTimeoutSeconds, queryTimeoutSeconds,
+                maxReportedWarnings);
+    }
+
+    FolioAccountingPriceService(
+            FolioAccountingPriceDao dao,
+            @Qualifier("folioAccountingPriceExecutor") TaskExecutor executor,
+            Clock clock,
+            @Qualifier("mssqlTransactionManager") PlatformTransactionManager transactionManager,
+            boolean apiEnabled,
+            boolean applyEnabled,
+            boolean fullApplyEnabled,
+            boolean nativeFullEnabled,
+            boolean nativeFullApplyEnabled,
+            Set<String> nativeFullAllowedDatabases,
+            int nativeFullMaxChunks,
+            int lockTimeoutMs,
+            int queryTimeoutSeconds,
+            int nativeFullTimeoutSeconds,
+            int maxReportedWarnings
+    ) {
         this.dao = dao;
         this.executor = executor;
         this.clock = clock;
@@ -157,6 +187,7 @@ public class FolioAccountingPriceService {
         this.nativeFullMaxChunks = Math.max(1, nativeFullMaxChunks);
         this.lockTimeoutMs = Math.max(0, lockTimeoutMs);
         this.queryTimeoutSeconds = Math.max(1, queryTimeoutSeconds);
+        this.nativeFullTimeoutSeconds = Math.max(1, nativeFullTimeoutSeconds);
         this.maxReportedWarnings = Math.max(1, maxReportedWarnings);
 
         this.readTransaction = new TransactionTemplate(transactionManager);
@@ -167,6 +198,10 @@ public class FolioAccountingPriceService {
         this.writeTransaction = new TransactionTemplate(transactionManager);
         this.writeTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
         this.writeTransaction.setTimeout(this.queryTimeoutSeconds);
+
+        this.nativeWriteTransaction = new TransactionTemplate(transactionManager);
+        this.nativeWriteTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
+        this.nativeWriteTransaction.setTimeout(this.nativeFullTimeoutSeconds);
     }
 
     public FolioAccountingPriceRecalculationResponse recalculate(
@@ -675,7 +710,7 @@ public class FolioAccountingPriceService {
             publishNative(progress, true, true, null);
             List<NativeChronologyProblem> knownProblems =
                     dao.findNativeChronologyProblems(
-                            progress.request.warehouseId(), queryTimeoutSeconds);
+                            progress.request.warehouseId(), nativeFullTimeoutSeconds);
             Set<String> skippedSkus = new LinkedHashSet<>();
             for (NativeChronologyProblem problem : knownProblems) {
                 skippedSkus.add(problem.sku());
@@ -813,8 +848,12 @@ public class FolioAccountingPriceService {
 
             progress.currentArt = cursor;
             progress.checkpointArt = cursor;
+            if (!skippedSkus.isEmpty()) {
+                progress.phase = "QUARANTINE_PREPARATION";
+                publishNative(progress, true, true, null);
+            }
             NativeFullChunkOutput output = executeNativeChunk(
-                    progress.database, progress.request.warehouseId(), method,
+                    progress, progress.database, progress.request.warehouseId(), method,
                     cursor, passTotalUnits, passProgressUnits,
                     seenCursors, rollbackOnly, requiredTotalUnits,
                     protectedBaseline, skippedSkus, quarantineMarker);
@@ -869,7 +908,8 @@ public class FolioAccountingPriceService {
         }
     }
 
-    private NativeFullChunkOutput executeNativeChunk(String expectedDatabase,
+    private NativeFullChunkOutput executeNativeChunk(NativeProgress progress,
+                                                     String expectedDatabase,
                                                      int warehouseId,
                                                      AccountingMethod method,
                                                      String cursor,
@@ -882,7 +922,7 @@ public class FolioAccountingPriceService {
                                                      Set<String> skippedSkus,
                                                      String quarantineMarker) {
         try {
-            return Objects.requireNonNull(writeTransaction.execute(status -> {
+            return Objects.requireNonNull(nativeWriteTransaction.execute(status -> {
                 dao.acquireRecalculationMutex(lockTimeoutMs);
                 String transactionDatabase = dao.currentDatabaseName();
                 if (!databaseAllowed(transactionDatabase)
@@ -909,10 +949,12 @@ public class FolioAccountingPriceService {
                         quarantined = dao.quarantineNativeSkus(
                                 warehouseId, skippedSkus, quarantineMarker);
                     }
+                    progress.phase = rollbackOnly ? "PRECHECK_RUNNING" : "APPLY_RUNNING";
+                    publishNative(progress, true, true, null);
                     output = dao.callNativeFullChunk(
                             null, warehouseId,
                             method.calculationMode(), method.periodMode(), method.includeTax(),
-                            cursor, 0, totalUnits, queryTimeoutSeconds);
+                            cursor, 0, totalUnits, nativeFullTimeoutSeconds);
                 } finally {
                     if (!quarantined.isEmpty()) {
                         dao.restoreNativeSkus(warehouseId, quarantined);
@@ -962,7 +1004,7 @@ public class FolioAccountingPriceService {
                                                            int warehouseId,
                                                            AccountingMethod method) {
         try {
-            return Objects.requireNonNull(writeTransaction.execute(status -> {
+            return Objects.requireNonNull(nativeWriteTransaction.execute(status -> {
                 validateNativeTransactionScope(expectedDatabase, warehouseId, method);
                 NativeProtectedSnapshot snapshot =
                         dao.captureNativeProtectedSnapshot(warehouseId, null, null);
@@ -979,7 +1021,7 @@ public class FolioAccountingPriceService {
                                       AccountingMethod method,
                                       NativeProtectedSnapshot expected) {
         try {
-            writeTransaction.executeWithoutResult(status -> {
+            nativeWriteTransaction.executeWithoutResult(status -> {
                 validateNativeTransactionScope(expectedDatabase, warehouseId, method);
                 NativeProtectedSnapshot actual =
                         dao.captureNativeProtectedSnapshot(warehouseId, null, null);

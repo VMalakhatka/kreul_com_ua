@@ -294,7 +294,7 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 | Поле | Как отображать |
 |---|---|
 | `status` | итоговое состояние job |
-| `phase` | текущая стадия: `QUEUED`, `DIAGNOSTIC_SCAN`, preflight, apply или остановка |
+| `phase` | текущая стадия: `QUEUED`, `DIAGNOSTIC_SCAN`, `QUARANTINE_PREPARATION`, preflight, apply или остановка |
 | `procedureCalls` | число вызовов `I_UCHET_TOVAR` в обоих проходах |
 | `preflightChunks` | число гарантированно откатившихся порций проверки |
 | `committedChunks` | число подтверждённых приложением commit-порций apply |
@@ -310,6 +310,11 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 
 `lastCommittedArt` и `checkpointArt` показываются только для диагностики. Они не
 являются разрешением автоматически продолжить job.
+
+При `phase=QUARANTINE_PREPARATION` показывайте «Подготовка безопасного пропуска
+проблемных товаров». Java пакетно ставит временную служебную отметку и обязана
+восстановить исходные типы до завершения каждой транзакции. Не показывайте эту
+фазу как ошибку и не отправляйте повторный POST, пока `running=true`.
 
 ### Native статусы
 
@@ -436,6 +441,7 @@ LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ENABLED=true
 LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_APPLY_ENABLED=false
 LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ALLOWED_DATABASES=Paint_Rus,Paint_Ua
 LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_MAX_CHUNKS=10000
+LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_TIMEOUT_SECONDS=900
 ```
 
 - все endpoint требуют `API_ENABLED=true`;
@@ -445,6 +451,8 @@ LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_MAX_CHUNKS=10000
 - native apply требует одновременно `APPLY_ENABLED=true` и
   `NATIVE_FULL_APPLY_ENABLED=true`;
 - стандартный native allow-list содержит `Paint_Rus` и `Paint_Ua`;
+- отдельный native timeout по умолчанию равен 900 секундам на одну порцию, а не
+  на весь склад;
 - status и preview включены по умолчанию для VPN/internal network;
 - оба apply-флага по умолчанию остаются выключенными.
 

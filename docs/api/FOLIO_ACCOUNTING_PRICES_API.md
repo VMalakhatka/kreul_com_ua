@@ -638,7 +638,7 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 
 | Поле | Значение |
 |---|---|
-| `phase` | стадия выполнения: `QUEUED`, `DIAGNOSTIC_SCAN`, `PRECHECK_RUNNING`, `PRECHECK_COMPLETED`, `APPLY_RUNNING`, `APPLY_COMPLETED`, `APPLY_STOPPED` или `FAILED` |
+| `phase` | стадия выполнения: `QUEUED`, `DIAGNOSTIC_SCAN`, `QUARANTINE_PREPARATION`, `PRECHECK_RUNNING`, `PRECHECK_COMPLETED`, `APPLY_RUNNING`, `APPLY_COMPLETED`, `APPLY_STOPPED` или `FAILED` |
 | `procedureCalls` | общее число вызовов `I_UCHET_TOVAR`, включая preflight и apply |
 | `preflightChunks` | число порций, гарантированно откатившихся во время проверки |
 | `committedChunks` | число успешно зафиксированных порций apply |
@@ -890,6 +890,7 @@ lavka.folio.accounting-prices.native-full-allowed-databases=${LAVKA_FOLIO_ACCOUN
 lavka.folio.accounting-prices.native-full-max-chunks=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_MAX_CHUNKS:10000}
 lavka.folio.accounting-prices.lock-timeout-ms=${LAVKA_FOLIO_ACCOUNTING_PRICE_LOCK_TIMEOUT_MS:5000}
 lavka.folio.accounting-prices.query-timeout-seconds=${LAVKA_FOLIO_ACCOUNTING_PRICE_QUERY_TIMEOUT_SECONDS:120}
+lavka.folio.accounting-prices.native-full-timeout-seconds=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_TIMEOUT_SECONDS:900}
 lavka.folio.accounting-prices.max-reported-warnings=${LAVKA_FOLIO_ACCOUNTING_PRICE_MAX_REPORTED_WARNINGS:200}
 lavka.folio.accounting-prices.zone=${LAVKA_FOLIO_ACCOUNTING_PRICE_ZONE:Europe/Kyiv}
 ```
@@ -915,11 +916,20 @@ Native-full имеет отдельную лестницу защиты:
 - `native-full-max-chunks` аварийно останавливает проход, если legacy-курсор не
   завершился за заданное число вызовов. Это safety limit, а не размер порции.
 
-`query-timeout-seconds` ограничивает одну read/write-транзакцию и один вызов
-legacy procedure. Для Java-full это лимит **на один SKU**, для native-full — на
-одну time-based порцию, а не на весь фоновый проход. Тайм-аут приводит к
-rollback текущей транзакции, однако при потере связи исход commit нельзя
-угадывать: status может потребовать ручной разбор как `OUTCOME_UNKNOWN`.
+`query-timeout-seconds` ограничивает обычные read/write-транзакции, точечный
+перерасчёт и Java-full. `native-full-timeout-seconds` отдельно ограничивает
+диагностический запрос и одну транзакционную time-based порцию штатного
+`I_UCHET_TOVAR`, а не весь фоновый проход. Стандартное значение native-full —
+900 секунд, чтобы большой склад не наследовал короткий лимит точечного API.
+Тайм-аут приводит к rollback текущей транзакции, однако при потере связи исход
+commit нельзя угадывать: status может потребовать ручной разбор как
+`OUTCOME_UNKNOWN`.
+
+Известные проблемные SKU временно исключаются пакетно: одна выборка и одно
+обновление на группу до 400 товаров, затем одно CASE-обновление восстанавливает
+их индивидуальные `TIP_TOVR`. Все эти действия остаются внутри той же MSSQL-
+транзакции, что и вызов процедуры. Фаза `QUARANTINE_PREPARATION` означает именно
+эту подготовку; это не зависание и ещё не подтверждённый commit.
 
 `max-reported-warnings` ограничивает массив `warnings` в status, но полный счётчик
 остаётся в `warningCount`; признак усечения передаётся в `warningsTruncated`.

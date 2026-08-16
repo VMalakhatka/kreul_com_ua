@@ -37,6 +37,9 @@ public class FolioAccountingPriceDao {
     private static final String REBUILD_CALL = "{call dbo.i_uchet_add(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)}";
     private static final String NATIVE_FULL_CALL =
             "{? = call dbo.I_UCHET_TOVAR(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)}";
+    // CASE-based restore uses three bind parameters per SKU. Staying well
+    // below SQL Server's 2100-parameter limit also keeps jTDS packets modest.
+    private static final int NATIVE_QUARANTINE_BATCH_SIZE = 400;
 
     private final JdbcTemplate jdbc;
 
@@ -493,27 +496,41 @@ public class FolioAccountingPriceDao {
                                                      Set<String> skus,
                                                      String unusedProductTypeMarker) {
         Map<String, String> originalTypes = new LinkedHashMap<>();
-        for (String sku : skus) {
-            List<String> values = jdbc.query("""
-                    SELECT TIP_TOVR
+        List<String> orderedSkus = new ArrayList<>(skus);
+        for (int start = 0; start < orderedSkus.size(); start += NATIVE_QUARANTINE_BATCH_SIZE) {
+            List<String> batch = orderedSkus.subList(
+                    start, Math.min(start + NATIVE_QUARANTINE_BATCH_SIZE, orderedSkus.size()));
+            String placeholders = placeholders(batch.size());
+            int foundBefore = originalTypes.size();
+            jdbc.query("""
+                    SELECT COD_ARTIC, TIP_TOVR
                       FROM dbo.SCL_ARTC WITH (UPDLOCK, HOLDLOCK)
                      WHERE ID_SCLAD = ?
-                       AND COD_ARTIC = ?
-                    """, (rs, rowNum) -> trim(rs.getString(1)), warehouseId, sku);
-            if (values.size() != 1) {
+                       AND COD_ARTIC IN (""" + placeholders + ")", statement -> {
+                statement.setInt(1, warehouseId);
+                bindStrings(statement, 2, batch);
+            }, (RowCallbackHandler) rs -> originalTypes.put(
+                    trim(rs.getString("COD_ARTIC")), trim(rs.getString("TIP_TOVR"))));
+            int found = originalTypes.size() - foundBefore;
+            if (found != batch.size()) {
                 throw new IllegalStateException(
-                        "Cannot quarantine Folio product " + sku + " in warehouse " + warehouseId);
+                        "Cannot read all Folio products for quarantine in warehouse " + warehouseId
+                                + ": expected=" + batch.size() + ", found=" + found);
             }
-            originalTypes.put(sku, values.get(0));
+
             int updated = jdbc.update("""
                     UPDATE dbo.SCL_ARTC
                        SET TIP_TOVR = ?
                      WHERE ID_SCLAD = ?
-                       AND COD_ARTIC = ?
-                    """, unusedProductTypeMarker, warehouseId, sku);
-            if (updated != 1) {
+                       AND COD_ARTIC IN (""" + placeholders + ")", statement -> {
+                statement.setString(1, unusedProductTypeMarker);
+                statement.setInt(2, warehouseId);
+                bindStrings(statement, 3, batch);
+            });
+            if (updated != batch.size()) {
                 throw new IllegalStateException(
-                        "Cannot quarantine Folio product " + sku + " in warehouse " + warehouseId);
+                        "Cannot quarantine all Folio products in warehouse " + warehouseId
+                                + ": expected=" + batch.size() + ", updated=" + updated);
             }
         }
         return originalTypes;
@@ -532,18 +549,48 @@ public class FolioAccountingPriceDao {
     }
 
     public void restoreNativeSkus(int warehouseId, Map<String, String> originalTypes) {
-        for (Map.Entry<String, String> entry : originalTypes.entrySet()) {
+        List<Map.Entry<String, String>> entries = new ArrayList<>(originalTypes.entrySet());
+        for (int start = 0; start < entries.size(); start += NATIVE_QUARANTINE_BATCH_SIZE) {
+            List<Map.Entry<String, String>> batch = entries.subList(
+                    start, Math.min(start + NATIVE_QUARANTINE_BATCH_SIZE, entries.size()));
+            StringBuilder cases = new StringBuilder();
+            for (int i = 0; i < batch.size(); i++) {
+                cases.append(" WHEN ? THEN ?");
+            }
+            String placeholders = placeholders(batch.size());
             int updated = jdbc.update("""
                     UPDATE dbo.SCL_ARTC
-                       SET TIP_TOVR = ?
-                     WHERE ID_SCLAD = ?
-                       AND COD_ARTIC = ?
-                    """, entry.getValue(), warehouseId, entry.getKey());
-            if (updated != 1) {
+                       SET TIP_TOVR = CASE COD_ARTIC""" + cases + " ELSE TIP_TOVR END\n"
+                    + " WHERE ID_SCLAD = ?\n"
+                    + "   AND COD_ARTIC IN (" + placeholders + ")", statement -> {
+                int parameter = 1;
+                for (Map.Entry<String, String> entry : batch) {
+                    statement.setString(parameter++, entry.getKey());
+                    if (entry.getValue() == null) {
+                        statement.setNull(parameter++, Types.VARCHAR);
+                    } else {
+                        statement.setString(parameter++, entry.getValue());
+                    }
+                }
+                statement.setInt(parameter++, warehouseId);
+                bindStrings(statement, parameter, batch.stream()
+                        .map(Map.Entry::getKey)
+                        .toList());
+            });
+            if (updated != batch.size()) {
                 throw new IllegalStateException(
-                        "Cannot restore Folio product " + entry.getKey()
-                                + " in warehouse " + warehouseId);
+                        "Cannot restore all Folio products in warehouse " + warehouseId
+                                + ": expected=" + batch.size() + ", updated=" + updated);
             }
+        }
+    }
+
+    private static void bindStrings(PreparedStatement statement,
+                                    int firstParameter,
+                                    List<String> values) throws SQLException {
+        int parameter = firstParameter;
+        for (String value : values) {
+            statement.setString(parameter++, value);
         }
     }
 

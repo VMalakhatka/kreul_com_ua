@@ -28,6 +28,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -329,6 +330,32 @@ class FolioAccountingPriceServiceTest {
         assertThat(completed.progressPercent()).isEqualTo(100);
         assertThat(transactions.rollbacks).isEqualTo(1);
         assertThat(transactions.commits).isZero();
+    }
+
+    @Test
+    void nativeFullUsesDedicatedLongTimeoutForDiagnosticsAndProcedureChunks() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.findNativeChronologyProblems(WAREHOUSE_ID, 900)).thenReturn(List.of());
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(900)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 100, 100, null, null));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = new FolioAccountingPriceService(
+                dao, DIRECT_EXECUTOR, CLOCK, transactions,
+                true, true, true, true, false,
+                Set.of("Paint_Rus"), 100, 5_000, 120, 900, 20);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+
+        assertThat(service.nativeFullStatus(false).status()).isEqualTo("PREVIEW_READY");
+        verify(dao).findNativeChronologyProblems(WAREHOUSE_ID, 900);
+        verify(dao).callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(900));
+        assertThat(transactions.timeouts).contains(900);
     }
 
     @Test
@@ -983,9 +1010,11 @@ class FolioAccountingPriceServiceTest {
     private static final class TrackingTransactionManager implements PlatformTransactionManager {
         private int commits;
         private int rollbacks;
+        private final List<Integer> timeouts = new ArrayList<>();
 
         @Override
         public TransactionStatus getTransaction(TransactionDefinition definition) {
+            timeouts.add(definition.getTimeout());
             return new SimpleTransactionStatus();
         }
 
