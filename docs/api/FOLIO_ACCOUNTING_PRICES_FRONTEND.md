@@ -309,12 +309,20 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 | `lastCommittedArt` | последний артикул последней подтверждённой commit-порции |
 | `checkpointArt` | входной курсор текущей или оборвавшейся порции |
 | `returnCode` | return status последнего вызова |
+| `failedChunk` | фактические входные и OUT-значения порции, отклонённой проверкой Java |
 | `warningCount` | полное число найденных проблем |
 | `warningsTruncated` | `true`, если массив `warnings` показан не полностью |
 | `error` | техническая причина финальной ошибки |
 
 `lastCommittedArt` и `checkpointArt` показываются только для диагностики. Они не
 являются разрешением автоматически продолжить job.
+
+При `FAILED` и непустом `failedChunk` показывайте отдельный технический блок:
+`inputArt`, `outputArt`, `nextArt`, `returnCode`, `currentUnits`, `totalUnits`,
+`problemDate` и `validationError`. Не подменяйте его значениями верхнего уровня:
+они могут относиться к предыдущей успешно принятой порции. Кнопку
+автоматического повтора не показывать; при `committedChunks=0` данные откатились,
+но сначала нужно разобрать сырой OUT-контракт.
 
 При `phase=QUARANTINE_PREPARATION` показывайте «Подготовка безопасного пропуска
 проблемных товаров». Java пакетно ставит временную служебную отметку и обязана

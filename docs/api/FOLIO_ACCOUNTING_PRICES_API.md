@@ -656,6 +656,7 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 | `lastCommittedArt` | последний SKU последней подтверждённой порции |
 | `checkpointArt` | входной `art` текущей/оборвавшейся порции; при неизвестном исходе не продолжать автоматически |
 | `returnCode` | return status последнего вызова |
+| `failedChunk` | сырые OUT-параметры порции, которую Java отклонила до commit: входной, обработанный и следующий артикулы, счётчики, return code и причина проверки |
 | `warnings` | пропущенные SKU и неожиданные проблемы процедуры с полной диагностикой |
 
 `progressUnits` на apply начинается заново после preflight. `procedureCalls`
@@ -679,6 +680,32 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 | `FAILED` | ошибка до первого commit |
 | `FAILED_PARTIAL` | ошибка либо новая отрицательная история после одной или нескольких зафиксированных порций; предыдущие commit сохранены |
 | `OUTCOME_UNKNOWN` | приложение не может доказать исход текущей транзакции или обнаружило нарушение её границы; автоматически повторять или продолжать нельзя |
+
+Если `FAILED` вызван нарушением OUT-контракта, ответ содержит отдельный объект:
+
+```json
+{
+  "status": "FAILED",
+  "committedChunks": 0,
+  "failedChunk": {
+    "inputArt": "ЭКО-ХУД МД 3",
+    "outputArt": "ЭКО-ХУД МД 3",
+    "nextArt": "ЭКО-ХУД МД 3",
+    "returnCode": 0,
+    "currentUnits": 40120,
+    "totalUnits": 2250174,
+    "problemDate": null,
+    "resultRowCount": 0,
+    "transactionCountBefore": 1,
+    "transactionCountAfter": 1,
+    "validationError": "I_UCHET_TOVAR returned an invalid continuation cursor"
+  }
+}
+```
+
+`failedChunk` относится именно к отклонённому вызову. Поля верхнего уровня
+`currentArt`, `nextArt` и `checkpointArt` могли быть опубликованы после
+предыдущей принятой порции и не заменяют эту диагностику.
 
 Пример успешного preview с пропущенным проблемным товаром:
 

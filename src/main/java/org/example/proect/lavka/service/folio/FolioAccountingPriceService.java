@@ -15,6 +15,7 @@ import org.example.proect.lavka.dto.folio.FolioAccountingPriceFullRecalculationR
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceFullStatusResponse;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceNativeFullRequest;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceNativeFullStatusResponse;
+import org.example.proect.lavka.dto.folio.FolioAccountingPriceNativeFullStatusResponse.ChunkDiagnostics;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationRequest;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationResponse;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationResponse.AccountingMethod;
@@ -340,7 +341,7 @@ public class FolioAccountingPriceService {
                 null, null, null, null,
                 0, 0, 0, 0, 0, null,
                 null, null, null, null, null,
-                0, false, List.of(),
+                0, false, List.of(), null,
                 "Another Folio accounting-price operation is already running"
         );
     }
@@ -857,11 +858,7 @@ public class FolioAccountingPriceService {
                     cursor, passTotalUnits, passProgressUnits,
                     seenCursors, rollbackOnly, requiredTotalUnits,
                     protectedBaseline, skippedSkus, quarantineMarker);
-            progress.procedureCalls++;
             passChunks++;
-            if (rollbackOnly) {
-                progress.preflightChunks++;
-            }
             progress.returnCode = output.returnCode();
             progress.currentArt = output.art();
             progress.nextArt = output.newArt();
@@ -955,6 +952,10 @@ public class FolioAccountingPriceService {
                             null, warehouseId,
                             method.calculationMode(), method.periodMode(), method.includeTax(),
                             cursor, 0, totalUnits, nativeFullTimeoutSeconds);
+                    progress.procedureCalls++;
+                    if (rollbackOnly) {
+                        progress.preflightChunks++;
+                    }
                 } finally {
                     if (!quarantined.isEmpty()) {
                         dao.restoreNativeSkus(warehouseId, quarantined);
@@ -976,9 +977,23 @@ public class FolioAccountingPriceService {
                 // These checks must run inside the transaction. Returning an
                 // invalid legacy OUT contract to the caller would otherwise
                 // commit the chunk before Java notices the failure.
-                validateNativeOutput(
-                        output, cursor, totalUnits, requiredTotalUnits,
-                        cumulativeUnits, seenCursors);
+                try {
+                    validateNativeOutput(
+                            output, cursor, totalUnits, requiredTotalUnits,
+                            cumulativeUnits, seenCursors);
+                } catch (RuntimeException validationError) {
+                    progress.failedChunk = chunkDiagnostics(
+                            cursor, output, validationError.getMessage());
+                    log.error("[folio.accounting-price] native_chunk_rejected job={} warehouse={} inputArt={} outputArt={} nextArt={} returnCode={} nCur={} nTot={} problemDate={} resultRows={} tranBefore={} tranAfter={} reason={}",
+                            progress.jobId, warehouseId, cursor, output.art(),
+                            output.newArt(), output.returnCode(),
+                            output.currentUnits(), output.totalUnits(),
+                            output.problemDate(), output.resultRowCount(),
+                            output.transactionCountBefore(),
+                            output.transactionCountAfter(),
+                            validationError.getMessage());
+                    throw validationError;
+                }
                 if (!output.hasProblem() && !rollbackOnly) {
                     NativeProtectedSnapshot protectedAfter =
                             dao.captureNativeProtectedSnapshot(
@@ -1636,7 +1651,7 @@ public class FolioAccountingPriceService {
                 null, null, null, null,
                 0, 0, 0, 0, 0, null,
                 null, null, null, null, null,
-                0, false, List.of(), null
+                0, false, List.of(), null, null
         );
     }
 
@@ -1659,7 +1674,7 @@ public class FolioAccountingPriceService {
                 progress.nextArt, progress.lastCommittedArt,
                 progress.checkpointArt, progress.returnCode,
                 progress.warningCount, progress.warningsTruncated,
-                List.copyOf(progress.warnings), error
+                List.copyOf(progress.warnings), progress.failedChunk, error
         ));
     }
 
@@ -1676,8 +1691,27 @@ public class FolioAccountingPriceService {
                 current.progressPercent(), current.currentArt(), current.nextArt(),
                 current.lastCommittedArt(), current.checkpointArt(),
                 current.returnCode(), current.warningCount(),
-                current.warningsTruncated(), current.warnings(), current.error()
+                current.warningsTruncated(), current.warnings(),
+                current.failedChunk(), current.error()
         );
+    }
+
+    private static ChunkDiagnostics chunkDiagnostics(
+            String inputArt,
+            NativeFullChunkOutput output,
+            String validationError) {
+        return new ChunkDiagnostics(
+                inputArt,
+                output.art(),
+                output.newArt(),
+                output.returnCode(),
+                output.currentUnits(),
+                output.totalUnits(),
+                output.problemDate(),
+                output.resultRowCount(),
+                output.transactionCountBefore(),
+                output.transactionCountAfter(),
+                validationError);
     }
 
     private FolioAccountingPriceFullStatusResponse failedStatus(
@@ -1762,6 +1796,7 @@ public class FolioAccountingPriceService {
         private Integer returnCode;
         private int warningCount;
         private boolean warningsTruncated;
+        private ChunkDiagnostics failedChunk;
 
         private NativeProgress(String jobId,
                                FolioAccountingPriceNativeFullRequest request,

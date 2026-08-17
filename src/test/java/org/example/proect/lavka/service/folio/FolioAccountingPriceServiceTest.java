@@ -659,6 +659,17 @@ class FolioAccountingPriceServiceTest {
 
         assertThat(failed.status()).isEqualTo("FAILED");
         assertThat(failed.error()).contains("continuation cursor");
+        assertThat(failed.failedChunk()).isNotNull();
+        assertThat(failed.failedChunk().inputArt()).isNull();
+        assertThat(failed.failedChunk().outputArt()).isEqualTo(NEGATIVE_SKU);
+        assertThat(failed.failedChunk().nextArt()).isEqualTo(CLEAN_SKU);
+        assertThat(failed.failedChunk().returnCode()).isZero();
+        assertThat(failed.failedChunk().currentUnits()).isEqualTo(40);
+        assertThat(failed.failedChunk().totalUnits()).isEqualTo(100);
+        assertThat(failed.failedChunk().validationError())
+                .contains("invalid continuation cursor");
+        assertThat(failed.procedureCalls()).isEqualTo(1);
+        assertThat(failed.preflightChunks()).isEqualTo(1);
         assertThat(transactions.rollbacks).isEqualTo(1);
         assertThat(transactions.commits).isZero();
     }
@@ -685,6 +696,11 @@ class FolioAccountingPriceServiceTest {
 
         assertThat(failed.status()).isEqualTo("FAILED");
         assertThat(failed.error()).contains("before the input cursor");
+        assertThat(failed.failedChunk().inputArt()).isEqualTo("C");
+        assertThat(failed.failedChunk().outputArt()).isEqualTo("B");
+        assertThat(failed.failedChunk().nextArt()).isNull();
+        assertThat(failed.procedureCalls()).isEqualTo(2);
+        assertThat(failed.preflightChunks()).isEqualTo(2);
         assertThat(transactions.rollbacks).isEqualTo(2);
         assertThat(transactions.commits).isZero();
     }
