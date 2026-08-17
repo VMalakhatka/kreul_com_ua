@@ -133,4 +133,23 @@ class FolioAccountingPriceDaoTest {
                 .contains("a.COD_ARTIC > ?");
     }
 
+    @Test
+    void processedRangeEndsImmediatelyBeforeTheContinuationArt() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(
+                anyString(), eq(String.class), eq(5), eq("NEXT")))
+                .thenReturn("PREVIOUS   ");
+
+        String rangeEnd = new FolioAccountingPriceDao(jdbc)
+                .findProcessedRangeEnd(5, "NEXT");
+
+        assertThat(rangeEnd).isEqualTo("PREVIOUS");
+        var sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc).queryForObject(
+                sql.capture(), eq(String.class), eq(5), eq("NEXT"));
+        assertThat(sql.getValue())
+                .contains("MAX(COD_ARTIC)")
+                .contains("COD_ARTIC < ?");
+    }
+
 }

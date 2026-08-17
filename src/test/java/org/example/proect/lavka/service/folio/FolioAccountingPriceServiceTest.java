@@ -493,6 +493,7 @@ class FolioAccountingPriceServiceTest {
     void nativeApplyAllowsDifferentTimeBasedChunkBoundaries() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
+        when(dao.findProcessedRangeEnd(WAREHOUSE_ID, null)).thenReturn("Z");
         NativeProtectedSnapshot completeScope = protectedSnapshot(
                 List.of("A", "B", "Z"), "article-sha256");
         when(dao.captureNativeProtectedSnapshot(
@@ -645,12 +646,15 @@ class FolioAccountingPriceServiceTest {
     void backwardNativeCursorIsRejectedInsideRollbackTransaction() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
-        when(dao.isArtAfter(eq(WAREHOUSE_ID), anyString(), anyString()))
-                .thenReturn(false);
+        when(dao.isArtAfter(WAREHOUSE_ID, "C", "B")).thenReturn(false);
         when(dao.callNativeFullChunk(
                 eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
                 eq(null), eq(0), eq(0), eq(120)))
-                .thenReturn(nativeChunk(NEGATIVE_SKU, 40, 100, CLEAN_SKU, null));
+                .thenReturn(nativeChunk("B", 40, 100, "C", null));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq("C"), eq(0), eq(100), eq(120)))
+                .thenReturn(nativeChunk("Z", 20, 100, "B", null));
         TrackingTransactionManager transactions = new TrackingTransactionManager();
         FolioAccountingPriceService service = nativeService(dao, transactions, false);
 
@@ -661,25 +665,24 @@ class FolioAccountingPriceServiceTest {
         assertThat(failed.status()).isEqualTo("FAILED");
         assertThat(failed.error()).contains("continuation cursor");
         assertThat(failed.failedChunk()).isNotNull();
-        assertThat(failed.failedChunk().inputArt()).isNull();
-        assertThat(failed.failedChunk().outputArt()).isEqualTo(NEGATIVE_SKU);
-        assertThat(failed.failedChunk().nextArt()).isEqualTo(CLEAN_SKU);
+        assertThat(failed.failedChunk().inputArt()).isEqualTo("C");
+        assertThat(failed.failedChunk().outputArt()).isEqualTo("Z");
+        assertThat(failed.failedChunk().nextArt()).isEqualTo("B");
         assertThat(failed.failedChunk().returnCode()).isZero();
-        assertThat(failed.failedChunk().currentUnits()).isEqualTo(40);
+        assertThat(failed.failedChunk().currentUnits()).isEqualTo(20);
         assertThat(failed.failedChunk().totalUnits()).isEqualTo(100);
         assertThat(failed.failedChunk().validationError())
                 .contains("invalid continuation cursor");
-        assertThat(failed.procedureCalls()).isEqualTo(1);
-        assertThat(failed.preflightChunks()).isEqualTo(1);
-        assertThat(transactions.rollbacks).isEqualTo(1);
+        assertThat(failed.procedureCalls()).isEqualTo(2);
+        assertThat(failed.preflightChunks()).isEqualTo(2);
+        assertThat(transactions.rollbacks).isEqualTo(2);
         assertThat(transactions.commits).isZero();
     }
 
     @Test
-    void outputArtBeforeSecondChunkInputIsRejectedInsideTransaction() {
+    void staleOutputArtDoesNotRejectACompletedRollbackPreview() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
-        when(dao.isArtAtOrAfter(WAREHOUSE_ID, "C", "B")).thenReturn(false);
         when(dao.callNativeFullChunk(
                 eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
                 eq(null), eq(0), eq(0), eq(120)))
@@ -693,15 +696,12 @@ class FolioAccountingPriceServiceTest {
 
         service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
                 WAREHOUSE_ID, true, false));
-        var failed = service.nativeFullStatus(false);
+        var completed = service.nativeFullStatus(false);
 
-        assertThat(failed.status()).isEqualTo("FAILED");
-        assertThat(failed.error()).contains("before the input cursor");
-        assertThat(failed.failedChunk().inputArt()).isEqualTo("C");
-        assertThat(failed.failedChunk().outputArt()).isEqualTo("B");
-        assertThat(failed.failedChunk().nextArt()).isNull();
-        assertThat(failed.procedureCalls()).isEqualTo(2);
-        assertThat(failed.preflightChunks()).isEqualTo(2);
+        assertThat(completed.status()).isEqualTo("PREVIEW_READY");
+        assertThat(completed.failedChunk()).isNull();
+        assertThat(completed.procedureCalls()).isEqualTo(2);
+        assertThat(completed.preflightChunks()).isEqualTo(2);
         assertThat(transactions.rollbacks).isEqualTo(2);
         assertThat(transactions.commits).isZero();
     }
@@ -914,6 +914,9 @@ class FolioAccountingPriceServiceTest {
                 .thenReturn(true);
         when(dao.isArtAtOrAfter(eq(WAREHOUSE_ID), anyString(), anyString()))
                 .thenReturn(true);
+        when(dao.findProcessedRangeEnd(eq(WAREHOUSE_ID),
+                org.mockito.ArgumentMatchers.nullable(String.class)))
+                .thenReturn(CLEAN_SKU);
         NativeProtectedSnapshot protectedState = protectedSnapshot("article-sha256");
         when(dao.captureNativeProtectedSnapshot(
                 anyInt(), org.mockito.ArgumentMatchers.nullable(String.class),

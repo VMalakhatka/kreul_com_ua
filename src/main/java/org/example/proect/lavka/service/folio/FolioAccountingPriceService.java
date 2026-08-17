@@ -853,11 +853,12 @@ public class FolioAccountingPriceService {
                 progress.phase = "QUARANTINE_PREPARATION";
                 publishNative(progress, true, true, null);
             }
-            NativeFullChunkOutput output = executeNativeChunk(
+            NativeExecutedChunk executed = executeNativeChunk(
                     progress, progress.database, progress.request.warehouseId(), method,
                     cursor, passTotalUnits, passProgressUnits,
                     seenCursors, rollbackOnly, requiredTotalUnits,
                     protectedBaseline, skippedSkus, quarantineMarker);
+            NativeFullChunkOutput output = executed.output();
             passChunks++;
             progress.returnCode = output.returnCode();
             progress.currentArt = output.art();
@@ -888,10 +889,10 @@ public class FolioAccountingPriceService {
                 }
             } else if (!rollbackOnly) {
                 progress.committedChunks++;
-                progress.lastCommittedArt = output.art();
-                log.info("[folio.accounting-price] native_chunk_committed job={} warehouse={} inputArt={} outputArt={} newArt={} nCur={} nTot={}",
+                progress.lastCommittedArt = executed.processedEndArt();
+                log.info("[folio.accounting-price] native_chunk_committed job={} warehouse={} inputArt={} outputArt={} processedEndArt={} newArt={} nCur={} nTot={}",
                         progress.jobId, progress.request.warehouseId(), cursor,
-                        output.art(), output.newArt(), output.currentUnits(),
+                        output.art(), executed.processedEndArt(), output.newArt(), output.currentUnits(),
                         output.totalUnits());
             }
 
@@ -905,19 +906,19 @@ public class FolioAccountingPriceService {
         }
     }
 
-    private NativeFullChunkOutput executeNativeChunk(NativeProgress progress,
-                                                     String expectedDatabase,
-                                                     int warehouseId,
-                                                     AccountingMethod method,
-                                                     String cursor,
-                                                     int totalUnits,
-                                                     int cumulativeUnits,
-                                                     Set<String> seenCursors,
-                                                     boolean rollbackOnly,
-                                                     int requiredTotalUnits,
-                                                     NativeProtectedSnapshot protectedBaseline,
-                                                     Set<String> skippedSkus,
-                                                     String quarantineMarker) {
+    private NativeExecutedChunk executeNativeChunk(NativeProgress progress,
+                                                    String expectedDatabase,
+                                                    int warehouseId,
+                                                    AccountingMethod method,
+                                                    String cursor,
+                                                    int totalUnits,
+                                                    int cumulativeUnits,
+                                                    Set<String> seenCursors,
+                                                    boolean rollbackOnly,
+                                                    int requiredTotalUnits,
+                                                    NativeProtectedSnapshot protectedBaseline,
+                                                    Set<String> skippedSkus,
+                                                    String quarantineMarker) {
         try {
             return Objects.requireNonNull(nativeWriteTransaction.execute(status -> {
                 dao.acquireRecalculationMutex(lockTimeoutMs);
@@ -994,12 +995,21 @@ public class FolioAccountingPriceService {
                             validationError.getMessage());
                     throw validationError;
                 }
+                String processedEndArt = null;
                 if (!output.hasProblem() && !rollbackOnly) {
+                    processedEndArt = dao.findProcessedRangeEnd(
+                            warehouseId, output.newArt());
+                    if (processedEndArt == null
+                            || (cursor != null && !dao.isArtAtOrAfter(
+                            warehouseId, cursor, processedEndArt))) {
+                        throw new IllegalStateException(
+                                "Cannot determine the protected article range processed by I_UCHET_TOVAR");
+                    }
                     NativeProtectedSnapshot protectedAfter =
                             dao.captureNativeProtectedSnapshot(
-                                    warehouseId, cursor, output.art());
+                                    warehouseId, cursor, processedEndArt);
                     NativeProtectedSnapshot expectedRange = nativeSnapshotRange(
-                            protectedBaseline, cursor, output.art());
+                            protectedBaseline, cursor, processedEndArt);
                     if (!Objects.equals(expectedRange, protectedAfter)) {
                         throw new IllegalStateException(
                                 "I_UCHET_TOVAR changed a protected stock or movement invariant");
@@ -1008,7 +1018,7 @@ public class FolioAccountingPriceService {
                 if (output.hasProblem() || rollbackOnly) {
                     status.setRollbackOnly();
                 }
-                return output;
+                return new NativeExecutedChunk(output, processedEndArt);
             }));
         } catch (CannotAcquireLockException e) {
             throw new FolioAccountingPriceBusyException(e);
@@ -1260,19 +1270,12 @@ public class FolioAccountingPriceService {
             throw new IllegalStateException(
                     "I_UCHET_TOVAR did not advance the continuation cursor");
         }
-        if (inputCursor != null
-                && (output.art() == null
-                || !dao.isArtAtOrAfter(
-                        warehouseId, inputCursor, output.art()))) {
-            throw new IllegalStateException(
-                    "I_UCHET_TOVAR returned an output art before the input cursor");
-        }
         if (output.newArt() != null) {
             if (output.currentUnits() <= 0
                     || seenCursors.contains(output.newArt())
                     || output.art() == null
-                    || !dao.isArtAfter(
-                            warehouseId, output.art(), output.newArt())) {
+                    || (inputCursor != null && !dao.isArtAfter(
+                            warehouseId, inputCursor, output.newArt()))) {
                 throw new IllegalStateException(
                         "I_UCHET_TOVAR returned an invalid continuation cursor");
             }
@@ -1815,6 +1818,12 @@ public class FolioAccountingPriceService {
     private record NativePassResult(
             boolean problemDetected,
             int totalUnits
+    ) {
+    }
+
+    private record NativeExecutedChunk(
+            NativeFullChunkOutput output,
+            String processedEndArt
     ) {
     }
 

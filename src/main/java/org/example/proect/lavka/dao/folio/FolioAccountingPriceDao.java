@@ -803,6 +803,30 @@ public class FolioAccountingPriceDao {
         return result != null && result == 1;
     }
 
+    /**
+     * Returns the last article that belongs to a native recalculation chunk.
+     * I_UCHET_TOVAR exposes the first article of the next chunk, while its
+     * @art OUT value is not a reliable range boundary on the legacy database.
+     */
+    public String findProcessedRangeEnd(int warehouseId, String nextArt) {
+        String result;
+        if (nextArt == null) {
+            result = jdbc.queryForObject("""
+                    SELECT MAX(COD_ARTIC)
+                      FROM dbo.SCL_ARTC
+                     WHERE ID_SCLAD = ?
+                    """, String.class, warehouseId);
+        } else {
+            result = jdbc.queryForObject("""
+                    SELECT MAX(COD_ARTIC)
+                      FROM dbo.SCL_ARTC
+                     WHERE ID_SCLAD = ?
+                       AND COD_ARTIC < ?
+                    """, String.class, warehouseId, nextArt);
+        }
+        return trim(result);
+    }
+
     public WarehouseRow findWarehouseForUpdate(int warehouseId) {
         return jdbc.queryForObject("""
                 SELECT ID_SCLAD, NAME_SCLAD, N_2, N_4

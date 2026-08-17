@@ -305,7 +305,7 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 | `committedChunks` | число подтверждённых приложением commit-порций apply |
 | `progressUnits` / `totalUnits` | legacy-счётчики текущего прохода |
 | `progressPercent` | приблизительный процент; может отсутствовать до получения `n_tot` |
-| `currentArt` / `nextArt` | OUT-артикул и курсор следующей порции |
+| `currentArt` / `nextArt` | сырое OUT-значение процедуры и курсор следующей порции; `currentArt` не считать доказанной границей порции |
 | `lastCommittedArt` | последний артикул последней подтверждённой commit-порции |
 | `checkpointArt` | входной курсор текущей или оборвавшейся порции |
 | `returnCode` | return status последнего вызова |
@@ -327,7 +327,9 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 Не сравнивайте артикулы лексикографически в PHP/JavaScript и не определяйте по
 ним движение курсора. Порядок ФОЛИО задаётся legacy CP1251-collation колонки
 `SCL_ARTC.COD_ARTIC`; корректность курсора проверяет только Java API через эту
-колонку.
+колонку. Java проверяет продвижение `inputArt -> nextArt`; `outputArt` остаётся
+только диагностическим значением старой процедуры. Фронтенду не нужно искать
+«последний обработанный SKU» по `outputArt`.
 
 При `phase=QUARANTINE_PREPARATION` показывайте «Подготовка безопасного пропуска
 проблемных товаров». Java пакетно ставит временную служебную отметку и обязана
