@@ -111,6 +111,26 @@ class FolioAccountingPriceDaoTest {
     }
 
     @Test
+    void divideIsolationQuarantinesOutsideRangeAndKnownSkippedSkus() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(10);
+        when(jdbc.update(anyString(), any(PreparedStatementSetter.class))).thenReturn(1);
+
+        int updated = new FolioAccountingPriceDao(jdbc)
+                .quarantineNativeOutsideRange(
+                        5, "SKU-B", "SKU-D", Set.of("SKU-C"), "9");
+
+        assertThat(updated).isEqualTo(11);
+        var rangeSql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc).update(rangeSql.capture(), any(Object[].class));
+        assertThat(rangeSql.getValue())
+                .contains("COD_ARTIC < ? OR COD_ARTIC > ?");
+        var skippedSql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc).update(skippedSql.capture(), any(PreparedStatementSetter.class));
+        assertThat(skippedSql.getValue()).contains("COD_ARTIC IN (?)");
+    }
+
+    @Test
     void artOrderingUsesTheWarehouseArticleColumnCollation() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForObject(

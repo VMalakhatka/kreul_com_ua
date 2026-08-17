@@ -149,7 +149,10 @@ native preview менеджеры не должны создавать, сохр
 2. помечает их как `skipped=true` и сохраняет полную диагностику;
 3. выполняет точный preflight через `I_UCHET_TOVAR`, rollback каждой порции,
    временно исключая известные проблемные SKU;
-4. если остальная область чистая — повторяет проход с commit безопасных SKU.
+4. при `Divide by zero` откатывает порцию, переходит в
+   `DIVIDE_BY_ZERO_ISOLATION`, rollback-пробами подтверждает один точный SKU,
+   добавляет его в warnings/quarantine и повторяет ту же порцию;
+5. если остальная область чистая — повторяет проход с commit безопасных SKU.
 
 Наличие таких warnings не блокирует apply. Успешный preview с пропусками имеет
 `PREVIEW_READY_WITH_WARNINGS`, а успешный apply —
@@ -299,7 +302,7 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 | Поле | Как отображать |
 |---|---|
 | `status` | итоговое состояние job |
-| `phase` | текущая стадия: `QUEUED`, `DIAGNOSTIC_SCAN`, `QUARANTINE_PREPARATION`, preflight, apply или остановка |
+| `phase` | текущая стадия: `QUEUED`, `DIAGNOSTIC_SCAN`, `DIVIDE_BY_ZERO_ISOLATION`, `QUARANTINE_PREPARATION`, preflight, apply или остановка |
 | `procedureCalls` | число вызовов `I_UCHET_TOVAR` в обоих проходах |
 | `preflightChunks` | число гарантированно откатившихся порций проверки |
 | `committedChunks` | число подтверждённых приложением commit-порций apply |
@@ -335,6 +338,18 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 проблемных товаров». Java пакетно ставит временную служебную отметку и обязана
 восстановить исходные типы до завершения каждой транзакции. Не показывайте эту
 фазу как ошибку и не отправляйте повторный POST, пока `running=true`.
+
+При `phase=DIVIDE_BY_ZERO_ISOLATION` показывайте «Определение товара с ошибкой
+учётной цены». Это не финальная ошибка: Java уже откатила исходную порцию и
+проверяет диапазоны товаров только в rollback-транзакциях. Процент основного
+прохода в этой фазе может временно не меняться. Не перезапускайте POST и не
+прерывайте контейнер.
+
+Warning `ACCOUNTING_PRICE_DIVIDE_BY_ZERO` означает, что ошибка подтверждена на
+одном SKU (`details.exactSkuConfirmed=true`). Показывайте SKU менеджеру как
+пропущенный товар, но не блокируйте успешный итог
+`PREVIEW_READY_WITH_WARNINGS`/`COMPLETED_WITH_WARNINGS`. `checkpointArt` не
+является виновным товаром и нужен только для технической диагностики.
 
 ### Native статусы
 

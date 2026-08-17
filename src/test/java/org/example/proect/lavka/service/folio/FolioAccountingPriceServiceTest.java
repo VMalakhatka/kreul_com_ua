@@ -17,6 +17,7 @@ import org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationReque
 import org.junit.jupiter.api.Test;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -333,6 +334,90 @@ class FolioAccountingPriceServiceTest {
     }
 
     @Test
+    void nativePreviewIsolatesDivideByZeroSkuAndContinuesOtherProducts() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        String firstSku = "A";
+        String divideSku = "B";
+        String lastSku = "C";
+        stubProduct(dao, divideSku, article(divideSku, "0"), List.of());
+        when(dao.findUnusedProductTypeMarker()).thenReturn("9");
+        when(dao.findNativeEligibleSkus(WAREHOUSE_ID, null, 120))
+                .thenReturn(List.of(firstSku, divideSku, lastSku));
+        when(dao.quarantineNativeSkus(
+                WAREHOUSE_ID, Set.of(divideSku), "9"))
+                .thenReturn(Map.of(divideSku, "1"));
+
+        DataIntegrityViolationException divide = divideByZeroException();
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenThrow(divide)                                      // main pass
+                .thenThrow(divide)                                      // range A..B
+                .thenReturn(nativeChunk(firstSku, 40, 40, null, null))   // exact A
+                .thenThrow(divide)                                      // exact B
+                .thenReturn(nativeChunk(lastSku, 100, 100, null, null)); // retry
+
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, false);
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("PREVIEW_READY_WITH_WARNINGS");
+        assertThat(completed.committedChunks()).isZero();
+        assertThat(completed.error()).isNull();
+        assertThat(completed.procedureCalls()).isEqualTo(5);
+        assertThat(completed.warnings())
+                .filteredOn(warning -> "ACCOUNTING_PRICE_DIVIDE_BY_ZERO"
+                        .equals(warning.code()))
+                .singleElement()
+                .satisfies(warning -> assertThat(warning.details())
+                        .containsEntry("sku", divideSku)
+                        .containsEntry("exactSkuConfirmed", true)
+                        .containsEntry("skipped", true)
+                        .containsEntry("source", "FOLIO_SINGLE_SKU_ROLLBACK_PROBE"));
+        verify(dao).quarantineNativeOutsideRange(
+                WAREHOUSE_ID, firstSku, divideSku, Set.of(), "9");
+        verify(dao).quarantineNativeOutsideRange(
+                WAREHOUSE_ID, firstSku, firstSku, Set.of(), "9");
+        verify(dao).quarantineNativeOutsideRange(
+                WAREHOUSE_ID, divideSku, divideSku, Set.of(), "9");
+        verify(dao).quarantineNativeSkus(
+                WAREHOUSE_ID, Set.of(divideSku), "9");
+        assertThat(transactions.commits).isEqualTo(1); // read-only SKU details
+        assertThat(transactions.rollbacks).isEqualTo(5);
+    }
+
+    @Test
+    void nativeApplyDoesNotDiscoverAndSkipNewDivideByZeroAfterPreflight() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        NativeProtectedSnapshot baseline = protectedSnapshot("article-sha256");
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, null, null)).thenReturn(baseline);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 100, 100, null, null))
+                .thenThrow(divideByZeroException());
+
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, true);
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.committedChunks()).isZero();
+        assertThat(failed.error()).contains("Divide by zero");
+        verify(dao, never()).findNativeEligibleSkus(anyInt(),
+                org.mockito.ArgumentMatchers.nullable(String.class), anyInt());
+        assertThat(transactions.rollbacks).isEqualTo(3);
+        assertThat(transactions.commits).isZero();
+    }
+
+    @Test
     void nativeFullUsesDedicatedLongTimeoutForDiagnosticsAndProcedureChunks() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
@@ -436,7 +521,7 @@ class FolioAccountingPriceServiceTest {
     }
 
     @Test
-    void nativeProcedureFailureRestoresTemporaryQuarantineBeforeRollback() {
+    void nativeProcedureFailurePreservesRootErrorAndLetsTransactionRestoreQuarantine() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
         when(dao.findNativeChronologyProblems(WAREHOUSE_ID, 120))
@@ -460,9 +545,9 @@ class FolioAccountingPriceServiceTest {
 
         assertThat(service.nativeFullStatus(false).status()).isEqualTo("FAILED");
         assertThat(transactions.rollbacks).isEqualTo(1);
-        verify(dao).restoreNativeSkus(
+        verify(dao, never()).restoreNativeSkus(
                 WAREHOUSE_ID, Map.of(NEGATIVE_SKU, "1"));
-        verify(dao).deleteNativeQuarantineType("9");
+        verify(dao, never()).deleteNativeQuarantineType("9");
     }
 
     @Test
@@ -931,6 +1016,13 @@ class FolioAccountingPriceServiceTest {
                                                      String problemDate) {
         return new NativeFullChunkOutput(
                 0, art, current, total, next, problemDate, 1, 1, 0);
+    }
+
+    private static DataIntegrityViolationException divideByZeroException() {
+        return new DataIntegrityViolationException(
+                "ConnectionCallback; Divide by zero error encountered.",
+                new java.sql.SQLException(
+                        "Divide by zero error encountered.", "22012", 8134));
     }
 
     private static NativeChronologyProblem nativeProblem(String code,

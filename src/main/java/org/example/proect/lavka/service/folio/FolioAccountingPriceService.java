@@ -3,6 +3,7 @@ package org.example.proect.lavka.service.folio;
 import lombok.extern.slf4j.Slf4j;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.ArticleRow;
+import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.ArithmeticSessionOptions;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.MovementRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.MovementTotals;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeFullChunkOutput;
@@ -47,6 +48,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -64,6 +66,7 @@ public class FolioAccountingPriceService {
     private static final BigDecimal NEGATIVE_EPSILON = new BigDecimal("0.00000000001");
     private static final BigDecimal POSTCHECK_ABSOLUTE_EPSILON = new BigDecimal("0.000001");
     private static final BigDecimal POSTCHECK_RELATIVE_EPSILON = new BigDecimal("0.000000000001");
+    private static final int MAX_DIVIDE_ISOLATION_PROBES_PER_SKU = 64;
     private static final MovementTotals EMPTY_MOVEMENT_TOTALS =
             new MovementTotals(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
 
@@ -705,6 +708,7 @@ public class FolioAccountingPriceService {
             AccountingMethod method = method(scope.requested().rawAccountingCode());
             validateNativeScope(scope, method);
             progress.accountingMethod = method;
+            logNativeArithmeticSessionOptions(progress);
 
             progress.phase = "DIAGNOSTIC_SCAN";
             progress.status = "RUNNING";
@@ -742,6 +746,19 @@ public class FolioAccountingPriceService {
             NativePassResult preflight = runNativePass(
                     progress, method, true, 0, null,
                     skippedSkus, quarantineMarker);
+
+            // Divide-by-zero isolation may discover additional SKUs after the
+            // initial deterministic scan. Resolve a marker again for the
+            // second (apply) pass because all isolation transactions rolled
+            // their temporary TIP_TOVR row back.
+            if (!skippedSkus.isEmpty()
+                    && (quarantineMarker == null || quarantineMarker.isBlank())) {
+                quarantineMarker = dao.findUnusedProductTypeMarker();
+                if (quarantineMarker == null || quarantineMarker.isBlank()) {
+                    throw new IllegalStateException(
+                            "Folio has no unused product-type marker for recalculation quarantine");
+                }
+            }
 
             if (preflight.problemDetected()) {
                 progress.status = "BLOCKED_NEGATIVE_STOCK";
@@ -821,6 +838,23 @@ public class FolioAccountingPriceService {
         }
     }
 
+    private void logNativeArithmeticSessionOptions(NativeProgress progress) {
+        try {
+            ArithmeticSessionOptions options = dao.readArithmeticSessionOptions();
+            if (options != null) {
+                log.info("[folio.accounting-price] native_session_options job={} database={} optionMask={} ansiWarnings={} arithAbort={} arithIgnore={}",
+                        progress.jobId, progress.database, options.optionMask(),
+                        options.ansiWarnings(), options.arithAbort(),
+                        options.arithIgnore());
+            }
+        } catch (Exception error) {
+            // Session-option logging is diagnostic only and must not prevent a
+            // rollback preview. The procedure safety rules remain unchanged.
+            log.warn("[folio.accounting-price] native_session_options_unavailable job={} database={} msg={}",
+                    progress.jobId, progress.database, safeMessage(error));
+        }
+    }
+
     private NativePassResult runNativePass(NativeProgress progress,
                                            AccountingMethod method,
                                            boolean rollbackOnly,
@@ -829,6 +863,7 @@ public class FolioAccountingPriceService {
                                            Set<String> skippedSkus,
                                            String quarantineMarker) {
         String cursor = null;
+        String effectiveQuarantineMarker = quarantineMarker;
         int passTotalUnits = 0;
         int passProgressUnits = 0;
         int passChunks = 0;
@@ -853,11 +888,49 @@ public class FolioAccountingPriceService {
                 progress.phase = "QUARANTINE_PREPARATION";
                 publishNative(progress, true, true, null);
             }
-            NativeExecutedChunk executed = executeNativeChunk(
-                    progress, progress.database, progress.request.warehouseId(), method,
-                    cursor, passTotalUnits, passProgressUnits,
-                    seenCursors, rollbackOnly, requiredTotalUnits,
-                    protectedBaseline, skippedSkus, quarantineMarker);
+            NativeExecutedChunk executed;
+            try {
+                executed = executeNativeChunk(
+                        progress, progress.database, progress.request.warehouseId(), method,
+                        cursor, passTotalUnits, passProgressUnits,
+                        seenCursors, rollbackOnly, requiredTotalUnits,
+                        protectedBaseline, skippedSkus, effectiveQuarantineMarker);
+            } catch (RuntimeException error) {
+                if (!rollbackOnly || !isDivideByZero(error)) {
+                    throw error;
+                }
+                if (effectiveQuarantineMarker == null
+                        || effectiveQuarantineMarker.isBlank()) {
+                    effectiveQuarantineMarker = dao.findUnusedProductTypeMarker();
+                }
+                if (effectiveQuarantineMarker == null
+                        || effectiveQuarantineMarker.isBlank()) {
+                    throw new IllegalStateException(
+                            "Folio has no unused product-type marker for divide-by-zero isolation",
+                            error);
+                }
+                String problemSku = isolateNativeDivideByZeroSku(
+                        progress, method, cursor, skippedSkus,
+                        effectiveQuarantineMarker);
+                if (!skippedSkus.add(problemSku)) {
+                    throw new IllegalStateException(
+                            "Native Folio divide-by-zero isolation repeated SKU " + problemSku,
+                            error);
+                }
+                Issue issue = nativeDivideByZeroIssue(
+                        progress.request.warehouseId(), problemSku, cursor,
+                        progress.divideIsolationProbes);
+                addNativeIssue(progress, issue);
+                log.warn("[folio.accounting-price] native_divide_by_zero_sku job={} warehouse={} sku={} checkpoint={} isolationProbes={} action=quarantined",
+                        progress.jobId, progress.request.warehouseId(), problemSku,
+                        cursor, progress.divideIsolationProbes);
+                progress.phase = "PRECHECK_RUNNING";
+                publishNative(progress, true, true, null);
+                // The failed chunk was rolled back. Retry from the same cursor
+                // with the confirmed SKU added to the temporary quarantine.
+                seenCursors.remove(cursorKey);
+                continue;
+            }
             NativeFullChunkOutput output = executed.output();
             passChunks++;
             progress.returnCode = output.returnCode();
@@ -906,6 +979,209 @@ public class FolioAccountingPriceService {
         }
     }
 
+    private String isolateNativeDivideByZeroSku(NativeProgress progress,
+                                                AccountingMethod method,
+                                                String failedCheckpoint,
+                                                Set<String> alreadySkipped,
+                                                String quarantineMarker) {
+        progress.phase = "DIVIDE_BY_ZERO_ISOLATION";
+        publishNative(progress, true, true, null);
+
+        List<String> candidates = dao.findNativeEligibleSkus(
+                        progress.request.warehouseId(), failedCheckpoint,
+                        nativeFullTimeoutSeconds)
+                .stream()
+                .filter(sku -> !alreadySkipped.contains(sku))
+                .toList();
+        if (candidates.isEmpty()) {
+            throw new IllegalStateException(
+                    "Cannot isolate the Folio divide-by-zero SKU: no eligible articles remain");
+        }
+
+        int first = 0;
+        int last = candidates.size() - 1;
+        int probesBeforeIsolation = progress.divideIsolationProbes;
+        while (first < last) {
+            requireDivideIsolationProbeBudget(progress, probesBeforeIsolation);
+            int middle = first + (last - first) / 2;
+            NativeIsolationProbeResult probe = probeNativeRangeForDivideByZero(
+                    progress, method,
+                    candidates.get(first), candidates.get(middle),
+                    alreadySkipped, quarantineMarker);
+            if (probe == NativeIsolationProbeResult.DIVIDE_BY_ZERO) {
+                last = middle;
+            } else {
+                first = middle + 1;
+            }
+        }
+
+        String exactSku = candidates.get(first);
+        requireDivideIsolationProbeBudget(progress, probesBeforeIsolation);
+        NativeIsolationProbeResult exactProbe = probeNativeRangeForDivideByZero(
+                progress, method, exactSku, exactSku,
+                alreadySkipped, quarantineMarker);
+        if (exactProbe != NativeIsolationProbeResult.DIVIDE_BY_ZERO) {
+            throw new IllegalStateException(
+                    "The native divide-by-zero error could not be reproduced for isolated SKU "
+                            + exactSku);
+        }
+        return exactSku;
+    }
+
+    private NativeIsolationProbeResult probeNativeRangeForDivideByZero(
+            NativeProgress progress,
+            AccountingMethod method,
+            String firstArt,
+            String lastArt,
+            Set<String> alreadySkipped,
+            String quarantineMarker) {
+        progress.divideIsolationProbes++;
+        progress.currentArt = firstArt;
+        progress.nextArt = lastArt;
+        publishNative(progress, true, true, null);
+
+        try {
+            return Objects.requireNonNull(nativeWriteTransaction.execute(status -> {
+                validateNativeTransactionScope(
+                        progress.database, progress.request.warehouseId(), method);
+                dao.createNativeQuarantineType(quarantineMarker);
+                dao.quarantineNativeOutsideRange(
+                        progress.request.warehouseId(), firstArt, lastArt,
+                        Set.copyOf(alreadySkipped), quarantineMarker);
+
+                String cursor = null;
+                int totalUnits = 0;
+                int cumulativeUnits = 0;
+                int rangeChunks = 0;
+                Set<String> seenCursors = new HashSet<>();
+                while (true) {
+                    if (++rangeChunks > nativeFullMaxChunks) {
+                        throw new IllegalStateException(
+                                "Native divide-by-zero range probe exceeded the chunk safety limit "
+                                        + nativeFullMaxChunks);
+                    }
+                    if (!seenCursors.add(cursor == null ? "<START>" : cursor)) {
+                        throw new IllegalStateException(
+                                "Native isolation repeated cursor " + cursor);
+                    }
+                    progress.procedureCalls++;
+                    progress.preflightChunks++;
+                    NativeFullChunkOutput output = dao.callNativeFullChunk(
+                            null, progress.request.warehouseId(),
+                            method.calculationMode(), method.periodMode(),
+                            method.includeTax(), cursor, 0, totalUnits,
+                            nativeFullTimeoutSeconds);
+                    if (output.transactionCountBefore()
+                            != output.transactionCountAfter()) {
+                        throw new NativeOutcomeUnknownException(
+                                "I_UCHET_TOVAR changed the surrounding transaction boundary during divide-by-zero isolation");
+                    }
+                    WarehouseRow after = dao.findWarehouseForUpdate(
+                            progress.request.warehouseId());
+                    if (after.accountingGroup() != null
+                            || !Objects.equals(after.rawAccountingCode(), method.rawCode())) {
+                        throw new IllegalStateException(
+                                "Folio warehouse accounting settings changed during divide-by-zero isolation");
+                    }
+                    validateNativeOutput(
+                            progress.request.warehouseId(), output, cursor,
+                            totalUnits, 0, cumulativeUnits, seenCursors);
+                    if (output.hasProblem()) {
+                        throw new IllegalStateException(
+                                "Native isolation found an unexpected Folio problem for "
+                                        + output.art() + " on " + output.problemDate());
+                    }
+                    cumulativeUnits += output.currentUnits();
+                    if (totalUnits == 0 && output.totalUnits() > 0) {
+                        totalUnits = output.totalUnits();
+                    }
+                    if (output.newArt() == null) {
+                        status.setRollbackOnly();
+                        return NativeIsolationProbeResult.CLEAN;
+                    }
+                    cursor = output.newArt();
+                }
+            }));
+        } catch (RuntimeException error) {
+            if (isDivideByZero(error)) {
+                return NativeIsolationProbeResult.DIVIDE_BY_ZERO;
+            }
+            throw error;
+        }
+    }
+
+    private static void requireDivideIsolationProbeBudget(
+            NativeProgress progress,
+            int probesBeforeIsolation) {
+        if (progress.divideIsolationProbes - probesBeforeIsolation
+                >= MAX_DIVIDE_ISOLATION_PROBES_PER_SKU) {
+            throw new IllegalStateException(
+                    "Native divide-by-zero isolation exceeded the safety limit "
+                            + MAX_DIVIDE_ISOLATION_PROBES_PER_SKU
+                            + " for one SKU");
+        }
+    }
+
+    private Issue nativeDivideByZeroIssue(int warehouseId,
+                                          String sku,
+                                          String checkpointArt,
+                                          int isolationProbes) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("sku", sku);
+        details.put("warehouseId", warehouseId);
+        if (checkpointArt != null) {
+            details.put("checkpointArt", checkpointArt);
+        }
+        details.put("skipped", true);
+        details.put("source", "FOLIO_SINGLE_SKU_ROLLBACK_PROBE");
+        details.put("exactSkuConfirmed", true);
+        details.put("isolationProbes", isolationProbes);
+        try {
+            FolioAccountingPriceRecalculationResponse inspection =
+                    Objects.requireNonNull(readTransaction.execute(status ->
+                            inspect(sku, warehouseId, false, true)));
+            if (!inspection.before().isEmpty()) {
+                PriceState state = inspection.before().get(0);
+                Map<String, Object> currentState = new LinkedHashMap<>();
+                putIfNotNull(currentState, "initialQuantity", state.initialQuantity());
+                putIfNotNull(currentState, "physicalQuantity", state.physicalQuantity());
+                putIfNotNull(currentState, "availableQuantity", state.availableQuantity());
+                putIfNotNull(currentState, "accountingQuantity", state.accountingQuantity());
+                putIfNotNull(currentState, "accountingAmount", state.accountingAmount());
+                putIfNotNull(currentState, "accountingPrice", state.accountingPrice());
+                currentState.put("movementCount", state.accountedMovementCount());
+                details.put("currentState", Map.copyOf(currentState));
+            }
+        } catch (Exception diagnosticError) {
+            details.put("diagnosticError", safeMessage(diagnosticError));
+        }
+        return new Issue(
+                "ACCOUNTING_PRICE_DIVIDE_BY_ZERO",
+                "Folio divides by zero while recalculating this exact SKU; the SKU will be skipped and other products will continue",
+                Map.copyOf(details));
+    }
+
+    private static boolean isDivideByZero(Throwable error) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            if (current instanceof SQLException sqlException
+                    && (sqlException.getErrorCode() == 8134
+                    || "22012".equals(sqlException.getSQLState()))) {
+                return true;
+            }
+            String message = current.getMessage();
+            if (message != null) {
+                String normalized = message.toLowerCase(Locale.ROOT);
+                if (normalized.contains("divide by zero")
+                        || normalized.contains("division by zero")
+                        || normalized.contains("делени")
+                        && normalized.contains("нол")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private NativeExecutedChunk executeNativeChunk(NativeProgress progress,
                                                     String expectedDatabase,
                                                     int warehouseId,
@@ -939,6 +1215,7 @@ public class FolioAccountingPriceService {
                 }
                 Map<String, String> quarantined = Map.of();
                 boolean quarantineTypeCreated = false;
+                boolean procedureCompleted = false;
                 NativeFullChunkOutput output;
                 try {
                     if (!skippedSkus.isEmpty()) {
@@ -949,20 +1226,29 @@ public class FolioAccountingPriceService {
                     }
                     progress.phase = rollbackOnly ? "PRECHECK_RUNNING" : "APPLY_RUNNING";
                     publishNative(progress, true, true, null);
-                    output = dao.callNativeFullChunk(
-                            null, warehouseId,
-                            method.calculationMode(), method.periodMode(), method.includeTax(),
-                            cursor, 0, totalUnits, nativeFullTimeoutSeconds);
                     progress.procedureCalls++;
                     if (rollbackOnly) {
                         progress.preflightChunks++;
                     }
+                    output = dao.callNativeFullChunk(
+                            null, warehouseId,
+                            method.calculationMode(), method.periodMode(), method.includeTax(),
+                            cursor, 0, totalUnits, nativeFullTimeoutSeconds);
+                    procedureCompleted = true;
                 } finally {
-                    if (!quarantined.isEmpty()) {
-                        dao.restoreNativeSkus(warehouseId, quarantined);
-                    }
-                    if (quarantineTypeCreated) {
-                        dao.deleteNativeQuarantineType(quarantineMarker);
+                    // A SQL arithmetic error can leave the legacy connection
+                    // unable to execute reliable compensating statements.
+                    // Preserve the original exception and let Spring roll the
+                    // whole transaction back. Explicit restoration is needed
+                    // only after the procedure returned successfully and the
+                    // transaction may still be committed.
+                    if (procedureCompleted) {
+                        if (!quarantined.isEmpty()) {
+                            dao.restoreNativeSkus(warehouseId, quarantined);
+                        }
+                        if (quarantineTypeCreated) {
+                            dao.deleteNativeQuarantineType(quarantineMarker);
+                        }
                     }
                 }
                 WarehouseRow after = dao.findWarehouseForUpdate(warehouseId);
@@ -1639,6 +1925,14 @@ public class FolioAccountingPriceService {
         return Map.copyOf(details);
     }
 
+    private static void putIfNotNull(Map<String, Object> target,
+                                     String key,
+                                     Object value) {
+        if (value != null) {
+            target.put(key, value);
+        }
+    }
+
     private static String formatDate(LocalDateTime value) {
         return value == null ? null : DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(value);
     }
@@ -1803,6 +2097,7 @@ public class FolioAccountingPriceService {
         private int warningCount;
         private boolean warningsTruncated;
         private ChunkDiagnostics failedChunk;
+        private int divideIsolationProbes;
 
         private NativeProgress(String jobId,
                                FolioAccountingPriceNativeFullRequest request,
@@ -1825,6 +2120,11 @@ public class FolioAccountingPriceService {
             NativeFullChunkOutput output,
             String processedEndArt
     ) {
+    }
+
+    private enum NativeIsolationProbeResult {
+        CLEAN,
+        DIVIDE_BY_ZERO
     }
 
     private static final class NativeNegativeDuringApplyException

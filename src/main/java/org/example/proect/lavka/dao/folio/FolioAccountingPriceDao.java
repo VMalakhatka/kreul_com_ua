@@ -88,8 +88,53 @@ public class FolioAccountingPriceDao {
                 """, (rs, rowNum) -> rs.getString(1).trim(), warehouseId);
     }
 
+    /**
+     * Returns the exact article order used by the native recalculation while
+     * excluding product types which Folio itself does not calculate.
+     */
+    public List<String> findNativeEligibleSkus(int warehouseId,
+                                               String startArt,
+                                               int queryTimeoutSeconds) {
+        String startPredicate = startArt == null
+                ? ""
+                : " AND a.COD_ARTIC >= ?";
+        return jdbc.query("""
+                SELECT a.COD_ARTIC
+                  FROM dbo.SCL_ARTC a
+                 WHERE a.ID_SCLAD = ?
+                   %s
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM dbo.TIP_TOVR t
+                        WHERE t.SIGNIFIC = a.TIP_TOVR
+                          AND t.CHECK_SAVE = 0
+                          AND t.SHOW_OSTATOK = 0
+                   )
+                 ORDER BY a.COD_ARTIC
+                """.formatted(startPredicate), statement -> {
+            statement.setQueryTimeout(Math.max(1, queryTimeoutSeconds));
+            statement.setInt(1, warehouseId);
+            if (startArt != null) {
+                statement.setString(2, startArt);
+            }
+        }, (rs, rowNum) -> trim(rs.getString(1)));
+    }
+
     public String currentDatabaseName() {
         return trim(jdbc.queryForObject("SELECT DB_NAME()", String.class));
+    }
+
+    public ArithmeticSessionOptions readArithmeticSessionOptions() {
+        return jdbc.queryForObject("""
+                SELECT @@OPTIONS AS option_mask,
+                       CASE WHEN @@OPTIONS & 8 = 8 THEN 1 ELSE 0 END AS ansi_warnings,
+                       CASE WHEN @@OPTIONS & 64 = 64 THEN 1 ELSE 0 END AS arithabort,
+                       CASE WHEN @@OPTIONS & 128 = 128 THEN 1 ELSE 0 END AS arithignore
+                """, (rs, rowNum) -> new ArithmeticSessionOptions(
+                rs.getInt("option_mask"),
+                rs.getBoolean("ansi_warnings"),
+                rs.getBoolean("arithabort"),
+                rs.getBoolean("arithignore")));
     }
 
     public List<ArticleRow> findArticles(String sku,
@@ -548,6 +593,42 @@ public class FolioAccountingPriceDao {
         }
     }
 
+    /**
+     * Makes only one inclusive article range visible to I_UCHET_TOVAR.
+     * This helper is used exclusively in an outer rollback transaction while
+     * isolating a legacy arithmetic error, so the original product types are
+     * restored by that rollback rather than by a compensating UPDATE.
+     */
+    public int quarantineNativeOutsideRange(int warehouseId,
+                                            String firstArt,
+                                            String lastArt,
+                                            Set<String> additionallySkippedSkus,
+                                            String marker) {
+        int updated = jdbc.update("""
+                UPDATE dbo.SCL_ARTC
+                   SET TIP_TOVR = ?
+                 WHERE ID_SCLAD = ?
+                   AND (COD_ARTIC < ? OR COD_ARTIC > ?)
+                """, marker, warehouseId, firstArt, lastArt);
+
+        List<String> skipped = new ArrayList<>(additionallySkippedSkus);
+        for (int start = 0; start < skipped.size(); start += NATIVE_QUARANTINE_BATCH_SIZE) {
+            List<String> batch = skipped.subList(
+                    start, Math.min(start + NATIVE_QUARANTINE_BATCH_SIZE, skipped.size()));
+            String placeholders = placeholders(batch.size());
+            updated += jdbc.update("""
+                    UPDATE dbo.SCL_ARTC
+                       SET TIP_TOVR = ?
+                     WHERE ID_SCLAD = ?
+                       AND COD_ARTIC IN (""" + placeholders + ")", statement -> {
+                statement.setString(1, marker);
+                statement.setInt(2, warehouseId);
+                bindStrings(statement, 3, batch);
+            });
+        }
+        return updated;
+    }
+
     public void restoreNativeSkus(int warehouseId, Map<String, String> originalTypes) {
         List<Map.Entry<String, String>> entries = new ArrayList<>(originalTypes.entrySet());
         for (int start = 0; start < entries.size(); start += NATIVE_QUARANTINE_BATCH_SIZE) {
@@ -984,6 +1065,14 @@ public class FolioAccountingPriceDao {
         public boolean hasProblem() {
             return problemDate != null && !problemDate.isBlank();
         }
+    }
+
+    public record ArithmeticSessionOptions(
+            int optionMask,
+            boolean ansiWarnings,
+            boolean arithAbort,
+            boolean arithIgnore
+    ) {
     }
 
     public record NativeChronologyProblem(
