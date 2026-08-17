@@ -150,9 +150,13 @@ native preview менеджеры не должны создавать, сохр
 3. выполняет точный preflight через `I_UCHET_TOVAR`, rollback каждой порции,
    временно исключая известные проблемные SKU;
 4. при `Divide by zero` откатывает порцию, переходит в
-   `DIVIDE_BY_ZERO_ISOLATION`, rollback-пробами подтверждает один точный SKU,
-   добавляет его в warnings/quarantine и повторяет ту же порцию;
-5. если остальная область чистая — повторяет проход с commit безопасных SKU.
+   `DIVIDE_BY_ZERO_ISOLATION` и rollback-пробами находит минимальный
+   подтверждённый непрерывный диапазон; обычно это один SKU, но если ошибка
+   зависит от последовательности карточек, диапазон может содержать несколько
+   соседних SKU;
+5. добавляет подтверждённый SKU/диапазон в warnings/quarantine и повторяет ту
+   же порцию;
+6. если остальная область чистая — повторяет проход с commit безопасных SKU.
 
 Наличие таких warnings не блокирует apply. Успешный preview с пропусками имеет
 `PREVIEW_READY_WITH_WARNINGS`, а успешный apply —
@@ -345,11 +349,18 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 прохода в этой фазе может временно не меняться. Не перезапускайте POST и не
 прерывайте контейнер.
 
-Warning `ACCOUNTING_PRICE_DIVIDE_BY_ZERO` означает, что ошибка подтверждена на
-одном SKU (`details.exactSkuConfirmed=true`). Показывайте SKU менеджеру как
-пропущенный товар, но не блокируйте успешный итог
+Warning `ACCOUNTING_PRICE_DIVIDE_BY_ZERO` означает, что ошибка подтверждена
+rollback-пробой. При `details.exactSkuConfirmed=true` пропущен один
+`details.sku`. При `false` ошибка воспроизводится только на непрерывном
+диапазоне: показывайте `firstSku`, `lastSku`, `skuCount` и `skus[]` как список
+пропущенных товаров. `rangeConfirmed=true` означает, что именно весь указанный
+диапазон реально повторил ошибку, а не был выбран предположительно. Не
+блокируйте успешный итог
 `PREVIEW_READY_WITH_WARNINGS`/`COMPLETED_WITH_WARNINGS`. `checkpointArt` не
 является виновным товаром и нужен только для технической диагностики.
+`warningCount` считает warning-события, а не количество пропущенных SKU: один
+multi-SKU warning может иметь `skuCount>1`. Если `skusTruncated=true`, полный
+диапазон всё равно однозначно задан полями `firstSku`/`lastSku` и `skuCount`.
 
 ### Native статусы
 

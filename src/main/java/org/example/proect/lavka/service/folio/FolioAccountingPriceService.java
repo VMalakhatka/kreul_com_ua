@@ -66,7 +66,8 @@ public class FolioAccountingPriceService {
     private static final BigDecimal NEGATIVE_EPSILON = new BigDecimal("0.00000000001");
     private static final BigDecimal POSTCHECK_ABSOLUTE_EPSILON = new BigDecimal("0.000001");
     private static final BigDecimal POSTCHECK_RELATIVE_EPSILON = new BigDecimal("0.000000000001");
-    private static final int MAX_DIVIDE_ISOLATION_PROBES_PER_SKU = 64;
+    private static final int MAX_DIVIDE_ISOLATION_PROBES_PER_PROBLEM = 64;
+    private static final int MAX_DIVIDE_RANGE_SKUS_IN_WARNING = 100;
     private static final MovementTotals EMPTY_MOVEMENT_TOTALS =
             new MovementTotals(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
 
@@ -909,21 +910,32 @@ public class FolioAccountingPriceService {
                             "Folio has no unused product-type marker for divide-by-zero isolation",
                             error);
                 }
-                String problemSku = isolateNativeDivideByZeroSku(
+                NativeDivideIsolation isolation = isolateNativeDivideByZero(
                         progress, method, cursor, skippedSkus,
                         effectiveQuarantineMarker);
-                if (!skippedSkus.add(problemSku)) {
+                if (isolation.skus().stream().anyMatch(skippedSkus::contains)) {
                     throw new IllegalStateException(
-                            "Native Folio divide-by-zero isolation repeated SKU " + problemSku,
+                            "Native Folio divide-by-zero isolation repeated range "
+                                    + isolation.firstSku() + ".." + isolation.lastSku(),
                             error);
                 }
+                skippedSkus.addAll(isolation.skus());
                 Issue issue = nativeDivideByZeroIssue(
-                        progress.request.warehouseId(), problemSku, cursor,
+                        progress.request.warehouseId(), isolation, cursor,
                         progress.divideIsolationProbes);
                 addNativeIssue(progress, issue);
-                log.warn("[folio.accounting-price] native_divide_by_zero_sku job={} warehouse={} sku={} checkpoint={} isolationProbes={} action=quarantined",
-                        progress.jobId, progress.request.warehouseId(), problemSku,
-                        cursor, progress.divideIsolationProbes);
+                if (isolation.exactSkuConfirmed()) {
+                    log.warn("[folio.accounting-price] native_divide_by_zero_sku job={} warehouse={} sku={} checkpoint={} isolationProbes={} action=quarantined",
+                            progress.jobId, progress.request.warehouseId(),
+                            isolation.firstSku(), cursor,
+                            progress.divideIsolationProbes);
+                } else {
+                    log.warn("[folio.accounting-price] native_divide_by_zero_range job={} warehouse={} firstSku={} lastSku={} skuCount={} checkpoint={} isolationProbes={} action=quarantined",
+                            progress.jobId, progress.request.warehouseId(),
+                            isolation.firstSku(), isolation.lastSku(),
+                            isolation.skus().size(), cursor,
+                            progress.divideIsolationProbes);
+                }
                 progress.phase = "PRECHECK_RUNNING";
                 publishNative(progress, true, true, null);
                 // The failed chunk was rolled back. Retry from the same cursor
@@ -979,11 +991,12 @@ public class FolioAccountingPriceService {
         }
     }
 
-    private String isolateNativeDivideByZeroSku(NativeProgress progress,
-                                                AccountingMethod method,
-                                                String failedCheckpoint,
-                                                Set<String> alreadySkipped,
-                                                String quarantineMarker) {
+    private NativeDivideIsolation isolateNativeDivideByZero(
+            NativeProgress progress,
+            AccountingMethod method,
+            String failedCheckpoint,
+            Set<String> alreadySkipped,
+            String quarantineMarker) {
         progress.phase = "DIVIDE_BY_ZERO_ISOLATION";
         publishNative(progress, true, true, null);
 
@@ -998,34 +1011,73 @@ public class FolioAccountingPriceService {
                     "Cannot isolate the Folio divide-by-zero SKU: no eligible articles remain");
         }
 
-        int first = 0;
-        int last = candidates.size() - 1;
         int probesBeforeIsolation = progress.divideIsolationProbes;
-        while (first < last) {
+        int firstCandidate = 0;
+        int lastCandidate = candidates.size() - 1;
+
+        // The old procedure can carry arithmetic state from one article to
+        // the next. Confirm the complete failed range before narrowing it;
+        // no SKU range may be quarantined merely by inference.
+        requireDivideIsolationProbeBudget(progress, probesBeforeIsolation);
+        NativeIsolationProbeResult fullProbe = probeNativeRangeForDivideByZero(
+                progress, method,
+                candidates.get(firstCandidate), candidates.get(lastCandidate),
+                alreadySkipped, quarantineMarker);
+        if (fullProbe != NativeIsolationProbeResult.DIVIDE_BY_ZERO) {
+            throw new IllegalStateException(
+                    "The native divide-by-zero error could not be reproduced for the failed range "
+                            + candidates.get(firstCandidate) + ".."
+                            + candidates.get(lastCandidate));
+        }
+
+        // Find the shortest confirmed prefix. Its left boundary intentionally
+        // remains fixed so a dependency between adjacent SKUs is preserved.
+        int lowEnd = firstCandidate;
+        int highEnd = lastCandidate;
+        int confirmedEnd = lastCandidate;
+        while (lowEnd < highEnd) {
             requireDivideIsolationProbeBudget(progress, probesBeforeIsolation);
-            int middle = first + (last - first) / 2;
+            int middle = lowEnd + (highEnd - lowEnd) / 2;
             NativeIsolationProbeResult probe = probeNativeRangeForDivideByZero(
                     progress, method,
-                    candidates.get(first), candidates.get(middle),
+                    candidates.get(firstCandidate), candidates.get(middle),
                     alreadySkipped, quarantineMarker);
             if (probe == NativeIsolationProbeResult.DIVIDE_BY_ZERO) {
-                last = middle;
+                confirmedEnd = middle;
+                highEnd = middle;
             } else {
-                first = middle + 1;
+                lowEnd = middle + 1;
+            }
+        }
+        confirmedEnd = lowEnd;
+
+        // Remove as much of the leading side as possible, but keep only ranges
+        // that themselves reproduced error 8134 in a rollback probe.
+        // The complete prefix [firstCandidate..confirmedEnd] is already a
+        // confirmed failing range, so start probing strictly after its known
+        // left boundary and avoid executing the same expensive probe twice.
+        int lowStart = firstCandidate + 1;
+        int highStart = confirmedEnd;
+        int confirmedStart = firstCandidate;
+        while (lowStart <= highStart) {
+            requireDivideIsolationProbeBudget(progress, probesBeforeIsolation);
+            int middle = lowStart + (highStart - lowStart) / 2;
+            NativeIsolationProbeResult probe = probeNativeRangeForDivideByZero(
+                    progress, method,
+                    candidates.get(middle), candidates.get(confirmedEnd),
+                    alreadySkipped, quarantineMarker);
+            if (probe == NativeIsolationProbeResult.DIVIDE_BY_ZERO) {
+                confirmedStart = middle;
+                lowStart = middle + 1;
+            } else {
+                highStart = middle - 1;
             }
         }
 
-        String exactSku = candidates.get(first);
-        requireDivideIsolationProbeBudget(progress, probesBeforeIsolation);
-        NativeIsolationProbeResult exactProbe = probeNativeRangeForDivideByZero(
-                progress, method, exactSku, exactSku,
-                alreadySkipped, quarantineMarker);
-        if (exactProbe != NativeIsolationProbeResult.DIVIDE_BY_ZERO) {
-            throw new IllegalStateException(
-                    "The native divide-by-zero error could not be reproduced for isolated SKU "
-                            + exactSku);
-        }
-        return exactSku;
+        List<String> confirmedSkus = List.copyOf(
+                candidates.subList(confirmedStart, confirmedEnd + 1));
+        return new NativeDivideIsolation(
+                confirmedSkus, confirmedSkus.size() == 1);
     }
 
     private NativeIsolationProbeResult probeNativeRangeForDivideByZero(
@@ -1114,50 +1166,66 @@ public class FolioAccountingPriceService {
             NativeProgress progress,
             int probesBeforeIsolation) {
         if (progress.divideIsolationProbes - probesBeforeIsolation
-                >= MAX_DIVIDE_ISOLATION_PROBES_PER_SKU) {
+                >= MAX_DIVIDE_ISOLATION_PROBES_PER_PROBLEM) {
             throw new IllegalStateException(
                     "Native divide-by-zero isolation exceeded the safety limit "
-                            + MAX_DIVIDE_ISOLATION_PROBES_PER_SKU
-                            + " for one SKU");
+                            + MAX_DIVIDE_ISOLATION_PROBES_PER_PROBLEM
+                            + " for one problem range");
         }
     }
 
     private Issue nativeDivideByZeroIssue(int warehouseId,
-                                          String sku,
+                                          NativeDivideIsolation isolation,
                                           String checkpointArt,
                                           int isolationProbes) {
         Map<String, Object> details = new LinkedHashMap<>();
-        details.put("sku", sku);
+        details.put("sku", isolation.firstSku());
         details.put("warehouseId", warehouseId);
         if (checkpointArt != null) {
             details.put("checkpointArt", checkpointArt);
         }
         details.put("skipped", true);
-        details.put("source", "FOLIO_SINGLE_SKU_ROLLBACK_PROBE");
-        details.put("exactSkuConfirmed", true);
+        details.put("source", isolation.exactSkuConfirmed()
+                ? "FOLIO_SINGLE_SKU_ROLLBACK_PROBE"
+                : "FOLIO_MULTI_SKU_ROLLBACK_PROBE");
+        details.put("exactSkuConfirmed", isolation.exactSkuConfirmed());
+        details.put("rangeConfirmed", true);
+        details.put("firstSku", isolation.firstSku());
+        details.put("lastSku", isolation.lastSku());
+        details.put("skuCount", isolation.skus().size());
+        int reportedSkuCount = Math.min(
+                isolation.skus().size(), MAX_DIVIDE_RANGE_SKUS_IN_WARNING);
+        details.put("skus", List.copyOf(
+                isolation.skus().subList(0, reportedSkuCount)));
+        details.put("skusTruncated", reportedSkuCount < isolation.skus().size());
         details.put("isolationProbes", isolationProbes);
-        try {
-            FolioAccountingPriceRecalculationResponse inspection =
-                    Objects.requireNonNull(readTransaction.execute(status ->
-                            inspect(sku, warehouseId, false, true)));
-            if (!inspection.before().isEmpty()) {
-                PriceState state = inspection.before().get(0);
-                Map<String, Object> currentState = new LinkedHashMap<>();
-                putIfNotNull(currentState, "initialQuantity", state.initialQuantity());
-                putIfNotNull(currentState, "physicalQuantity", state.physicalQuantity());
-                putIfNotNull(currentState, "availableQuantity", state.availableQuantity());
-                putIfNotNull(currentState, "accountingQuantity", state.accountingQuantity());
-                putIfNotNull(currentState, "accountingAmount", state.accountingAmount());
-                putIfNotNull(currentState, "accountingPrice", state.accountingPrice());
-                currentState.put("movementCount", state.accountedMovementCount());
-                details.put("currentState", Map.copyOf(currentState));
+        if (isolation.exactSkuConfirmed()) {
+            String sku = isolation.firstSku();
+            try {
+                FolioAccountingPriceRecalculationResponse inspection =
+                        Objects.requireNonNull(readTransaction.execute(status ->
+                                inspect(sku, warehouseId, false, true)));
+                if (!inspection.before().isEmpty()) {
+                    PriceState state = inspection.before().get(0);
+                    Map<String, Object> currentState = new LinkedHashMap<>();
+                    putIfNotNull(currentState, "initialQuantity", state.initialQuantity());
+                    putIfNotNull(currentState, "physicalQuantity", state.physicalQuantity());
+                    putIfNotNull(currentState, "availableQuantity", state.availableQuantity());
+                    putIfNotNull(currentState, "accountingQuantity", state.accountingQuantity());
+                    putIfNotNull(currentState, "accountingAmount", state.accountingAmount());
+                    putIfNotNull(currentState, "accountingPrice", state.accountingPrice());
+                    currentState.put("movementCount", state.accountedMovementCount());
+                    details.put("currentState", Map.copyOf(currentState));
+                }
+            } catch (Exception diagnosticError) {
+                details.put("diagnosticError", safeMessage(diagnosticError));
             }
-        } catch (Exception diagnosticError) {
-            details.put("diagnosticError", safeMessage(diagnosticError));
         }
         return new Issue(
                 "ACCOUNTING_PRICE_DIVIDE_BY_ZERO",
-                "Folio divides by zero while recalculating this exact SKU; the SKU will be skipped and other products will continue",
+                isolation.exactSkuConfirmed()
+                        ? "Folio divides by zero while recalculating this exact SKU; the SKU will be skipped and other products will continue"
+                        : "Folio divides by zero only while recalculating this confirmed contiguous SKU range; the range will be skipped and other products will continue",
                 Map.copyOf(details));
     }
 
@@ -2120,6 +2188,27 @@ public class FolioAccountingPriceService {
             NativeFullChunkOutput output,
             String processedEndArt
     ) {
+    }
+
+    private record NativeDivideIsolation(
+            List<String> skus,
+            boolean exactSkuConfirmed
+    ) {
+        private NativeDivideIsolation {
+            skus = List.copyOf(skus);
+            if (skus.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Native divide-by-zero isolation range must not be empty");
+            }
+        }
+
+        private String firstSku() {
+            return skus.get(0);
+        }
+
+        private String lastSku() {
+            return skus.get(skus.size() - 1);
+        }
     }
 
     private enum NativeIsolationProbeResult {

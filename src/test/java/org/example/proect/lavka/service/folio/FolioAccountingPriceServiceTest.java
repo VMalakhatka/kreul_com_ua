@@ -36,6 +36,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -353,8 +354,9 @@ class FolioAccountingPriceServiceTest {
                 eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
                 eq(null), eq(0), eq(0), eq(120)))
                 .thenThrow(divide)                                      // main pass
-                .thenThrow(divide)                                      // range A..B
-                .thenReturn(nativeChunk(firstSku, 40, 40, null, null))   // exact A
+                .thenThrow(divide)                                      // confirmed range A..C
+                .thenThrow(divide)                                      // prefix A..B
+                .thenReturn(nativeChunk(firstSku, 40, 40, null, null))   // prefix A..A
                 .thenThrow(divide)                                      // exact B
                 .thenReturn(nativeChunk(lastSku, 100, 100, null, null)); // retry
 
@@ -367,7 +369,7 @@ class FolioAccountingPriceServiceTest {
         assertThat(completed.status()).isEqualTo("PREVIEW_READY_WITH_WARNINGS");
         assertThat(completed.committedChunks()).isZero();
         assertThat(completed.error()).isNull();
-        assertThat(completed.procedureCalls()).isEqualTo(5);
+        assertThat(completed.procedureCalls()).isEqualTo(6);
         assertThat(completed.warnings())
                 .filteredOn(warning -> "ACCOUNTING_PRICE_DIVIDE_BY_ZERO"
                         .equals(warning.code()))
@@ -375,8 +377,14 @@ class FolioAccountingPriceServiceTest {
                 .satisfies(warning -> assertThat(warning.details())
                         .containsEntry("sku", divideSku)
                         .containsEntry("exactSkuConfirmed", true)
+                        .containsEntry("rangeConfirmed", true)
+                        .containsEntry("firstSku", divideSku)
+                        .containsEntry("lastSku", divideSku)
+                        .containsEntry("skuCount", 1)
                         .containsEntry("skipped", true)
                         .containsEntry("source", "FOLIO_SINGLE_SKU_ROLLBACK_PROBE"));
+        verify(dao).quarantineNativeOutsideRange(
+                WAREHOUSE_ID, firstSku, lastSku, Set.of(), "9");
         verify(dao).quarantineNativeOutsideRange(
                 WAREHOUSE_ID, firstSku, divideSku, Set.of(), "9");
         verify(dao).quarantineNativeOutsideRange(
@@ -386,7 +394,93 @@ class FolioAccountingPriceServiceTest {
         verify(dao).quarantineNativeSkus(
                 WAREHOUSE_ID, Set.of(divideSku), "9");
         assertThat(transactions.commits).isEqualTo(1); // read-only SKU details
-        assertThat(transactions.rollbacks).isEqualTo(5);
+        assertThat(transactions.rollbacks).isEqualTo(6);
+    }
+
+    @Test
+    void nativePreviewQuarantinesConfirmedMultiSkuDivideByZeroRange() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        String firstSku = "A";
+        String secondSku = "B";
+        String lastSku = "C";
+        when(dao.findUnusedProductTypeMarker()).thenReturn("9");
+        when(dao.findNativeEligibleSkus(WAREHOUSE_ID, null, 120))
+                .thenReturn(List.of(firstSku, secondSku, lastSku));
+        when(dao.quarantineNativeSkus(
+                WAREHOUSE_ID, Set.of(firstSku, secondSku), "9"))
+                .thenReturn(Map.of(firstSku, "1", secondSku, "1"));
+
+        DataIntegrityViolationException divide = divideByZeroException();
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenThrow(divide)                                      // main pass
+                .thenThrow(divide)                                      // confirmed range A..C
+                .thenThrow(divide)                                      // prefix A..B
+                .thenReturn(nativeChunk(firstSku, 40, 40, null, null))   // prefix A..A
+                .thenReturn(nativeChunk(secondSku, 40, 40, null, null))  // exact B is clean
+                .thenReturn(nativeChunk(lastSku, 100, 100, null, null)); // retry
+
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, false);
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("PREVIEW_READY_WITH_WARNINGS");
+        assertThat(completed.committedChunks()).isZero();
+        assertThat(completed.error()).isNull();
+        assertThat(completed.procedureCalls()).isEqualTo(6);
+        assertThat(completed.warnings())
+                .filteredOn(warning -> "ACCOUNTING_PRICE_DIVIDE_BY_ZERO"
+                        .equals(warning.code()))
+                .singleElement()
+                .satisfies(warning -> assertThat(warning.details())
+                        .containsEntry("sku", firstSku)
+                        .containsEntry("exactSkuConfirmed", false)
+                        .containsEntry("rangeConfirmed", true)
+                        .containsEntry("firstSku", firstSku)
+                        .containsEntry("lastSku", secondSku)
+                        .containsEntry("skuCount", 2)
+                        .containsEntry("skus", List.of(firstSku, secondSku))
+                        .containsEntry("skusTruncated", false)
+                        .containsEntry("source", "FOLIO_MULTI_SKU_ROLLBACK_PROBE"));
+        verify(dao).quarantineNativeSkus(
+                WAREHOUSE_ID, Set.of(firstSku, secondSku), "9");
+        assertThat(transactions.commits).isZero();
+        assertThat(transactions.rollbacks).isEqualTo(6);
+    }
+
+    @Test
+    void nativePreviewDoesNotQuarantineRangeWhenDivideByZeroCannotBeReproduced() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.findUnusedProductTypeMarker()).thenReturn("9");
+        when(dao.findNativeEligibleSkus(WAREHOUSE_ID, null, 120))
+                .thenReturn(List.of("A", "B"));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenThrow(divideByZeroException())
+                .thenReturn(nativeChunk("B", 80, 80, null, null));
+
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(dao, transactions, false);
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.committedChunks()).isZero();
+        assertThat(failed.error()).contains(
+                "could not be reproduced for the failed range A..B");
+        assertThat(failed.warnings()).noneMatch(warning ->
+                "ACCOUNTING_PRICE_DIVIDE_BY_ZERO".equals(warning.code()));
+        verify(dao, never()).quarantineNativeSkus(
+                eq(WAREHOUSE_ID), any(), anyString());
+        assertThat(transactions.commits).isZero();
+        assertThat(transactions.rollbacks).isEqualTo(2);
     }
 
     @Test
