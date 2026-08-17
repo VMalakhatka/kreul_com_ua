@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env*
+target
+var
+logs
+*.log
+*.rpt
+__pycache__
+*.py[cod]
+.DS_Store
+README.md
+compose.yaml
+bin
+env.example

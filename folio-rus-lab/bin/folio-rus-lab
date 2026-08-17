@@ -1,0 +1,448 @@
+#!/usr/bin/env python3
+"""Local, dependency-free client for the folio-rus-lab API."""
+
+from __future__ import annotations
+
+import argparse
+import http.client
+import json
+import os
+import re
+import stat
+import sys
+import uuid
+from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+
+DEFAULT_BASE_URL = "http://127.0.0.1:18081"
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+MAX_SQL_CHARACTERS = 500_000
+LOCAL_ENV_FILE = Path(__file__).resolve().parent.parent / ".env.folio-rus-lab"
+
+
+class ClientError(RuntimeError):
+    pass
+
+
+class ExecutionOutcomeUnknown(RuntimeError):
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+class NoRedirectHandler(HTTPRedirectHandler):
+    """Never forward the bearer token through an HTTP redirect."""
+
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        return None
+
+
+LOCAL_OPENER = build_opener(ProxyHandler({}), NoRedirectHandler())
+SAFE_PRE_EXECUTION_HTTP_ERRORS = {400, 401, 403, 404, 405, 409, 413, 415, 503}
+UNKNOWN_EXECUTION_STATES = {"TX_BOUNDARY_BROKEN", "COMMIT_OUTCOME_UNKNOWN"}
+KNOWN_EXECUTION_STATES = {
+    "ROLLED_BACK",
+    "COMMITTED",
+    "SELF_MANAGED_COMPLETED",
+    "SQL_FAILED_ROLLED_BACK",
+    "SQL_FAILED",
+    "OUTPUT_LIMIT_ABORTED",
+    *UNKNOWN_EXECUTION_STATES,
+}
+SUCCESS_STATE_BY_MODE = {
+    "ROLLBACK": "ROLLED_BACK",
+    "COMMIT": "COMMITTED",
+    "SELF_MANAGED": "SELF_MANAGED_COMPLETED",
+}
+REQUIRED_EXECUTION_FIELDS = {
+    "runId",
+    "state",
+    "database",
+    "mode",
+    "startedAt",
+    "durationMs",
+    "sqlSha256",
+    "transactionBefore",
+    "transactionAfter",
+    "rowCount",
+    "estimatedOutputBytes",
+    "results",
+    "warnings",
+    "error",
+}
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="folio-rus-lab",
+        description="Локальный клиент лаборатории Paint_Rus",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=os.environ.get("FOLIO_RUS_API_URL", DEFAULT_BASE_URL),
+        help=f"локальный адрес API (по умолчанию {DEFAULT_BASE_URL})",
+    )
+    parser.add_argument(
+        "--http-timeout",
+        type=positive_int,
+        default=120,
+        help="сетевой таймаут клиента в секундах (по умолчанию 120)",
+    )
+
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("health", help="проверить состояние локального API")
+    commands.add_parser("preflight", help="проверить защитные условия Paint_Rus")
+
+    execute = commands.add_parser("execute", help="выполнить SQL из файла или stdin")
+    execute.add_argument(
+        "--file",
+        type=Path,
+        help="UTF-8 файл с SQL; без --file SQL читается из перенаправленного stdin",
+    )
+    execute.add_argument(
+        "--mode",
+        choices=("ROLLBACK", "COMMIT", "SELF_MANAGED"),
+        default="ROLLBACK",
+        help="режим транзакции (по умолчанию ROLLBACK)",
+    )
+    execute.add_argument("--timeout-seconds", type=positive_int)
+    execute.add_argument("--max-rows", type=positive_int)
+    execute.add_argument("--max-bytes", type=positive_int)
+    execute.add_argument(
+        "--allow-persistent-changes",
+        action="store_true",
+        help="обязательное подтверждение для COMMIT и SELF_MANAGED",
+    )
+    return parser.parse_args()
+
+
+def positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("требуется целое число") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("значение должно быть больше нуля")
+    return parsed
+
+
+def normalized_local_base_url(raw_url: str) -> str:
+    value = raw_url.strip().rstrip("/")
+    parsed = urlsplit(value)
+    if parsed.scheme != "http":
+        raise ClientError("API URL должен использовать http")
+    if parsed.hostname not in LOCAL_HOSTS:
+        raise ClientError("отказ: API URL должен указывать только на localhost")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ClientError("API URL не должен содержать credentials, query или fragment")
+    if parsed.path not in ("", "/"):
+        raise ClientError("API URL не должен содержать path")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ClientError("некорректный порт API") from exc
+    if port is None:
+        raise ClientError("в API URL требуется явный порт")
+    return value
+
+
+def bearer_token() -> str:
+    token = os.environ.get("FOLIO_RUS_API_TOKEN", "") or token_from_local_env()
+    if not token:
+        raise ClientError("переменная FOLIO_RUS_API_TOKEN не задана")
+    if token.startswith("REPLACE_WITH_"):
+        raise ClientError("замените пример FOLIO_RUS_API_TOKEN реальным случайным token")
+    if len(token) < 32:
+        raise ClientError("FOLIO_RUS_API_TOKEN должен содержать не менее 32 символов")
+    if len(token) > 512 or any(ord(char) < 33 or ord(char) == 127 for char in token):
+        raise ClientError("FOLIO_RUS_API_TOKEN содержит недопустимые символы")
+    return token
+
+
+def token_from_local_env() -> str:
+    try:
+        metadata = LOCAL_ENV_FILE.lstat()
+    except FileNotFoundError:
+        return ""
+    except OSError as exc:
+        raise ClientError("не удалось проверить локальный файл настроек") from exc
+
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ClientError("локальный файл настроек должен быть обычным файлом")
+    if metadata.st_uid != os.getuid():
+        raise ClientError("локальный файл настроек должен принадлежать текущему пользователю")
+    if metadata.st_mode & 0o077:
+        raise ClientError("защитите .env.folio-rus-lab командой chmod 600")
+    if metadata.st_size > 65_536:
+        raise ClientError("локальный файл настроек неожиданно большой")
+
+    try:
+        with LOCAL_ENV_FILE.open("r", encoding="utf-8") as settings:
+            for raw_line in settings:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, value = line.split("=", 1)
+                if name.strip() != "FOLIO_RUS_API_TOKEN":
+                    continue
+                token = value.strip()
+                if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+                    token = token[1:-1]
+                return token
+    except (OSError, UnicodeError) as exc:
+        raise ClientError("не удалось безопасно прочитать API token из локальных настроек") from exc
+    return ""
+
+
+def read_sql(path: Path | None) -> str:
+    if path is not None:
+        try:
+            sql = path.read_text(encoding="utf-8-sig")
+        except OSError as exc:
+            raise ClientError(f"не удалось прочитать SQL-файл: {exc.strerror or exc}") from exc
+        except UnicodeError as exc:
+            raise ClientError("SQL-файл должен быть в UTF-8") from exc
+    else:
+        if sys.stdin.isatty():
+            raise ClientError("передайте SQL через --file или перенаправленный stdin")
+        sql = sys.stdin.read(MAX_SQL_CHARACTERS + 1)
+
+    if not sql.strip():
+        raise ClientError("SQL пуст")
+    if len(sql) > MAX_SQL_CHARACTERS:
+        raise ClientError(f"SQL превышает лимит {MAX_SQL_CHARACTERS} символов")
+    return sql
+
+
+def request_json(
+    base_url: str,
+    path: str,
+    *,
+    http_timeout: int,
+    token: str | None = None,
+    payload: dict[str, Any] | None = None,
+    execution_outcome_unknown_code: str | None = None,
+) -> tuple[int, Any]:
+    headers = {"Accept": "application/json", "User-Agent": "folio-rus-lab-cli/1"}
+    body = None
+    method = "GET"
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    if payload is not None:
+        method = "POST"
+        headers["Content-Type"] = "application/json; charset=utf-8"
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    request = Request(base_url + path, data=body, headers=headers, method=method)
+    try:
+        with LOCAL_OPENER.open(request, timeout=http_timeout) as response:
+            raw = response.read()
+            return response.status, decode_json(raw)
+    except HTTPError as exc:
+        try:
+            raw = exc.read()
+            return exc.code, decode_json(raw)
+        except (http.client.HTTPException, ConnectionError, OSError) as read_exception:
+            if execution_outcome_unknown_code is not None:
+                raise ExecutionOutcomeUnknown(execution_outcome_unknown_code) from read_exception
+            raise ClientError("API недоступен или не ответил вовремя") from read_exception
+    except (URLError, http.client.HTTPException, ConnectionError, OSError) as exc:
+        if execution_outcome_unknown_code is not None:
+            raise ExecutionOutcomeUnknown(execution_outcome_unknown_code) from exc
+        raise ClientError("API недоступен или не ответил вовремя") from exc
+    except KeyboardInterrupt as exc:
+        if execution_outcome_unknown_code is not None:
+            raise ExecutionOutcomeUnknown(execution_outcome_unknown_code) from exc
+        raise
+
+
+def outcome_unknown_response(code: str) -> dict[str, Any]:
+    if code == "PERSISTENT_OUTCOME_UNKNOWN":
+        message = (
+            "результат после отправки сохраняющего SQL не подтверждён; изменения могли сохраниться. "
+            "Не повторяйте команду: сначала выполните новый read-only postcondition check"
+        )
+    else:
+        message = (
+            "результат после отправки SQL и откат не подтверждены. "
+            "Не повторяйте команду: сначала выполните новый read-only postcondition check"
+        )
+    return {
+        "error": {
+            "code": code,
+            "message": message,
+            "details": ["DO_NOT_RETRY", "RUN_FRESH_READ_ONLY_POSTCONDITION_CHECK"],
+        }
+    }
+
+
+def decode_json(raw: bytes) -> Any:
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError):
+        return {"error": {"code": "NON_JSON_RESPONSE", "message": "API вернул не-JSON ответ"}}
+
+
+def execute_payload(args: argparse.Namespace) -> dict[str, Any]:
+    if args.mode != "ROLLBACK" and not args.allow_persistent_changes:
+        raise ClientError(
+            "режим COMMIT/SELF_MANAGED требует --allow-persistent-changes"
+        )
+
+    payload: dict[str, Any] = {"sql": read_sql(args.file), "mode": args.mode}
+    if args.mode != "ROLLBACK":
+        payload["allowPersistentChanges"] = True
+        payload["confirmDatabase"] = "Paint_Rus"
+    optional = {
+        "timeoutSeconds": args.timeout_seconds,
+        "maxRows": args.max_rows,
+        "maxBytes": args.max_bytes,
+    }
+    payload.update({key: value for key, value in optional.items() if value is not None})
+    return payload
+
+
+def execution_response_exit_code(
+    status: int,
+    response: Any,
+    expected_mode: str,
+    unknown_code: str,
+) -> int:
+    if not isinstance(response, dict):
+        raise ExecutionOutcomeUnknown(unknown_code)
+
+    state = response.get("state")
+    if isinstance(state, str):
+        validate_execution_response_shape(response, unknown_code)
+        if state not in KNOWN_EXECUTION_STATES:
+            raise ExecutionOutcomeUnknown(unknown_code)
+        if response.get("database") != "Paint_Rus" or response.get("mode") != expected_mode:
+            raise ExecutionOutcomeUnknown(unknown_code)
+
+        warnings = response.get("warnings", [])
+        if not isinstance(warnings, list) or any(not isinstance(item, str) for item in warnings):
+            raise ExecutionOutcomeUnknown(unknown_code)
+        uncertain_warning = any(
+            item.endswith("_MAY_HAVE_PERSISTED")
+            or "_OUTCOME_UNKNOWN" in item
+            or item == "DATABASE_CONTEXT_CHANGED"
+            for item in warnings
+        )
+        if state in UNKNOWN_EXECUTION_STATES or uncertain_warning:
+            return 3
+        if state == SUCCESS_STATE_BY_MODE[expected_mode]:
+            if not 200 <= status < 300:
+                raise ExecutionOutcomeUnknown(unknown_code)
+            return 0
+        if 200 <= status < 300:
+            raise ExecutionOutcomeUnknown(unknown_code)
+        return 1
+
+    error = response.get("error")
+    if (
+        status in SAFE_PRE_EXECUTION_HTTP_ERRORS
+        and isinstance(error, dict)
+        and isinstance(error.get("code"), str)
+        and bool(error["code"])
+    ):
+        return 1
+    raise ExecutionOutcomeUnknown(unknown_code)
+
+
+def validate_execution_response_shape(response: dict[str, Any], unknown_code: str) -> None:
+    if set(response) != REQUIRED_EXECUTION_FIELDS:
+        raise ExecutionOutcomeUnknown(unknown_code)
+    try:
+        uuid.UUID(response["runId"])
+    except (AttributeError, TypeError, ValueError):
+        raise ExecutionOutcomeUnknown(unknown_code) from None
+    if not isinstance(response["startedAt"], str) or not response["startedAt"]:
+        raise ExecutionOutcomeUnknown(unknown_code)
+    if not isinstance(response["sqlSha256"], str) or not SHA256_HEX.fullmatch(response["sqlSha256"]):
+        raise ExecutionOutcomeUnknown(unknown_code)
+
+    nonnegative_integers = (
+        "durationMs",
+        "transactionBefore",
+        "rowCount",
+        "estimatedOutputBytes",
+    )
+    if any(
+        type(response[field]) is not int or response[field] < 0
+        for field in nonnegative_integers
+    ):
+        raise ExecutionOutcomeUnknown(unknown_code)
+    if response["transactionAfter"] is not None and (
+        type(response["transactionAfter"]) is not int or response["transactionAfter"] < 0
+    ):
+        raise ExecutionOutcomeUnknown(unknown_code)
+    if not isinstance(response["results"], list):
+        raise ExecutionOutcomeUnknown(unknown_code)
+    if response["error"] is not None and not isinstance(response["error"], dict):
+        raise ExecutionOutcomeUnknown(unknown_code)
+
+
+def print_json(value: Any) -> None:
+    print(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=False))
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        base_url = normalized_local_base_url(args.base_url)
+        if args.command == "health":
+            status, response = request_json(
+                base_url,
+                "/actuator/health",
+                http_timeout=args.http_timeout,
+            )
+        elif args.command == "preflight":
+            status, response = request_json(
+                base_url,
+                "/api/v1/preflight",
+                http_timeout=args.http_timeout,
+                token=bearer_token(),
+            )
+        else:
+            unknown_code = (
+                "ROLLBACK_EXECUTION_OUTCOME_UNKNOWN"
+                if args.mode == "ROLLBACK"
+                else "PERSISTENT_OUTCOME_UNKNOWN"
+            )
+            payload = execute_payload(args)
+            status, response = request_json(
+                base_url,
+                "/api/v1/sql/execute",
+                http_timeout=args.http_timeout,
+                token=bearer_token(),
+                payload=payload,
+                execution_outcome_unknown_code=unknown_code,
+            )
+            exit_code = execution_response_exit_code(
+                status,
+                response,
+                args.mode,
+                unknown_code,
+            )
+            print_json(response)
+            return exit_code
+        print_json(response)
+        return 0 if 200 <= status < 300 else 1
+    except ExecutionOutcomeUnknown as exc:
+        print_json(outcome_unknown_response(exc.code))
+        return 3
+    except (ClientError, KeyboardInterrupt) as exc:
+        message = "операция прервана" if isinstance(exc, KeyboardInterrupt) else str(exc)
+        print_json({"error": {"code": "CLIENT_ERROR", "message": message}})
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
