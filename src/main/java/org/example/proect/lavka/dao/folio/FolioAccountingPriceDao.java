@@ -763,23 +763,43 @@ public class FolioAccountingPriceDao {
         }
     }
 
-    public boolean isArtAfter(String previousArt, String nextArt) {
+    public boolean isArtAfter(int warehouseId,
+                              String previousArt,
+                              String nextArt) {
         if (previousArt == null || nextArt == null) {
             return false;
         }
         Integer result = jdbc.queryForObject(
-                "SELECT CASE WHEN ? > ? THEN 1 ELSE 0 END",
-                Integer.class, nextArt, previousArt);
+                """
+                SELECT CASE WHEN EXISTS (
+                    SELECT 1
+                      FROM dbo.SCL_ARTC a
+                     WHERE a.ID_SCLAD = ?
+                       AND a.COD_ARTIC = ?
+                       AND a.COD_ARTIC > ?
+                ) THEN 1 ELSE 0 END
+                """,
+                Integer.class, warehouseId, nextArt, previousArt);
         return result != null && result == 1;
     }
 
-    public boolean isArtAtOrAfter(String firstArt, String candidateArt) {
+    public boolean isArtAtOrAfter(int warehouseId,
+                                  String firstArt,
+                                  String candidateArt) {
         if (firstArt == null || candidateArt == null) {
             return false;
         }
         Integer result = jdbc.queryForObject(
-                "SELECT CASE WHEN ? >= ? THEN 1 ELSE 0 END",
-                Integer.class, candidateArt, firstArt);
+                """
+                SELECT CASE WHEN EXISTS (
+                    SELECT 1
+                      FROM dbo.SCL_ARTC a
+                     WHERE a.ID_SCLAD = ?
+                       AND a.COD_ARTIC = ?
+                       AND a.COD_ARTIC >= ?
+                ) THEN 1 ELSE 0 END
+                """,
+                Integer.class, warehouseId, candidateArt, firstArt);
         return result != null && result == 1;
     }
 

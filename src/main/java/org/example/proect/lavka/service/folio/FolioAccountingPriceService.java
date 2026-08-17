@@ -979,7 +979,7 @@ public class FolioAccountingPriceService {
                 // commit the chunk before Java notices the failure.
                 try {
                     validateNativeOutput(
-                            output, cursor, totalUnits, requiredTotalUnits,
+                            warehouseId, output, cursor, totalUnits, requiredTotalUnits,
                             cumulativeUnits, seenCursors);
                 } catch (RuntimeException validationError) {
                     progress.failedChunk = chunkDiagnostics(
@@ -1207,7 +1207,8 @@ public class FolioAccountingPriceService {
         progress.warnings.add(issue);
     }
 
-    private void validateNativeOutput(NativeFullChunkOutput output,
+    private void validateNativeOutput(int warehouseId,
+                                      NativeFullChunkOutput output,
                                       String inputCursor,
                                       int expectedTotalUnits,
                                       int requiredTotalUnits,
@@ -1261,7 +1262,8 @@ public class FolioAccountingPriceService {
         }
         if (inputCursor != null
                 && (output.art() == null
-                || !dao.isArtAtOrAfter(inputCursor, output.art()))) {
+                || !dao.isArtAtOrAfter(
+                        warehouseId, inputCursor, output.art()))) {
             throw new IllegalStateException(
                     "I_UCHET_TOVAR returned an output art before the input cursor");
         }
@@ -1269,7 +1271,8 @@ public class FolioAccountingPriceService {
             if (output.currentUnits() <= 0
                     || seenCursors.contains(output.newArt())
                     || output.art() == null
-                    || !dao.isArtAfter(output.art(), output.newArt())) {
+                    || !dao.isArtAfter(
+                            warehouseId, output.art(), output.newArt())) {
                 throw new IllegalStateException(
                         "I_UCHET_TOVAR returned an invalid continuation cursor");
             }

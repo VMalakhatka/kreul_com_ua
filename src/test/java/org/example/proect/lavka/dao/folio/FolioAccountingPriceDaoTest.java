@@ -17,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -107,6 +108,29 @@ class FolioAccountingPriceDaoTest {
         assertThat(sql.getValue())
                 .contains("CASE COD_ARTIC")
                 .contains("COD_ARTIC IN (?, ?)");
+    }
+
+    @Test
+    void artOrderingUsesTheWarehouseArticleColumnCollation() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(
+                anyString(), eq(Integer.class),
+                eq(5), eq("ОФ-ПА3110Е"), eq("ОФ-ПА3110Е-R")))
+                .thenReturn(1);
+
+        boolean after = new FolioAccountingPriceDao(jdbc).isArtAfter(
+                5, "ОФ-ПА3110Е-R", "ОФ-ПА3110Е");
+
+        assertThat(after).isTrue();
+        var sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc).queryForObject(
+                sql.capture(), eq(Integer.class),
+                eq(5), eq("ОФ-ПА3110Е"), eq("ОФ-ПА3110Е-R"));
+        assertThat(sql.getValue())
+                .contains("FROM dbo.SCL_ARTC a")
+                .contains("a.ID_SCLAD = ?")
+                .contains("a.COD_ARTIC = ?")
+                .contains("a.COD_ARTIC > ?");
     }
 
 }

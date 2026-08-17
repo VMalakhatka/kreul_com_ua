@@ -645,7 +645,8 @@ class FolioAccountingPriceServiceTest {
     void backwardNativeCursorIsRejectedInsideRollbackTransaction() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
-        when(dao.isArtAfter(anyString(), anyString())).thenReturn(false);
+        when(dao.isArtAfter(eq(WAREHOUSE_ID), anyString(), anyString()))
+                .thenReturn(false);
         when(dao.callNativeFullChunk(
                 eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
                 eq(null), eq(0), eq(0), eq(120)))
@@ -678,7 +679,7 @@ class FolioAccountingPriceServiceTest {
     void outputArtBeforeSecondChunkInputIsRejectedInsideTransaction() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
-        when(dao.isArtAtOrAfter("C", "B")).thenReturn(false);
+        when(dao.isArtAtOrAfter(WAREHOUSE_ID, "C", "B")).thenReturn(false);
         when(dao.callNativeFullChunk(
                 eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
                 eq(null), eq(0), eq(0), eq(120)))
@@ -909,8 +910,10 @@ class FolioAccountingPriceServiceTest {
                 WAREHOUSE_ID, "Test warehouse", 1000, null);
         when(dao.currentDatabaseName()).thenReturn("Paint_Rus");
         when(dao.findWarehouseForUpdate(WAREHOUSE_ID)).thenReturn(warehouse);
-        when(dao.isArtAfter(anyString(), anyString())).thenReturn(true);
-        when(dao.isArtAtOrAfter(anyString(), anyString())).thenReturn(true);
+        when(dao.isArtAfter(eq(WAREHOUSE_ID), anyString(), anyString()))
+                .thenReturn(true);
+        when(dao.isArtAtOrAfter(eq(WAREHOUSE_ID), anyString(), anyString()))
+                .thenReturn(true);
         NativeProtectedSnapshot protectedState = protectedSnapshot("article-sha256");
         when(dao.captureNativeProtectedSnapshot(
                 anyInt(), org.mockito.ArgumentMatchers.nullable(String.class),
