@@ -8,11 +8,11 @@
 | Режим | Endpoint | Штатная процедура | Что делает |
 |---|---|---|---|
 | Java-full | `POST /admin/folio/accounting-prices/recalculate/full` | `i_uchet_add(mode=2)` по одному SKU | восстанавливает итоги карточки из уже сохранённых `SUM_UCHET/SUM_UCVAL` |
-| Native-full | `POST /admin/folio/accounting-prices/recalculate/native-full` | `I_UCHET_TOVAR` | выполняет полный алгоритм ФОЛИО, включая пересчёт приходных учётных сумм из документов, налогов и валютных данных |
+| Native-full | `POST /admin/folio/accounting-prices/recalculate/native-full` | `LAVKA_I_UCHET_TOVAR_SAFE`, производная от `I_UCHET_TOVAR` | выполняет полный алгоритм ФОЛИО по одному SKU и диагностирует опасное деление до SQL-ошибки |
 
 Java-full умеет пропускать проблемный SKU через `continueOnNegativeStock`.
-Native-full такого параметра **не имеет**: его apply разрешён только после
-чистого полного rollback-preflight.
+Native-full такого параметра **не имеет**: он всегда откатывает проблемный SKU,
+записывает warning и продолжает остальные товары.
 
 На первом rollout native-full разрешён только для точного режима
 `SCLAD_R.N_2=1000`, `SCLAD_R.N_4 IS NULL`. Rollback-preview доступен в
@@ -117,8 +117,8 @@ Content-Type: application/json
 }
 ```
 
-Это не обычный read-only анализ. Java действительно вызывает
-`I_UCHET_TOVAR`, но каждую порцию выполняет в отдельной транзакции с
+Это не обычный read-only анализ. Java действительно вызывает безопасную копию
+алгоритма `I_UCHET_TOVAR`, но каждый SKU выполняет в отдельной транзакции с
 обязательным rollback. Поэтому preview видит штатные OUT-сигналы
 `art/new_art/otr_date/n_cur/n_tot`, а постоянные данные ФОЛИО после него не
 изменяются.
@@ -126,7 +126,7 @@ Content-Type: application/json
 Перед запуском фронт должен показать обязательное предупреждение: во время
 native preview менеджеры не должны создавать, сохранять или исправлять документы
 в настольной ФОЛИО. Preview не оставляет постоянных изменений, но временно
-выполняет DML и держит блокировки до rollback каждой порции.
+выполняет DML и держит блокировки до rollback текущего SKU.
 
 При preview `confirmApply` можно не передавать. Параметра
 `continueOnNegativeStock` в native request нет.
@@ -141,22 +141,15 @@ native preview менеджеры не должны создавать, сохр
 }
 ```
 
-`confirmApply=true` обязателен. После POST Java сначала строит полную диагностику
-хронологии, а затем выполняет два прохода:
+`confirmApply=true` обязателен. Java выполняет два прохода:
 
-1. находит SKU с отрицательным хронологическим остатком или нулевым
-   знаменателем средней цены;
-2. помечает их как `skipped=true` и сохраняет полную диагностику;
-3. выполняет точный preflight через `I_UCHET_TOVAR`, rollback каждой порции,
-   временно исключая известные проблемные SKU;
-4. при `Divide by zero` откатывает порцию, переходит в
-   `DIVIDE_BY_ZERO_ISOLATION` и rollback-пробами находит минимальный
-   подтверждённый непрерывный диапазон; обычно это один SKU, но если ошибка
-   зависит от последовательности карточек, диапазон может содержать несколько
-   соседних SKU;
-5. добавляет подтверждённый SKU/диапазон в warnings/quarantine и повторяет ту
-   же порцию;
-6. если остальная область чистая — повторяет проход с commit безопасных SKU.
+1. rollback-preflight проверяет каждый SKU отдельным вызовом safe-процедуры;
+2. отрицательный остаток или нулевой знаменатель возвращается как подробный
+   warning, а транзакция этого SKU откатывается;
+3. apply повторяет склад в том же порядке;
+4. каждый чистый SKU фиксируется отдельным commit;
+5. каждый проблемный SKU снова откатывается, не дублируется в warnings и не
+   останавливает обработку следующих товаров.
 
 Наличие таких warnings не блокирует apply. Успешный preview с пропусками имеет
 `PREVIEW_READY_WITH_WARNINGS`, а успешный apply —
@@ -164,18 +157,10 @@ native preview менеджеры не должны создавать, сохр
 товары склада пересчитываются. Менеджер может исправить документы из warnings и
 запустить расчёт ещё раз.
 
-`BLOCKED_NEGATIVE_STOCK` означает, что сама процедура нашла неожиданную
-проблему, которую предварительная диагностика не смогла безопасно исключить.
-Тогда apply не начинается.
-
-Если данные изменились между проходами и новая проблема появилась во время
-apply, текущая порция откатывается и job останавливается. До первого commit это
-`STOPPED_ON_NEGATIVE_STOCK`; после предыдущих commit — `FAILED_PARTIAL`.
-
-Legacy-процедура ограничивает порцию по времени. Поэтому границы порций preview
-и apply могут различаться. Фронт не должен сравнивать `preflightChunks` и
-`committedChunks` один к одному и не должен ожидать, что число вызовов apply
-совпадёт с preview.
+Новая проблема, появившаяся между preflight и apply, также откатывается только
+для своего SKU и добавляется в warnings. `FAILED`/`FAILED_PARTIAL` остаются для
+неожиданных SQL, connection, contract или protected-data ошибок, а не для
+диагностированного отрицательного остатка.
 
 ### Ответ на принятый POST
 
@@ -299,24 +284,24 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 }
 ```
 
-`committedChunks=0` здесь обязательно: все native-preview порции откатились.
+`committedChunks=0` здесь обязательно: все native-preview SKU откатились.
 
 ### Поля native status
 
 | Поле | Как отображать |
 |---|---|
 | `status` | итоговое состояние job |
-| `phase` | текущая стадия: `QUEUED`, `DIAGNOSTIC_SCAN`, `DIVIDE_BY_ZERO_ISOLATION`, `QUARANTINE_PREPARATION`, preflight, apply или остановка |
-| `procedureCalls` | число вызовов `I_UCHET_TOVAR` в обоих проходах |
-| `preflightChunks` | число гарантированно откатившихся порций проверки |
-| `committedChunks` | число подтверждённых приложением commit-порций apply |
+| `phase` | текущая стадия: `QUEUED`, `PRECHECK_RUNNING`, `PRECHECK_COMPLETED`, `APPLY_RUNNING`, `APPLY_COMPLETED` или `FAILED` |
+| `procedureCalls` | число вызовов `LAVKA_I_UCHET_TOVAR_SAFE` в обоих проходах |
+| `preflightChunks` | число гарантированно откатившихся SKU проверки |
+| `committedChunks` | число чистых SKU, подтверждённо зафиксированных apply |
 | `progressUnits` / `totalUnits` | legacy-счётчики текущего прохода |
 | `progressPercent` | приблизительный процент; может отсутствовать до получения `n_tot` |
-| `currentArt` / `nextArt` | сырое OUT-значение процедуры и курсор следующей порции; `currentArt` не считать доказанной границей порции |
-| `lastCommittedArt` | последний артикул последней подтверждённой commit-порции |
-| `checkpointArt` | входной курсор текущей или оборвавшейся порции |
+| `currentArt` / `nextArt` | текущий SKU и следующий SKU в порядке ФОЛИО |
+| `lastCommittedArt` | последний подтверждённо зафиксированный SKU |
+| `checkpointArt` | входной SKU текущей или оборвавшейся транзакции |
 | `returnCode` | return status последнего вызова |
-| `failedChunk` | фактические входные и OUT-значения порции, отклонённой проверкой Java |
+| `failedChunk` | фактические входные и OUT-значения SKU, отклонённого проверкой Java |
 | `warningCount` | полное число найденных проблем |
 | `warningsTruncated` | `true`, если массив `warnings` показан не полностью |
 | `error` | техническая причина финальной ошибки |
@@ -327,40 +312,21 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 При `FAILED` и непустом `failedChunk` показывайте отдельный технический блок:
 `inputArt`, `outputArt`, `nextArt`, `returnCode`, `currentUnits`, `totalUnits`,
 `problemDate` и `validationError`. Не подменяйте его значениями верхнего уровня:
-они могут относиться к предыдущей успешно принятой порции. Кнопку
+они могут относиться к предыдущему успешно принятому SKU. Кнопку
 автоматического повтора не показывать; при `committedChunks=0` данные откатились,
 но сначала нужно разобрать сырой OUT-контракт.
 
 Не сравнивайте артикулы лексикографически в PHP/JavaScript и не определяйте по
 ним движение курсора. Порядок ФОЛИО задаётся legacy CP1251-collation колонки
 `SCL_ARTC.COD_ARTIC`; корректность курсора проверяет только Java API через эту
-колонку. Java проверяет продвижение `inputArt -> nextArt`; `outputArt` остаётся
-только диагностическим значением старой процедуры. Фронтенду не нужно искать
-«последний обработанный SKU» по `outputArt`.
+колонку. Java проверяет продвижение `inputArt -> nextArt`. Один вызов относится
+ровно к одному `outputArt`.
 
-При `phase=QUARANTINE_PREPARATION` показывайте «Подготовка безопасного пропуска
-проблемных товаров». Java пакетно ставит временную служебную отметку и обязана
-восстановить исходные типы до завершения каждой транзакции. Не показывайте эту
-фазу как ошибку и не отправляйте повторный POST, пока `running=true`.
-
-При `phase=DIVIDE_BY_ZERO_ISOLATION` показывайте «Определение товара с ошибкой
-учётной цены». Это не финальная ошибка: Java уже откатила исходную порцию и
-проверяет диапазоны товаров только в rollback-транзакциях. Процент основного
-прохода в этой фазе может временно не меняться. Не перезапускайте POST и не
-прерывайте контейнер.
-
-Warning `ACCOUNTING_PRICE_DIVIDE_BY_ZERO` означает, что ошибка подтверждена
-rollback-пробой. При `details.exactSkuConfirmed=true` пропущен один
-`details.sku`. При `false` ошибка воспроизводится только на непрерывном
-диапазоне: показывайте `firstSku`, `lastSku`, `skuCount` и `skus[]` как список
-пропущенных товаров. `rangeConfirmed=true` означает, что именно весь указанный
-диапазон реально повторил ошибку, а не был выбран предположительно. Не
-блокируйте успешный итог
-`PREVIEW_READY_WITH_WARNINGS`/`COMPLETED_WITH_WARNINGS`. `checkpointArt` не
-является виновным товаром и нужен только для технической диагностики.
-`warningCount` считает warning-события, а не количество пропущенных SKU: один
-multi-SKU warning может иметь `skuCount>1`. Если `skusTruncated=true`, полный
-диапазон всё равно однозначно задан полями `firstSku`/`lastSku` и `skuCount`.
+Warning `ZERO_ACCOUNTING_DENOMINATOR` означает, что safe-процедура остановила
+SKU до деления на ноль. Показывайте `sku`, `recno`, `operationDate`, `formula`,
+`numerator`, `denominator`, `quantityBefore` и `movementQuantity`. Он не
+блокирует успешный итог `PREVIEW_READY_WITH_WARNINGS` или
+`COMPLETED_WITH_WARNINGS`.
 
 ### Native статусы
 
@@ -372,12 +338,10 @@ multi-SKU warning может иметь `skuCount>1`. Если `skusTruncated=tr
 | `RUNNING` | показать `phase`, прогресс и текущий артикул |
 | `PREVIEW_READY` | точный preview завершён, данные откатились, проблем нет |
 | `PREVIEW_READY_WITH_WARNINGS` | preview завершён; показать пропущенные SKU и разрешить подтверждённый apply |
-| `BLOCKED_NEGATIVE_STOCK` | неожиданная остановка процедуры; apply не начался |
 | `COMPLETED` | apply завершён |
 | `COMPLETED_WITH_WARNINGS` | безопасные SKU пересчитаны; показать пропущенные SKU |
-| `STOPPED_ON_NEGATIVE_STOCK` | новая проблема до первого commit, текущая порция откатилась |
 | `FAILED` | ошибка до первого commit |
-| `FAILED_PARTIAL` | предыдущие порции уже могли быть зафиксированы; только ручная сверка |
+| `FAILED_PARTIAL` | предыдущие SKU уже могли быть зафиксированы; только ручная сверка |
 | `OUTCOME_UNKNOWN` | исход текущей транзакции не доказан; запретить автоматический retry и эскалировать оператору |
 
 `FAILED_PARTIAL` нельзя показывать как обычную ошибку с кнопкой «Повторить».
@@ -440,15 +404,16 @@ multi-SKU warning может иметь `skuCount>1`. Если `skusTruncated=tr
 Не показывайте предупреждение только потому, что у новой карточки ещё нет
 движений и учётная цена равна нулю, а продажная уже задана. Это нормальное
 состояние товара до первого прихода и API больше не помечает его как ошибку.
-Не показывайте `checkpointArt` как виновный SKU: при SQL exception это только
-начало порции.
+Не показывайте `checkpointArt` как отдельный виновный SKU: это входной артикул
+текущего вызова и поле технической диагностики.
 
 В деталях показывайте `documentId`, `recno`, `movementPosition`,
 `currentState`, `procedureArt`, `folioProblemDate` и курсоры.
 
-Если сама процедура находит проблему, которой не было в диагностическом скане,
-приходит `FOLIO_NATIVE_RECALCULATION_PROBLEM`. Она блокирует apply и содержит
-как минимум склад, `procedureArt`, дату ФОЛИО и курсоры.
+Если safe-процедура находит нулевой знаменатель, приходит
+`ZERO_ACCOUNTING_DENOMINATOR`. Если штатный алгоритм сообщает отрицательный
+остаток через `otr_date`, приходит `NEGATIVE_CHRONOLOGICAL_STOCK` с деталями
+операции. Оба warning откатывают только этот SKU и не блокируют остальные.
 
 ## Логи
 
@@ -458,8 +423,8 @@ multi-SKU warning может иметь `skuCount>1`. Если `skusTruncated=tr
 ${LOG_DIR}/folio-accounting-price.log
 ```
 
-Для каждого пропущенного товара используется событие `native_sku_skipped`, для
-неожиданной остановки native-порции — `native_negative_stock`. Файл ротируется 30 дней,
+Для каждого пропущенного товара используется событие `native_safe_sku_skipped`.
+Файл ротируется 30 дней,
 частями до 20 MB и суммарно до 1 GB.
 
 Лог **не является транзакционным checkpoint**. Он пишется отдельно от MSSQL:
@@ -493,7 +458,7 @@ LAVKA_FOLIO_ACCOUNTING_PRICE_FULL_APPLY_ENABLED=false
 LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ENABLED=true
 LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_APPLY_ENABLED=false
 LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_ALLOWED_DATABASES=Paint_Rus,Paint_Ua
-LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_MAX_CHUNKS=10000
+LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_MAX_CHUNKS=100000
 LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_TIMEOUT_SECONDS=900
 ```
 
@@ -504,7 +469,7 @@ LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_TIMEOUT_SECONDS=900
 - native apply требует одновременно `APPLY_ENABLED=true` и
   `NATIVE_FULL_APPLY_ENABLED=true`;
 - стандартный native allow-list содержит `Paint_Rus` и `Paint_Ua`;
-- отдельный native timeout по умолчанию равен 900 секундам на одну порцию, а не
+- отдельный native timeout по умолчанию равен 900 секундам на один SKU, а не
   на весь склад;
 - status и preview включены по умолчанию для VPN/internal network;
 - оба apply-флага по умолчанию остаются выключенными.

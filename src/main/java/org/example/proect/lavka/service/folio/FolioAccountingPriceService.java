@@ -105,7 +105,7 @@ public class FolioAccountingPriceService {
             @Value("${lavka.folio.accounting-prices.native-full-enabled:true}") boolean nativeFullEnabled,
             @Value("${lavka.folio.accounting-prices.native-full-apply-enabled:false}") boolean nativeFullApplyEnabled,
             @Value("${lavka.folio.accounting-prices.native-full-allowed-databases:Paint_Rus,Paint_Ua}") String nativeFullAllowedDatabases,
-            @Value("${lavka.folio.accounting-prices.native-full-max-chunks:10000}") int nativeFullMaxChunks,
+            @Value("${lavka.folio.accounting-prices.native-full-max-chunks:100000}") int nativeFullMaxChunks,
             @Value("${lavka.folio.accounting-prices.lock-timeout-ms:5000}") int lockTimeoutMs,
             @Value("${lavka.folio.accounting-prices.query-timeout-seconds:120}") int queryTimeoutSeconds,
             @Value("${lavka.folio.accounting-prices.native-full-timeout-seconds:900}") int nativeFullTimeoutSeconds,
@@ -708,38 +708,18 @@ public class FolioAccountingPriceService {
             WarehouseScope scope = requireScope(progress.request.warehouseId());
             AccountingMethod method = method(scope.requested().rawAccountingCode());
             validateNativeScope(scope, method);
+            if (!dao.safeNativeProceduresInstalled()) {
+                throw new IllegalStateException(
+                        "Required dbo.LAVKA_I_UCHET_*_SAFE procedures are not installed");
+            }
             progress.accountingMethod = method;
             logNativeArithmeticSessionOptions(progress);
 
-            progress.phase = "DIAGNOSTIC_SCAN";
-            progress.status = "RUNNING";
-            publishNative(progress, true, true, null);
-            List<NativeChronologyProblem> knownProblems =
-                    dao.findNativeChronologyProblems(
-                            progress.request.warehouseId(), nativeFullTimeoutSeconds);
+            // The guarded procedure handles one SKU per transaction and
+            // returns structured zero-denominator/negative-stock diagnostics.
+            // Temporary TIP_TOVR quarantine is therefore no longer needed.
             Set<String> skippedSkus = new LinkedHashSet<>();
-            for (NativeChronologyProblem problem : knownProblems) {
-                skippedSkus.add(problem.sku());
-                Issue issue = nativeChronologyIssue(problem);
-                addNativeIssue(progress, issue);
-                log.warn("[folio.accounting-price] native_sku_skipped job={} warehouse={} sku={} code={} recno={} documentId={} documentNumber={} date={} initialQuantity={} quantityBefore={} operationQuantity={} quantityAfter={} movementPosition={} movementCount={} currentPhysical={} currentAvailable={} currentAccountingQuantity={} currentAccountingPrice={}",
-                        progress.jobId, problem.warehouseId(), problem.sku(), problem.code(),
-                        problem.recno(), problem.documentId(), problem.documentNumber(),
-                        formatDate(problem.documentDate()), problem.initialQuantity(),
-                        problem.quantityBefore(), problem.operationQuantity(),
-                        problem.quantityAfter(), problem.movementPosition(),
-                        problem.movementCount(), problem.physicalQuantity(),
-                        problem.availableQuantity(), problem.accountingQuantity(),
-                        problem.accountingPrice());
-            }
-            String quarantineMarker = skippedSkus.isEmpty()
-                    ? null
-                    : dao.findUnusedProductTypeMarker();
-            if (!skippedSkus.isEmpty()
-                    && (quarantineMarker == null || quarantineMarker.isBlank())) {
-                throw new IllegalStateException(
-                        "Folio has no unused product-type marker for safe recalculation quarantine");
-            }
+            String quarantineMarker = null;
 
             progress.phase = "PRECHECK_RUNNING";
             progress.status = "RUNNING";
@@ -747,31 +727,6 @@ public class FolioAccountingPriceService {
             NativePassResult preflight = runNativePass(
                     progress, method, true, 0, null,
                     skippedSkus, quarantineMarker);
-
-            // Divide-by-zero isolation may discover additional SKUs after the
-            // initial deterministic scan. Resolve a marker again for the
-            // second (apply) pass because all isolation transactions rolled
-            // their temporary TIP_TOVR row back.
-            if (!skippedSkus.isEmpty()
-                    && (quarantineMarker == null || quarantineMarker.isBlank())) {
-                quarantineMarker = dao.findUnusedProductTypeMarker();
-                if (quarantineMarker == null || quarantineMarker.isBlank()) {
-                    throw new IllegalStateException(
-                            "Folio has no unused product-type marker for recalculation quarantine");
-                }
-            }
-
-            if (preflight.problemDetected()) {
-                progress.status = "BLOCKED_NEGATIVE_STOCK";
-                progress.phase = "PRECHECK_COMPLETED";
-                progress.currentArt = null;
-                progress.nextArt = null;
-                publishNative(progress, false, false, null);
-                log.warn("[folio.accounting-price] native_full_blocked job={} warehouse={} warnings={} calls={}",
-                        progress.jobId, progress.request.warehouseId(),
-                        progress.warningCount, progress.procedureCalls);
-                return;
-            }
 
             if (progress.request.previewOnly()) {
                 progress.status = progress.warningCount == 0
@@ -789,8 +744,9 @@ public class FolioAccountingPriceService {
             }
 
             // Apply is deliberately a second pass. The first pass ran the
-            // exact Folio procedure but rolled every chunk back, proving that
-            // the complete scope has no known native stop condition.
+            // exact guarded Folio algorithm one SKU at a time and rolled every
+            // transaction back. During apply, clean SKUs commit individually;
+            // diagnosed SKUs roll back individually and do not stop the rest.
             NativeProtectedSnapshot protectedBaseline = captureNativeBaseline(
                     progress.database, progress.request.warehouseId(), method);
             progress.phase = "APPLY_RUNNING";
@@ -897,51 +853,11 @@ public class FolioAccountingPriceService {
                         seenCursors, rollbackOnly, requiredTotalUnits,
                         protectedBaseline, skippedSkus, effectiveQuarantineMarker);
             } catch (RuntimeException error) {
-                if (!rollbackOnly || !isDivideByZero(error)) {
-                    throw error;
-                }
-                if (effectiveQuarantineMarker == null
-                        || effectiveQuarantineMarker.isBlank()) {
-                    effectiveQuarantineMarker = dao.findUnusedProductTypeMarker();
-                }
-                if (effectiveQuarantineMarker == null
-                        || effectiveQuarantineMarker.isBlank()) {
-                    throw new IllegalStateException(
-                            "Folio has no unused product-type marker for divide-by-zero isolation",
-                            error);
-                }
-                NativeDivideIsolation isolation = isolateNativeDivideByZero(
-                        progress, method, cursor, skippedSkus,
-                        effectiveQuarantineMarker);
-                if (isolation.skus().stream().anyMatch(skippedSkus::contains)) {
-                    throw new IllegalStateException(
-                            "Native Folio divide-by-zero isolation repeated range "
-                                    + isolation.firstSku() + ".." + isolation.lastSku(),
-                            error);
-                }
-                skippedSkus.addAll(isolation.skus());
-                Issue issue = nativeDivideByZeroIssue(
-                        progress.request.warehouseId(), isolation, cursor,
-                        progress.divideIsolationProbes);
-                addNativeIssue(progress, issue);
-                if (isolation.exactSkuConfirmed()) {
-                    log.warn("[folio.accounting-price] native_divide_by_zero_sku job={} warehouse={} sku={} checkpoint={} isolationProbes={} action=quarantined",
-                            progress.jobId, progress.request.warehouseId(),
-                            isolation.firstSku(), cursor,
-                            progress.divideIsolationProbes);
-                } else {
-                    log.warn("[folio.accounting-price] native_divide_by_zero_range job={} warehouse={} firstSku={} lastSku={} skuCount={} checkpoint={} isolationProbes={} action=quarantined",
-                            progress.jobId, progress.request.warehouseId(),
-                            isolation.firstSku(), isolation.lastSku(),
-                            isolation.skus().size(), cursor,
-                            progress.divideIsolationProbes);
-                }
-                progress.phase = "PRECHECK_RUNNING";
-                publishNative(progress, true, true, null);
-                // The failed chunk was rolled back. Retry from the same cursor
-                // with the confirmed SKU added to the temporary quarantine.
-                seenCursors.remove(cursorKey);
-                continue;
+                // The installed safe procedure must convert every supported
+                // zero-denominator branch into return code 20. A raw SQL 8134
+                // therefore means an installation mismatch or an unvalidated
+                // branch and must remain fail-stop.
+                throw error;
             }
             NativeFullChunkOutput output = executed.output();
             passChunks++;
@@ -958,20 +874,23 @@ public class FolioAccountingPriceService {
 
             if (output.hasProblem()) {
                 problemDetected = true;
-                Issue issue = diagnoseNativeProblem(
-                        progress.request.warehouseId(), output, cursor);
-                addNativeIssue(progress, issue);
-                log.warn("[folio.accounting-price] native_negative_stock job={} warehouse={} art={} date={} checkpoint={} newArt={} committedChunks={}",
-                        progress.jobId, progress.request.warehouseId(), output.art(),
-                        output.problemDate(), cursor, output.newArt(),
-                        progress.committedChunks);
-                publishNative(progress, true, true, null);
-                if (!rollbackOnly) {
-                    throw new NativeNegativeDuringApplyException(
-                            "Folio detected a recalculation problem for " + output.art()
-                                    + " on " + output.problemDate()
-                                    + "; the current chunk was rolled back");
+                String problemKey = (output.problemCode() == null
+                        ? "NEGATIVE_CHRONOLOGICAL_STOCK" : output.problemCode())
+                        + '\u0000'
+                        + (output.problemArt() == null ? output.art() : output.problemArt());
+                if (progress.reportedProblemKeys.add(problemKey)) {
+                    Issue issue = diagnoseNativeProblem(
+                            progress.request.warehouseId(), output, cursor);
+                    addNativeIssue(progress, issue);
+                    log.warn("[folio.accounting-price] native_safe_sku_skipped job={} warehouse={} art={} code={} date={} checkpoint={} newArt={} committedChunks={}",
+                            progress.jobId, progress.request.warehouseId(), output.art(),
+                            output.problemCode(), output.problemDate(), cursor,
+                            output.newArt(), progress.committedChunks);
                 }
+                publishNative(progress, true, true, null);
+                // LAVKA_I_UCHET_TOVAR_SAFE processes exactly one SKU. Its
+                // transaction has already been rolled back, so both preview
+                // and apply can safely continue with output.newArt().
             } else if (!rollbackOnly) {
                 progress.committedChunks++;
                 progress.lastCommittedArt = executed.processedEndArt();
@@ -1474,6 +1393,46 @@ public class FolioAccountingPriceService {
     private Issue diagnoseNativeProblem(int warehouseId,
                                         NativeFullChunkOutput output,
                                         String checkpointArt) {
+        if (output.problemCode() != null && !output.problemCode().isBlank()) {
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("sku", output.problemArt() == null
+                    ? output.art() : output.problemArt());
+            details.put("warehouseId", warehouseId);
+            details.put("procedureArt", output.art());
+            details.put("skipped", true);
+            details.put("source", "LAVKA_I_UCHET_TOVAR_SAFE");
+            if (checkpointArt != null) {
+                details.put("checkpointArt", checkpointArt);
+            }
+            if (output.newArt() != null) {
+                details.put("nextArt", output.newArt());
+            }
+            if (output.problemRecno() != null) {
+                details.put("recno", output.problemRecno());
+            }
+            if (output.problemOperationDate() != null) {
+                details.put("operationDate", output.problemOperationDate());
+            }
+            if (output.problemFormula() != null) {
+                details.put("formula", output.problemFormula());
+            }
+            if (output.problemNumerator() != null) {
+                details.put("numerator", output.problemNumerator());
+            }
+            if (output.problemDenominator() != null) {
+                details.put("denominator", output.problemDenominator());
+            }
+            if (output.problemQuantityBefore() != null) {
+                details.put("quantityBefore", output.problemQuantityBefore());
+            }
+            if (output.problemMovementQuantity() != null) {
+                details.put("movementQuantity", output.problemMovementQuantity());
+            }
+            return new Issue(
+                    output.problemCode(),
+                    "Folio safely skipped this SKU before an invalid accounting-price division",
+                    Map.copyOf(details));
+        }
         try {
             FolioAccountingPriceRecalculationResponse inspection =
                     Objects.requireNonNull(readTransaction.execute(status ->
@@ -1583,9 +1542,20 @@ public class FolioAccountingPriceService {
             throw new NativeOutcomeUnknownException(
                     "I_UCHET_TOVAR was not enclosed by the required transaction");
         }
-        if (output.returnCode() == null || output.returnCode() != 0) {
+        if (output.returnCode() == null
+                || output.returnCode() != 0 && output.returnCode() != 20) {
             throw new IllegalStateException(
-                    "I_UCHET_TOVAR returned code " + output.returnCode());
+                    "LAVKA_I_UCHET_TOVAR_SAFE returned code " + output.returnCode());
+        }
+        if (output.returnCode() == 20
+                && (output.problemCode() == null || output.problemCode().isBlank())) {
+            throw new IllegalStateException(
+                    "LAVKA_I_UCHET_TOVAR_SAFE returned code 20 without diagnostics");
+        }
+        if (output.returnCode() == 0
+                && output.problemCode() != null && !output.problemCode().isBlank()) {
+            throw new IllegalStateException(
+                    "LAVKA_I_UCHET_TOVAR_SAFE returned diagnostics without stop code");
         }
         if (output.currentUnits() == null || output.totalUnits() == null
                 || output.currentUnits() < 0 || output.totalUnits() < 0) {
@@ -2149,6 +2119,7 @@ public class FolioAccountingPriceService {
         private final String database;
         private final LocalDateTime startedAt;
         private final List<Issue> warnings = new ArrayList<>();
+        private final Set<String> reportedProblemKeys = new HashSet<>();
         private String status;
         private String phase;
         private AccountingMethod accountingMethod;

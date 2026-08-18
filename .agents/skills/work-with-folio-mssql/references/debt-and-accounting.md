@@ -274,7 +274,28 @@ procedure, но не заменяет отдельные DDL review, права 
 production rollback-preview в окне обслуживания. Подробности:
 `docs/folio-experiments/19_accounting_price_procedure_fingerprint_comparison.md`.
 
-Тот же golden-master подтвердил quarantine: временный скрытый `TIP_TOVR` на
+Production gate от 2026-08-18 заменяет time-based native chunks на exact
+per-SKU вызовы `dbo.LAVKA_I_UCHET_TOVAR_SAFE`. Отдельный install script
+`docs/folio-experiments/20_install_safe_accounting_price_procedures_paint_ua.sql`
+жёстко ограничен `Paint_Ua`, SQL Server 8.00/compatibility 80, не изменяет
+штатные `I_UCHET_*` и отказывается перезаписывать существующие `LAVKA_*`.
+Каждый вызов требует внешнюю транзакцию и обрабатывает ровно один SKU. Код 20
+`ZERO_ACCOUNTING_DENOMINATOR` возвращает `problem_art/recno/date/formula`,
+числитель, знаменатель и количества до выполнения опасного деления.
+
+Production Java теперь вызывает именно safe wrapper и перед запуском проверяет
+наличие обоих объектов и точный контракт из 20 параметров. Preview откатывает каждый
+SKU. Apply сначала выполняет полный per-SKU rollback-preflight, затем фиксирует
+каждый чистый SKU отдельной транзакцией; отрицательный остаток или код 20
+откатывает только проблемный SKU, записывается один раз в warnings/log и не
+останавливает следующие товары. Поэтому описанный ниже quarantine через
+`TIP_TOVR` остаётся историей старого recovery-route и fallback-диагностикой, а
+не штатным production алгоритмом после установки safe procedures. Первый
+Paint_Ua gate и postcheck описаны в
+`docs/folio-experiments/21_safe_accounting_price_paint_ua_rollout.md`.
+
+Исторический recovery-эксперимент до появления safe-процедур подтвердил
+quarantine: временный скрытый `TIP_TOVR` на
 точно проблемном SKU заставляет процедуру пропустить его, перейти дальше и
 завершить оставшийся диапазон без арифметической ошибки. Независимый postcheck
 после rollback подтвердил отсутствие служебной строки, временных типов товара
@@ -285,7 +306,7 @@ production rollback-preview в окне обслуживания. Подробн
 `finally`: нужно немедленно передать ошибку владельцу транзакции, выполнить
 rollback и только новым соединением подтвердить postconditions.
 
-Проектный recovery для такой ошибки не подавляет `ANSI_WARNINGS` и не
+Старый recovery-route для такой ошибки не подавлял `ANSI_WARNINGS` и не
 считает checkpoint виновником. В rollback-preflight ошибочная порция
 откатывается. Сначала полный оставшийся диапазон обязан повторно дать 8134;
 затем с фиксированной левой границей ищется кратчайший подтверждённый префикс,

@@ -36,7 +36,7 @@ public class FolioAccountingPriceDao {
     private static final String MUTEX_RESOURCE = "lavka|folio|accounting-price-recalculation";
     private static final String REBUILD_CALL = "{call dbo.i_uchet_add(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)}";
     private static final String NATIVE_FULL_CALL =
-            "{? = call dbo.I_UCHET_TOVAR(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)}";
+            "{? = call dbo.LAVKA_I_UCHET_TOVAR_SAFE(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)}";
     // CASE-based restore uses three bind parameters per SKU. Staying well
     // below SQL Server's 2100-parameter limit also keeps jTDS packets modest.
     private static final int NATIVE_QUARANTINE_BATCH_SIZE = 400;
@@ -122,6 +122,21 @@ public class FolioAccountingPriceDao {
 
     public String currentDatabaseName() {
         return trim(jdbc.queryForObject("SELECT DB_NAME()", String.class));
+    }
+
+    public boolean safeNativeProceduresInstalled() {
+        Integer installed = jdbc.queryForObject("""
+                SELECT CASE
+                         WHEN OBJECT_ID('dbo.LAVKA_I_UCHET_1_TOVAR_SAFE') IS NOT NULL
+                          AND OBJECT_ID('dbo.LAVKA_I_UCHET_TOVAR_SAFE') IS NOT NULL
+                          AND (SELECT COUNT(*) FROM dbo.syscolumns
+                                WHERE id = OBJECT_ID('dbo.LAVKA_I_UCHET_1_TOVAR_SAFE')) = 20
+                          AND (SELECT COUNT(*) FROM dbo.syscolumns
+                                WHERE id = OBJECT_ID('dbo.LAVKA_I_UCHET_TOVAR_SAFE')) = 20
+                         THEN 1 ELSE 0
+                       END
+                """, Integer.class);
+        return installed != null && installed == 1;
     }
 
     public ArithmeticSessionOptions readArithmeticSessionOptions() {
@@ -360,9 +375,10 @@ public class FolioAccountingPriceDao {
     }
 
     /**
-     * Calls the native Folio full-accounting-price procedure. The legacy
-     * procedure emits progress exclusively through INOUT parameters, so every
-     * result set/update count must be drained before the values are read.
+     * Calls the guarded Folio accounting-price procedure for exactly one SKU.
+     * It retains the native INOUT cursor contract while additionally returning
+     * structured diagnostics before a zero denominator can reach SQL Server.
+     * Every result set/update count must be drained before OUT values are read.
      */
     public NativeFullChunkOutput callNativeFullChunk(
             Integer accountingGroup,
@@ -398,6 +414,15 @@ public class FolioAccountingPriceDao {
                 registerIntegerInOut(statement, 10, totalUnits);
                 registerVarcharInOut(statement, 11, null);
                 registerVarcharInOut(statement, 12, null);
+                statement.registerOutParameter(13, Types.VARCHAR);
+                statement.registerOutParameter(14, Types.VARCHAR);
+                statement.registerOutParameter(15, Types.INTEGER);
+                statement.registerOutParameter(16, Types.TIMESTAMP);
+                statement.registerOutParameter(17, Types.VARCHAR);
+                statement.registerOutParameter(18, Types.DOUBLE);
+                statement.registerOutParameter(19, Types.DOUBLE);
+                statement.registerOutParameter(20, Types.DOUBLE);
+                statement.registerOutParameter(21, Types.DOUBLE);
 
                 int resultRowCount = 0;
                 boolean hasResult = statement.execute();
@@ -419,6 +444,15 @@ public class FolioAccountingPriceDao {
                         nullableOutInteger(statement, 10),
                         trim(statement.getString(11)),
                         trim(statement.getString(12)),
+                        trim(statement.getString(13)),
+                        trim(statement.getString(14)),
+                        nullableOutInteger(statement, 15),
+                        nullableOutDateTime(statement, 16),
+                        trim(statement.getString(17)),
+                        nullableOutDouble(statement, 18),
+                        nullableOutDouble(statement, 19),
+                        nullableOutDouble(statement, 20),
+                        nullableOutDouble(statement, 21),
                         transactionCountBefore,
                         transactionCount(connection),
                         resultRowCount
@@ -947,6 +981,18 @@ public class FolioAccountingPriceDao {
         return statement.wasNull() ? null : value;
     }
 
+    private static Double nullableOutDouble(CallableStatement statement,
+                                            int index) throws SQLException {
+        double value = statement.getDouble(index);
+        return statement.wasNull() ? null : value;
+    }
+
+    private static LocalDateTime nullableOutDateTime(CallableStatement statement,
+                                                     int index) throws SQLException {
+        Timestamp value = statement.getTimestamp(index);
+        return value == null ? null : value.toLocalDateTime();
+    }
+
     private static void registerFloatInOut(CallableStatement statement, int index) throws SQLException {
         statement.registerOutParameter(index, Types.DOUBLE);
         statement.setDouble(index, 0D);
@@ -1058,12 +1104,22 @@ public class FolioAccountingPriceDao {
             Integer totalUnits,
             String newArt,
             String problemDate,
+            String problemCode,
+            String problemArt,
+            Integer problemRecno,
+            LocalDateTime problemOperationDate,
+            String problemFormula,
+            Double problemNumerator,
+            Double problemDenominator,
+            Double problemQuantityBefore,
+            Double problemMovementQuantity,
             int transactionCountBefore,
             int transactionCountAfter,
             int resultRowCount
     ) {
         public boolean hasProblem() {
-            return problemDate != null && !problemDate.isBlank();
+            return problemCode != null && !problemCode.isBlank()
+                    || problemDate != null && !problemDate.isBlank();
         }
     }
 
