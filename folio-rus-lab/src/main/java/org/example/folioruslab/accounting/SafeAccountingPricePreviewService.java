@@ -159,7 +159,6 @@ public final class SafeAccountingPricePreviewService {
             progress.status = progress.problemProducts == 0
                     ? "COMPLETED"
                     : "COMPLETED_WITH_WARNINGS";
-            publish(progress);
             log.info(
                     "SAFE_ACCOUNTING_PREVIEW_COMPLETE jobId={} warehouseId={} total={} "
                             + "clean={} problems={} negativeStock={} truncated={}",
@@ -180,7 +179,6 @@ public final class SafeAccountingPricePreviewService {
             progress.error = exception.getMessage() == null
                     ? "The safe Paint_Rus preview failed"
                     : exception.getMessage();
-            publish(progress);
             log.error(
                     "SAFE_ACCOUNTING_PREVIEW_FAILED jobId={} warehouseId={} processed={} "
                             + "exceptionType={}",
@@ -191,6 +189,9 @@ public final class SafeAccountingPricePreviewService {
             );
         } finally {
             operationGate.release();
+            if (!progress.running) {
+                publish(progress);
+            }
         }
     }
 

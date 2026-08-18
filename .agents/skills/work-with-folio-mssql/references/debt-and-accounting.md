@@ -263,6 +263,17 @@ Postcheck обязан разрешать именно эти разобранн
 исходные документные суммы, заголовки документов, `N_2/N_4` и `TMP_MOVE`.
 Полный протокол: `docs/folio-experiments/18_safe_accounting_price_commit_golden_master_paint_rus.md`.
 
+Сравнение от 2026-08-18 подтвердило переносимость исходной штатной версии:
+нормализованные без пробелов SHA-256 `I_UCHET_1_TOVAR` и `I_UCHET_TOVAR`
+совпали между живой `Paint_Rus` и закрытым снимком `Paint_Ua` от 2026-08-11
+как целиком, так и для каждого из пяти `syscomments` fragments. Отличия raw
+hash объясняются только padding/граничными пробелами текстового `.rpt`.
+Лаборатория получает эти отпечатки отдельным allowlisted endpoint и никогда не
+выдаёт SQL-текст. Это разрешает готовить Paint_Ua-specific копию safe
+procedure, но не заменяет отдельные DDL review, права `EXECUTE` и первый
+production rollback-preview в окне обслуживания. Подробности:
+`docs/folio-experiments/19_accounting_price_procedure_fingerprint_comparison.md`.
+
 Тот же golden-master подтвердил quarantine: временный скрытый `TIP_TOVR` на
 точно проблемном SKU заставляет процедуру пропустить его, перейти дальше и
 завершить оставшийся диапазон без арифметической ошибки. Независимый postcheck
