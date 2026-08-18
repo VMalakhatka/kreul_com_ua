@@ -29,6 +29,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SqlExecutionServiceProtocolTest {
 
     @Test
+    void executesExplicitLaboratoryBatchesOnTheSameManagedConnection() {
+        JdbcScript script = new JdbcScript();
+        script.userResults = List.of(rows(
+                List.of("batch_value"), List.of(List.of("ok"))
+        ));
+
+        SqlExecutionResponse response = service(script).execute(request(
+                "SELECT first_batch\n-- FOLIO_LAB_NEXT_BATCH\nSELECT second_batch",
+                ExecutionMode.ROLLBACK,
+                null
+        ));
+
+        assertEquals(ExecutionState.ROLLED_BACK, response.state());
+        assertEquals(2, script.events.stream()
+                .filter("user.execute"::equals)
+                .count());
+        assertEquals(List.of(0, 1),
+                response.results().stream().map(SqlResult::ordinal).toList());
+        assertEquals(1, script.rollbackAttempts);
+    }
+
+    @Test
     void drainsRowSetThenUpdateCountThenRowSetUntilEnd() {
         JdbcScript script = new JdbcScript();
         script.userResults = List.of(
@@ -194,7 +216,8 @@ class SqlExecutionServiceProtocolTest {
                 new SqlSafetyPolicy(),
                 new JdbcValueNormalizer(redactor),
                 redactor,
-                laboratoryProperties()
+                laboratoryProperties(),
+                new LabOperationGate()
         );
     }
 
@@ -209,9 +232,17 @@ class SqlExecutionServiceProtocolTest {
     }
 
     private static SqlExecutionRequest request(ExecutionMode mode, Integer maxRows) {
+        return request("SELECT lab_value", mode, maxRows);
+    }
+
+    private static SqlExecutionRequest request(
+            String sql,
+            ExecutionMode mode,
+            Integer maxRows
+    ) {
         boolean persistent = mode != ExecutionMode.ROLLBACK;
         return new SqlExecutionRequest(
-                "SELECT lab_value",
+                sql,
                 mode,
                 persistent ? Boolean.TRUE : null,
                 persistent ? FolioRusProperties.EXPECTED_DATABASE : null,

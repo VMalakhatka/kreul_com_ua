@@ -27,13 +27,17 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.Semaphore;
+import java.util.regex.Pattern;
 
 @Service
 public final class SqlExecutionService {
 
     private static final Logger log = LoggerFactory.getLogger(SqlExecutionService.class);
     private static final int MAXIMUM_WARNINGS = 20;
+    private static final int MAXIMUM_USER_BATCHES = 10;
+    private static final Pattern USER_BATCH_SEPARATOR = Pattern.compile(
+            "(?m)^\\s*--\\s*FOLIO_LAB_NEXT_BATCH\\s*$"
+    );
 
     private final SqlConnectionProvider connectionFactory;
     private final DatabaseGuard databaseGuard;
@@ -41,7 +45,7 @@ public final class SqlExecutionService {
     private final JdbcValueNormalizer valueNormalizer;
     private final SensitiveValueRedactor redactor;
     private final LabProperties labProperties;
-    private final Semaphore singleExecution = new Semaphore(1, true);
+    private final LabOperationGate operationGate;
 
     public SqlExecutionService(
             SqlConnectionProvider connectionFactory,
@@ -49,7 +53,8 @@ public final class SqlExecutionService {
             SqlSafetyPolicy safetyPolicy,
             JdbcValueNormalizer valueNormalizer,
             SensitiveValueRedactor redactor,
-            LabProperties labProperties
+            LabProperties labProperties,
+            LabOperationGate operationGate
     ) {
         this.connectionFactory = connectionFactory;
         this.databaseGuard = databaseGuard;
@@ -57,12 +62,13 @@ public final class SqlExecutionService {
         this.valueNormalizer = valueNormalizer;
         this.redactor = redactor;
         this.labProperties = labProperties;
+        this.operationGate = operationGate;
     }
 
     public SqlExecutionResponse execute(SqlExecutionRequest request) {
         ResolvedExecutionOptions options = ResolvedExecutionOptions.from(request, labProperties);
         safetyPolicy.validate(request.sql(), options.mode());
-        if (!singleExecution.tryAcquire()) {
+        if (!operationGate.tryAcquire()) {
             throw new LabBusyException();
         }
 
@@ -299,7 +305,7 @@ public final class SqlExecutionService {
                     "The database connection or transaction control operation failed"
             );
         } finally {
-            singleExecution.release();
+            operationGate.release();
         }
 
         return finish(runId, state, options, startedAt, sqlHash, transactionBefore,
@@ -317,7 +323,12 @@ public final class SqlExecutionService {
         try (Statement statement = connection.createStatement()) {
             statement.setQueryTimeout(options.timeoutSeconds());
             try {
-                executeAndDrain(statement, sql, results, budget, warnings);
+                List<String> batches = splitUserBatches(sql);
+                for (String batch : batches) {
+                    executeAndDrain(
+                            statement, batch, results.size(), results, budget, warnings
+                    );
+                }
                 return ExecutionAttempt.success();
             } catch (OutputLimitExceededException limit) {
                 cancelQuietly(statement);
@@ -335,12 +346,13 @@ public final class SqlExecutionService {
     private void executeAndDrain(
             Statement statement,
             String sql,
+            int startingOrdinal,
             List<SqlResult> results,
             OutputBudget budget,
             Set<String> warnings
     ) throws SQLException {
         boolean hasResultSet = statement.execute(sql);
-        int ordinal = 0;
+        int ordinal = startingOrdinal;
         while (true) {
             if (hasResultSet) {
                 budget.addResult();
@@ -360,6 +372,25 @@ public final class SqlExecutionService {
             hasResultSet = statement.getMoreResults();
         }
         collectWarnings(statement.getWarnings(), warnings);
+    }
+
+    private static List<String> splitUserBatches(String sql) {
+        String[] pieces = USER_BATCH_SEPARATOR.split(sql, -1);
+        if (pieces.length > MAXIMUM_USER_BATCHES) {
+            throw new IllegalArgumentException(
+                    "The SQL request contains too many laboratory batches"
+            );
+        }
+        List<String> batches = new ArrayList<>(pieces.length);
+        for (String piece : pieces) {
+            if (piece.isBlank()) {
+                throw new IllegalArgumentException(
+                        "The SQL request contains an empty laboratory batch"
+                );
+            }
+            batches.add(piece);
+        }
+        return batches;
     }
 
     private SqlResult readResultSet(int ordinal, ResultSet resultSet, OutputBudget budget)

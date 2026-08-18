@@ -23,6 +23,18 @@
 
 Все реквизиты остаются только в локальном игнорируемом файле `.env.folio-rus-lab`. Не добавляйте его в Git, Skill, SQL-файлы, сообщения чата или отчёты.
 
+Для SQL Server-конструкций, которым требуется несколько JDBC batch в одном
+соединении (например, временная `CREATE PROCEDURE` и её последующий rollback-тест),
+используйте отдельную строку:
+
+```sql
+-- FOLIO_LAB_NEXT_BATCH
+```
+
+Лаборатория допускает не более 10 непустых batch, проверяет весь запрос общей
+SQL-policy и выполняет их в одной управляемой транзакции. Обычный клиентский
+разделитель `GO` остаётся запрещён.
+
 ```sh
 cd /Users/admin/Documents/Toleran/Proect_Lavka/kreul_com_ua/folio-rus-lab
 cp env.example .env.folio-rus-lab
@@ -118,6 +130,32 @@ export FOLIO_RUS_API_TOKEN
 ```sh
 bin/folio-rus-lab preflight
 ```
+
+### Полный безопасный preview учётных цен
+
+После установки в `Paint_Rus` отдельных процедур
+`dbo.LAVKA_I_UCHET_1_TOVAR_SAFE` и `dbo.LAVKA_I_UCHET_TOVAR_SAFE` лаборатория
+может проверить весь склад по одному SKU:
+
+```sh
+bin/folio-rus-lab safe-preview --warehouse-id 23
+bin/folio-rus-lab safe-preview-status
+```
+
+`POST /api/v1/accounting-prices/safe-preview` только ставит фоновую задачу в
+очередь. Текущее состояние возвращает
+`GET /api/v1/accounting-prices/safe-preview/status`.
+
+Для каждого артикула Java открывает отдельную транзакцию, вызывает безопасную
+procedure и обязательно выполняет `ROLLBACK`. `return_code=20` не останавливает
+остальные товары: точные SKU, `RECNO`, дата, формула, числитель, знаменатель и
+количества добавляются в `problems[]`. Отрицательный хронологический остаток
+также возвращается как отдельная проблема. Любая неизвестная SQL-ошибка или
+нарушение границы транзакции останавливает задачу со статусом `FAILED`.
+
+Первая версия намеренно поддерживает только склад с `N_2=1000` и
+`N_4 IS NULL`. Это лабораторный rollback-preview, а не разрешение выполнять
+перерасчёт или переносить procedures в `Paint_Ua`.
 
 Выполнение SQL из UTF-8 файла; по умолчанию используется режим `ROLLBACK`:
 

@@ -98,6 +98,16 @@ def parse_args() -> argparse.Namespace:
     commands.add_parser("health", help="проверить состояние локального API")
     commands.add_parser("preflight", help="проверить защитные условия Paint_Rus")
 
+    safe_preview = commands.add_parser(
+        "safe-preview",
+        help="запустить полный rollback-preview учётных цен по одному SKU",
+    )
+    safe_preview.add_argument("--warehouse-id", type=positive_int, required=True)
+    commands.add_parser(
+        "safe-preview-status",
+        help="получить состояние полного rollback-preview учётных цен",
+    )
+
     execute = commands.add_parser("execute", help="выполнить SQL из файла или stdin")
     execute.add_argument(
         "--file",
@@ -407,6 +417,21 @@ def main() -> int:
             status, response = request_json(
                 base_url,
                 "/api/v1/preflight",
+                http_timeout=args.http_timeout,
+                token=bearer_token(),
+            )
+        elif args.command == "safe-preview":
+            status, response = request_json(
+                base_url,
+                "/api/v1/accounting-prices/safe-preview",
+                http_timeout=args.http_timeout,
+                token=bearer_token(),
+                payload={"warehouseId": args.warehouse_id},
+            )
+        elif args.command == "safe-preview-status":
+            status, response = request_json(
+                base_url,
+                "/api/v1/accounting-prices/safe-preview/status",
                 http_timeout=args.http_timeout,
                 token=bearer_token(),
             )
