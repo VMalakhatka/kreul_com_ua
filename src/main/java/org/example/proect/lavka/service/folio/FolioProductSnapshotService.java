@@ -59,7 +59,7 @@ public class FolioProductSnapshotService {
             FolioAccountingPriceDao accountingPriceDao,
             FolioProductEconomicsCalculator economicsCalculator,
             @Qualifier("folioProductSnapshotExecutor") TaskExecutor executor,
-            @Qualifier("folioProductSnapshotClock") Clock clock,
+            @Qualifier("folioBalanceClock") Clock clock,
             @Qualifier("mssqlTransactionManager") PlatformTransactionManager txManager,
             @Value("${lavka.folio.product-snapshot.enabled:true}") boolean enabled,
             @Value("${lavka.folio.product-snapshot.default-horizon-months:24}")
