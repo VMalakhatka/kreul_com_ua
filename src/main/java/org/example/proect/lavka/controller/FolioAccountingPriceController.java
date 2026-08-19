@@ -10,7 +10,10 @@ import org.example.proect.lavka.dto.folio.FolioAccountingPriceNativeFullRequest;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceNativeFullStatusResponse;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationRequest;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationResponse;
+import org.example.proect.lavka.dto.folio.FolioProductSnapshotRefreshRequest;
+import org.example.proect.lavka.dto.folio.FolioProductSnapshotStatusResponse;
 import org.example.proect.lavka.service.folio.FolioAccountingPriceService;
+import org.example.proect.lavka.service.folio.FolioProductSnapshotService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class FolioAccountingPriceController {
 
     private final FolioAccountingPriceService service;
+    private final FolioProductSnapshotService productSnapshotService;
 
     @PostMapping("/recalculate")
     @Operation(
@@ -77,5 +81,24 @@ public class FolioAccountingPriceController {
     @Operation(summary = "Получить прогресс штатного полного перерасчёта I_UCHET_TOVAR")
     public ResponseEntity<FolioAccountingPriceNativeFullStatusResponse> nativeFullStatus() {
         return ResponseEntity.ok(service.nativeFullStatus(false));
+    }
+
+    @PostMapping("/snapshot/refresh")
+    @Operation(
+            summary = "Обновить технический и экономический снимок товаров склада",
+            description = "Фоново читает ФОЛІО в согласованной read-only транзакции и публикует в MariaDB fingerprints, изменения SKU и экономические показатели за 12–36 месяцев. Учётные цены и документы ФОЛІО не изменяются."
+    )
+    public ResponseEntity<FolioProductSnapshotStatusResponse> refreshProductSnapshot(
+            @Valid @RequestBody FolioProductSnapshotRefreshRequest request) {
+        FolioProductSnapshotStatusResponse response = productSnapshotService.request(request);
+        return response.accepted()
+                ? ResponseEntity.accepted().body(response)
+                : ResponseEntity.status(409).body(response);
+    }
+
+    @GetMapping("/snapshot/status")
+    @Operation(summary = "Получить состояние построения снимка товаров и экономики")
+    public ResponseEntity<FolioProductSnapshotStatusResponse> productSnapshotStatus() {
+        return ResponseEntity.ok(productSnapshotService.status());
     }
 }
