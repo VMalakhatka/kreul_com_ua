@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 @Repository
@@ -878,24 +879,32 @@ public class FolioAccountingPriceDao {
         }
     }
 
-    public boolean isArtAfter(int warehouseId,
-                              String previousArt,
-                              String nextArt) {
-        if (previousArt == null || nextArt == null) {
+    /**
+     * Verifies the exact continuation selected by the legacy Folio cursor.
+     *
+     * <p>jTDS can bind Java strings as Unicode parameters. Comparing such a
+     * parameter directly with the CP1251 {@code varchar(20)} article column
+     * can use different ordering rules from the stored procedure. Convert the
+     * cursor to the same legacy type first and ask the database for the actual
+     * {@code MIN(COD_ARTIC)} successor, exactly as the Folio procedure does.</p>
+     */
+    public boolean isImmediateNextArt(int warehouseId,
+                                      String processedArt,
+                                      String nextArt) {
+        if (processedArt == null || nextArt == null) {
             return false;
         }
-        Integer result = jdbc.queryForObject(
+        String expected = jdbc.queryForObject(
                 """
-                SELECT CASE WHEN EXISTS (
-                    SELECT 1
-                      FROM dbo.SCL_ARTC a
-                     WHERE a.ID_SCLAD = ?
-                       AND a.COD_ARTIC = ?
-                       AND a.COD_ARTIC > ?
-                ) THEN 1 ELSE 0 END
+                DECLARE @processed_art varchar(20)
+                SELECT @processed_art = ?
+                SELECT MIN(a.COD_ARTIC)
+                  FROM dbo.SCL_ARTC a
+                 WHERE a.ID_SCLAD = ?
+                   AND a.COD_ARTIC > @processed_art
                 """,
-                Integer.class, warehouseId, nextArt, previousArt);
-        return result != null && result == 1;
+                String.class, processedArt, warehouseId);
+        return Objects.equals(trim(expected), trim(nextArt));
     }
 
     public boolean isArtAtOrAfter(int warehouseId,
@@ -906,15 +915,17 @@ public class FolioAccountingPriceDao {
         }
         Integer result = jdbc.queryForObject(
                 """
+                DECLARE @first_art varchar(20), @candidate_art varchar(20)
+                SELECT @first_art = ?, @candidate_art = ?
                 SELECT CASE WHEN EXISTS (
                     SELECT 1
                       FROM dbo.SCL_ARTC a
                      WHERE a.ID_SCLAD = ?
-                       AND a.COD_ARTIC = ?
-                       AND a.COD_ARTIC >= ?
+                       AND a.COD_ARTIC = @candidate_art
+                       AND a.COD_ARTIC >= @first_art
                 ) THEN 1 ELSE 0 END
                 """,
-                Integer.class, warehouseId, candidateArt, firstArt);
+                Integer.class, firstArt, candidateArt, warehouseId);
         return result != null && result == 1;
     }
 

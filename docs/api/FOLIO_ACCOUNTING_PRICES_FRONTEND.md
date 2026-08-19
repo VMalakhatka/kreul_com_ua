@@ -319,8 +319,11 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 Не сравнивайте артикулы лексикографически в PHP/JavaScript и не определяйте по
 ним движение курсора. Порядок ФОЛИО задаётся legacy CP1251-collation колонки
 `SCL_ARTC.COD_ARTIC`; корректность курсора проверяет только Java API через эту
-колонку. Java проверяет продвижение `inputArt -> nextArt`. Один вызов относится
-ровно к одному `outputArt`.
+колонку. Java приводит обработанный артикул к исходному `varchar(20)` и проверяет,
+что `nextArt` совпадает с фактическим `MIN(COD_ARTIC)` после `outputArt`. Это важно
+для артикулов с пробелами, дефисами и кириллицей: обычное сравнение Unicode-строк
+может не совпасть с порядком ФОЛИО. Один вызов относится ровно к одному
+`outputArt`.
 
 Warning `ZERO_ACCOUNTING_DENOMINATOR` означает, что safe-процедура остановила
 SKU до деления на ноль. Показывайте `sku`, `recno`, `operationDate`, `formula`,

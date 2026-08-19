@@ -1598,8 +1598,8 @@ public class FolioAccountingPriceService {
             if (output.currentUnits() <= 0
                     || seenCursors.contains(output.newArt())
                     || output.art() == null
-                    || (inputCursor != null && !dao.isArtAfter(
-                            warehouseId, inputCursor, output.newArt()))) {
+                    || !dao.isImmediateNextArt(
+                            warehouseId, output.art(), output.newArt())) {
                 throw new IllegalStateException(
                         "I_UCHET_TOVAR returned an invalid continuation cursor");
             }

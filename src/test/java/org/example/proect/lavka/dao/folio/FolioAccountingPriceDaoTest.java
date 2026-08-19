@@ -131,26 +131,27 @@ class FolioAccountingPriceDaoTest {
     }
 
     @Test
-    void artOrderingUsesTheWarehouseArticleColumnCollation() {
+    void continuationUsesTheExactLegacyVarcharSuccessor() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForObject(
-                anyString(), eq(Integer.class),
-                eq(5), eq("ОФ-ПА3110Е"), eq("ОФ-ПА3110Е-R")))
-                .thenReturn(1);
+                anyString(), eq(String.class),
+                eq("A-P1726E-SILVER 90"), eq(5)))
+                .thenReturn("A-P1726EHOLOSILVER   ");
 
-        boolean after = new FolioAccountingPriceDao(jdbc).isArtAfter(
-                5, "ОФ-ПА3110Е-R", "ОФ-ПА3110Е");
+        boolean after = new FolioAccountingPriceDao(jdbc).isImmediateNextArt(
+                5, "A-P1726E-SILVER 90", "A-P1726EHOLOSILVER");
 
         assertThat(after).isTrue();
         var sql = org.mockito.ArgumentCaptor.forClass(String.class);
         verify(jdbc).queryForObject(
-                sql.capture(), eq(Integer.class),
-                eq(5), eq("ОФ-ПА3110Е"), eq("ОФ-ПА3110Е-R"));
+                sql.capture(), eq(String.class),
+                eq("A-P1726E-SILVER 90"), eq(5));
         assertThat(sql.getValue())
+                .contains("DECLARE @processed_art varchar(20)")
                 .contains("FROM dbo.SCL_ARTC a")
                 .contains("a.ID_SCLAD = ?")
-                .contains("a.COD_ARTIC = ?")
-                .contains("a.COD_ARTIC > ?");
+                .contains("MIN(a.COD_ARTIC)")
+                .contains("a.COD_ARTIC > @processed_art");
     }
 
     @Test
