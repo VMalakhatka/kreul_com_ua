@@ -107,6 +107,15 @@ def parse_args() -> argparse.Namespace:
         "safe-preview-status",
         help="получить состояние полного rollback-preview учётных цен",
     )
+    source_snapshot = commands.add_parser(
+        "accounting-source-snapshot",
+        help="снять или сравнить SHA-256 источников учётной цены",
+    )
+    source_snapshot.add_argument("--warehouse-id", type=positive_int, required=True)
+    commands.add_parser(
+        "accounting-source-snapshot-status",
+        help="получить состояние снимка источников учётной цены",
+    )
     commands.add_parser(
         "procedure-fingerprints",
         help="получить SHA-256 разрешённых процедур без публикации SQL-текста",
@@ -436,6 +445,21 @@ def main() -> int:
             status, response = request_json(
                 base_url,
                 "/api/v1/accounting-prices/safe-preview/status",
+                http_timeout=args.http_timeout,
+                token=bearer_token(),
+            )
+        elif args.command == "accounting-source-snapshot":
+            status, response = request_json(
+                base_url,
+                "/api/v1/accounting-prices/source-snapshot",
+                http_timeout=args.http_timeout,
+                token=bearer_token(),
+                payload={"warehouseId": args.warehouse_id},
+            )
+        elif args.command == "accounting-source-snapshot-status":
+            status, response = request_json(
+                base_url,
+                "/api/v1/accounting-prices/source-snapshot/status",
                 http_timeout=args.http_timeout,
                 token=bearer_token(),
             )
