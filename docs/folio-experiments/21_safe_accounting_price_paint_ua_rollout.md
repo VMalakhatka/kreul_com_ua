@@ -48,8 +48,9 @@ SQL-файл:
 
 ## Минимальные права Java
 
-После успешной установки выполнить отдельно, подставив именно database user
-production Java-сервиса:
+После успешной установки открыть **новое окно** Query Analyzer и выполнить
+отдельно, подставив именно существующий database user production Java-сервиса.
+Не выполнять буквальное имя-заглушку `FOLIO_SERVICE_DATABASE_USER`:
 
 ```sql
 GRANT EXECUTE ON dbo.LAVKA_I_UCHET_1_TOVAR_SAFE
@@ -61,6 +62,37 @@ GO
 ```
 
 Не выдавать `db_owner`. Пароль для этих команд не нужен и в SQL не вставляется.
+
+## Если старый установщик показал ошибки после итоговой строки
+
+Версия установщика из коммита `9d95e24` содержала пример `GRANT` внутри
+заключительного block comment. Старый SQL Query Analyzer сначала разделяет
+текст по batch separator, а потом разбирает комментарии. Поэтому он разорвал
+комментарий, попытался выполнить имя-заглушку как настоящее и показал:
+
+- `Missing end comment mark`;
+- `There is no such user or group 'FOLIO_SERVICE_DATABASE_USER'`;
+- `Incorrect syntax near 'one'`.
+
+Эти ошибки относятся к тексту после установочной транзакции. Они не означают,
+что ФОЛИО пересчитала цены или изменила документы. В новом окне выполнить
+только проверку:
+
+```sql
+SELECT DB_NAME() AS database_name,
+       OBJECT_ID('dbo.LAVKA_I_UCHET_1_TOVAR_SAFE') AS one_sku_procedure_id,
+       (SELECT COUNT(*) FROM dbo.syscolumns
+         WHERE id=OBJECT_ID('dbo.LAVKA_I_UCHET_1_TOVAR_SAFE')) AS one_sku_parameter_count,
+       OBJECT_ID('dbo.LAVKA_I_UCHET_TOVAR_SAFE') AS wrapper_procedure_id,
+       (SELECT COUNT(*) FROM dbo.syscolumns
+         WHERE id=OBJECT_ID('dbo.LAVKA_I_UCHET_TOVAR_SAFE')) AS wrapper_parameter_count
+```
+
+Если оба ID не `NULL` и оба parameter count равны `20`, установка уже успешно
+завершилась: повторно установочный файл не запускать, выполнить только реальные
+`GRANT EXECUTE`. Если оба ID равны `NULL`, можно запустить исправленный
+установщик целиком. Любой смешанный результат остановить и передать на ручную
+проверку; ничего не удалять самостоятельно.
 
 ## Деплой Java перед preview
 

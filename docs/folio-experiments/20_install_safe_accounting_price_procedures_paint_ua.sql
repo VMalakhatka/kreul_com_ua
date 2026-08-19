@@ -793,20 +793,14 @@ SELECT DB_NAME() AS database_name,
          WHERE id=OBJECT_ID('dbo.LAVKA_I_UCHET_TOVAR_SAFE')) AS wrapper_parameter_count
 GO
 
-/*
-  Run the two GRANT statements separately after replacing
-  [FOLIO_SERVICE_DATABASE_USER] with the database user used by the production
-  Java service. Do not grant db_owner and do not paste credentials here.
-
-  GRANT EXECUTE ON dbo.LAVKA_I_UCHET_1_TOVAR_SAFE
-      TO [FOLIO_SERVICE_DATABASE_USER]
-  GO
-  GRANT EXECUTE ON dbo.LAVKA_I_UCHET_TOVAR_SAFE
-      TO [FOLIO_SERVICE_DATABASE_USER]
-  GO
-
-  Expected final result: one row for Paint_Ua, server 8.00.x, compatibility 80,
-  two non-NULL procedure IDs and parameter_count=20 for both objects.
-  Installation creates procedures only; it
-  does not recalculate prices and does not change Folio documents or stock.
-*/
+-- Installation ends here intentionally. Do not append GRANT examples to this
+-- SQL Query Analyzer batch: this legacy client recognizes batch separators
+-- before it removes block comments.
+--
+-- Expected final result: one row for Paint_Ua, server 8.00.x, compatibility
+-- 80, two non-NULL procedure IDs and parameter_count=20 for both objects.
+-- Installation creates procedures only; it does not recalculate prices and
+-- does not change Folio documents or stock.
+--
+-- Minimal EXECUTE grants are documented separately in:
+-- docs/folio-experiments/21_safe_accounting_price_paint_ua_rollout.md
