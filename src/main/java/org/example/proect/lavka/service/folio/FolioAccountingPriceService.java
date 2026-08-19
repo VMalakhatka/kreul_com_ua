@@ -1540,7 +1540,7 @@ public class FolioAccountingPriceService {
         if (output.transactionCountBefore() < 1
                 || output.transactionCountAfter() < 1) {
             throw new NativeOutcomeUnknownException(
-                    "I_UCHET_TOVAR was not enclosed by the required transaction");
+                    "LAVKA_I_UCHET_TOVAR_SAFE was not enclosed by the required transaction");
         }
         if (output.returnCode() == null
                 || output.returnCode() != 0 && output.returnCode() != 20) {
@@ -1560,22 +1560,22 @@ public class FolioAccountingPriceService {
         if (output.currentUnits() == null || output.totalUnits() == null
                 || output.currentUnits() < 0 || output.totalUnits() < 0) {
             throw new IllegalStateException(
-                    "I_UCHET_TOVAR returned invalid progress counters");
+                    "LAVKA_I_UCHET_TOVAR_SAFE returned invalid progress counters");
         }
         if (output.resultRowCount() != 0) {
             throw new IllegalStateException(
-                    "I_UCHET_TOVAR returned an unexpected diagnostic rowset");
+                    "LAVKA_I_UCHET_TOVAR_SAFE returned an unexpected diagnostic rowset");
         }
         if (output.currentUnits() > 0 && output.art() == null) {
             throw new IllegalStateException(
-                    "I_UCHET_TOVAR returned work without the last processed art");
+                    "LAVKA_I_UCHET_TOVAR_SAFE returned work without the last processed art");
         }
         int requiredTotal = expectedTotalUnits > 0
                 ? expectedTotalUnits
                 : requiredTotalUnits;
         if (requiredTotal > 0 && output.totalUnits() != requiredTotal) {
             throw new IllegalStateException(
-                    "I_UCHET_TOVAR changed total progress from " + requiredTotal
+                    "LAVKA_I_UCHET_TOVAR_SAFE changed total progress from " + requiredTotal
                             + " to " + output.totalUnits());
         }
         int effectiveTotal = requiredTotal > 0
@@ -1583,7 +1583,7 @@ public class FolioAccountingPriceService {
                 : output.totalUnits();
         if (output.currentUnits() > 0 && effectiveTotal == 0) {
             throw new IllegalStateException(
-                    "I_UCHET_TOVAR returned work without total progress");
+                    "LAVKA_I_UCHET_TOVAR_SAFE returned work without total progress");
         }
         long nextCumulative = (long) cumulativeUnits + output.currentUnits();
         if (effectiveTotal > 0 && nextCumulative > effectiveTotal) {

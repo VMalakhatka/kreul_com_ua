@@ -294,6 +294,14 @@ SKU. Apply сначала выполняет полный per-SKU rollback-prefl
 Paint_Ua gate и postcheck описаны в
 `docs/folio-experiments/21_safe_accounting_price_paint_ua_rollout.md`.
 
+Первый Paint_Ua preview от 2026-08-19 выявил дополнительный OUT-инвариант:
+штатное тело при первом входном `art=NULL` обрабатывает минимальный SKU и
+возвращает `new_art/n_cur`, но на чистом пути может оставить `art=NULL`. Это не
+ошибка данных и не признак старого Java-деплоя. Safe wrapper обязан запомнить
+минимальный SKU до вызова и вернуть его как обработанный `art`, если после
+успешной работы `n_cur>0`, а `art` остался `NULL`. Upgrade:
+`docs/folio-experiments/22_upgrade_safe_accounting_price_first_cursor_paint_ua.sql`.
+
 Исторический recovery-эксперимент до появления safe-процедур подтвердил
 quarantine: временный скрытый `TIP_TOVR` на
 точно проблемном SKU заставляет процедуру пропустить его, перейти дальше и

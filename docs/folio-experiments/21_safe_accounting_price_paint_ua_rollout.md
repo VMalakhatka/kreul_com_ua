@@ -168,3 +168,18 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
    preview.
 
 Первый production apply не является частью этого gate.
+
+## Upgrade первого NULL-курсора
+
+Первый production preview от 2026-08-19 подтвердил legacy-особенность:
+safe-процедура обработала первый SKU и вернула `n_cur=40` и следующий артикул,
+но оставила выходной `art=NULL`, потому что входной курсор также был `NULL`.
+Java безопасно откатила вызов и завершила job до любых постоянных изменений.
+
+Для уже установленной версии выполнить один раз:
+
+`docs/folio-experiments/22_upgrade_safe_accounting_price_first_cursor_paint_ua.sql`
+
+Скрипт изменяет только wrapper, сохраняет выданные `EXECUTE` permissions и не
+запускает перерасчёт. После результата `FIRST_NULL_CURSOR_FIXED` повторить тот
+же rollback-preview; новый деплой Java для этого SQL-исправления не требуется.

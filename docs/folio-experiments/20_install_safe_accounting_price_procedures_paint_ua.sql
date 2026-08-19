@@ -703,6 +703,7 @@ BEGIN
 
 END
 
+SELECT @art=@artic
 RETURN @@error
 
 EX_PROC:
@@ -734,7 +735,13 @@ CREATE PROCEDURE LAVKA_I_UCHET_TOVAR_SAFE
     @problem_movement_quantity float=NULL OUT
 AS
 BEGIN
-    DECLARE @ret int
+    DECLARE @ret int, @lavka_processed_art varchar(20)
+
+    SELECT @lavka_processed_art=@art
+    IF @lavka_processed_art IS NULL
+        SELECT @lavka_processed_art=MIN(COD_ARTIC)
+          FROM SCL_ARTC
+         WHERE ID_SCLAD=@id_sclad
 
     EXECUTE @ret=dbo.LAVKA_I_UCHET_1_TOVAR_SAFE
         @n_group=@n_group,
@@ -757,6 +764,9 @@ BEGIN
         @problem_denominator=@problem_denominator OUT,
         @problem_quantity_before=@problem_quantity_before OUT,
         @problem_movement_quantity=@problem_movement_quantity OUT
+
+    IF @art IS NULL AND ISNULL(@n_cur,0)>0
+        SELECT @art=@lavka_processed_art
 
     RETURN @ret
 END
