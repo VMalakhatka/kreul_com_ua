@@ -11,6 +11,7 @@ import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeProtecte
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeSkuProtectedState;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.WarehouseRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.WarehouseScope;
+import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.ProductFingerprint;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceFullRecalculationRequest;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceNativeFullRequest;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationRequest;
@@ -32,6 +33,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -120,6 +122,62 @@ class FolioAccountingPriceServiceTest {
                 .isEqualTo(new BigDecimal("800"));
         verify(dao).acquireRecalculationMutex(5_000);
         verify(dao).rebuildOne(CLEAN_SKU, WAREHOUSE_ID, 120);
+    }
+
+    @Test
+    void successfulPointApplyPublishesCommittedFingerprint() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        FolioProductVerificationRecorder recorder =
+                mock(FolioProductVerificationRecorder.class);
+        stubWarehouse(dao);
+        ArticleRow before = article(CLEAN_SKU, "900");
+        ArticleRow after = article(CLEAN_SKU, "800");
+        when(dao.findArticles(eq(CLEAN_SKU), eq(List.of(WAREHOUSE_ID)), eq(true)))
+                .thenReturn(List.of(before));
+        when(dao.findArticles(eq(CLEAN_SKU), eq(List.of(WAREHOUSE_ID)), eq(false)))
+                .thenReturn(List.of(after));
+        when(dao.findChronologicalMovements(
+                eq(CLEAN_SKU), eq(List.of(WAREHOUSE_ID)), eq(true)))
+                .thenReturn(List.of());
+        when(dao.findMovementTotals(eq(CLEAN_SKU), eq(List.of(WAREHOUSE_ID))))
+                .thenReturn(Map.of(WAREHOUSE_ID, totals()));
+        ProductFingerprint fingerprint = new ProductFingerprint(
+                "Paint_Rus", WAREHOUSE_ID, CLEAN_SKU, "digest", "Clean",
+                0, null, null, null, null, 0);
+        when(recorder.capture(WAREHOUSE_ID, CLEAN_SKU, 120))
+                .thenReturn(Optional.of(fingerprint));
+        when(recorder.confirmApplied(fingerprint)).thenReturn(true);
+
+        var response = service(dao, recorder, true, false).recalculate(
+                new FolioAccountingPriceRecalculationRequest(
+                        CLEAN_SKU, WAREHOUSE_ID, false));
+
+        assertThat(response.status()).isEqualTo("RECALCULATED");
+        assertThat(response.warnings()).isEmpty();
+        verify(recorder).capture(WAREHOUSE_ID, CLEAN_SKU, 120);
+        verify(recorder).confirmApplied(fingerprint);
+    }
+
+    @Test
+    void blockedPointApplyMarksUnverifiedSnapshotAsFailed() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        FolioProductVerificationRecorder recorder =
+                mock(FolioProductVerificationRecorder.class);
+        stubWarehouse(dao);
+        stubProduct(dao, NEGATIVE_SKU, article(NEGATIVE_SKU, "800"), List.of(
+                expense(1001L, "11")
+        ));
+        when(dao.currentDatabaseName()).thenReturn("Paint_Rus");
+
+        var response = service(dao, recorder, true, false).recalculate(
+                new FolioAccountingPriceRecalculationRequest(
+                        NEGATIVE_SKU, WAREHOUSE_ID, false));
+
+        assertThat(response.status()).isEqualTo("BLOCKED");
+        verify(recorder).markFailed(
+                eq("Paint_Rus"), eq(WAREHOUSE_ID), eq(NEGATIVE_SKU),
+                org.mockito.ArgumentMatchers.contains("NEGATIVE_CHRONOLOGICAL_STOCK"));
+        verify(recorder, never()).confirmApplied(any());
     }
 
     @Test
@@ -523,6 +581,36 @@ class FolioAccountingPriceServiceTest {
     }
 
     @Test
+    void nativeApplyPublishesOnlyCommittedSkuFingerprint() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        FolioProductVerificationRecorder recorder =
+                mock(FolioProductVerificationRecorder.class);
+        stubNativeWarehouse(dao);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 100, 100, null, null));
+        ProductFingerprint fingerprint = new ProductFingerprint(
+                "Paint_Rus", WAREHOUSE_ID, CLEAN_SKU, "digest", "Clean",
+                1, 1L, 1L, null, null, 0);
+        when(recorder.capture(WAREHOUSE_ID, CLEAN_SKU, 120))
+                .thenReturn(Optional.of(fingerprint));
+        when(recorder.confirmApplied(fingerprint)).thenReturn(true);
+        FolioAccountingPriceService service = new FolioAccountingPriceService(
+                dao, recorder, DIRECT_EXECUTOR, CLOCK,
+                new TrackingTransactionManager(), true, true, true,
+                true, true, Set.of("Paint_Rus"), 100,
+                5_000, 120, 120, 20);
+
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true));
+
+        assertThat(service.nativeFullStatus(false).status()).isEqualTo("COMPLETED");
+        verify(recorder).capture(WAREHOUSE_ID, CLEAN_SKU, 120);
+        verify(recorder).confirmApplied(fingerprint);
+    }
+
+    @Test
     void nativeApplyAllowsDifferentTimeBasedChunkBoundaries() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
@@ -905,6 +993,18 @@ class FolioAccountingPriceServiceTest {
                 120,
                 20
         );
+    }
+
+    private static FolioAccountingPriceService service(
+            FolioAccountingPriceDao dao,
+            FolioProductVerificationRecorder recorder,
+            boolean applyEnabled,
+            boolean fullApplyEnabled) {
+        return new FolioAccountingPriceService(
+                dao, recorder, DIRECT_EXECUTOR, CLOCK, transactionManager(),
+                true, applyEnabled, fullApplyEnabled,
+                false, false, Set.of("Paint_Rus"), 10_000,
+                5_000, 120, 120, 20);
     }
 
     private static FolioAccountingPriceService nativeService(

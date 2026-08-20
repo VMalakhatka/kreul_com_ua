@@ -48,10 +48,23 @@ GET /admin/folio/accounting-prices/snapshot/status
 - `REMOVED` — карточка исчезла из ФОЛІО;
 - `FAILED` — ранее зафиксирована ошибка проверки/перерасчёта; состояние липкое;
 - `VERIFIED` — наблюдаемый fingerprint совпал с fingerprint, подтверждённым
-  успешным commit и postcheck. Текущая версия снимка сама `appliedDigest` не
-  устанавливает.
+  успешным commit и postcheck.
 
 Первый запуск намеренно создаёт `UNVERIFIED`, а не `VERIFIED`.
+
+После успешного point/full/native apply Java снимает fingerprint внутри той же
+MSSQL-транзакции после postcheck и публикует `applied_digest` в MariaDB только
+после подтверждённого commit. Если текущий `observed_digest` уже совпадает,
+строка сразу становится `VERIFIED`; иначе это делает следующий snapshot,
+который независимо перечитывает ФОЛІО. Диагностированный apply, который не был
+зафиксирован, переводит неподтверждённую строку в `FAILED` и сохраняет
+`last_error`. Обычный preview состояния не меняет.
+
+MariaDB и MSSQL не образуют распределённую транзакцию. Если запись
+`applied_digest` не удалась после MSSQL commit, перерасчёт остаётся успешным, но
+API добавляет warning `SNAPSHOT_CONFIRMATION_NOT_RECORDED`; до следующего
+snapshot/повторной проверки товар нельзя считать подтверждённым для
+инкрементального прохода.
 
 ## Таблицы MariaDB
 

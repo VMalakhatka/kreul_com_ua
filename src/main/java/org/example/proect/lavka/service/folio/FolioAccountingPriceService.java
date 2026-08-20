@@ -12,6 +12,7 @@ import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeProtecte
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.NativeSkuProtectedState;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.WarehouseRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.WarehouseScope;
+import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.ProductFingerprint;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceFullRecalculationRequest;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceFullStatusResponse;
 import org.example.proect.lavka.dto.folio.FolioAccountingPriceNativeFullRequest;
@@ -51,6 +52,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -72,6 +74,7 @@ public class FolioAccountingPriceService {
             new MovementTotals(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
 
     private final FolioAccountingPriceDao dao;
+    private final FolioProductVerificationRecorder verificationRecorder;
     private final TaskExecutor executor;
     private final Clock clock;
     private final TransactionTemplate readTransaction;
@@ -97,6 +100,7 @@ public class FolioAccountingPriceService {
     @Autowired
     public FolioAccountingPriceService(
             FolioAccountingPriceDao dao,
+            FolioProductVerificationRecorder verificationRecorder,
             @Qualifier("folioAccountingPriceExecutor") TaskExecutor executor,
             @Qualifier("mssqlTransactionManager") PlatformTransactionManager transactionManager,
             @Value("${lavka.folio.accounting-prices.api-enabled:true}") boolean apiEnabled,
@@ -112,7 +116,7 @@ public class FolioAccountingPriceService {
             @Value("${lavka.folio.accounting-prices.max-reported-warnings:200}") int maxReportedWarnings,
             @Value("${lavka.folio.accounting-prices.zone:Europe/Kyiv}") String zone
     ) {
-        this(dao, executor, Clock.system(ZoneId.of(zone)), transactionManager,
+        this(dao, verificationRecorder, executor, Clock.system(ZoneId.of(zone)), transactionManager,
                 apiEnabled, applyEnabled, fullApplyEnabled,
                 nativeFullEnabled, nativeFullApplyEnabled,
                 parseDatabaseNames(nativeFullAllowedDatabases), nativeFullMaxChunks,
@@ -132,7 +136,7 @@ public class FolioAccountingPriceService {
             int queryTimeoutSeconds,
             int maxReportedWarnings
     ) {
-        this(dao, executor, clock, transactionManager,
+        this(dao, FolioProductVerificationRecorder.NOOP, executor, clock, transactionManager,
                 apiEnabled, applyEnabled, fullApplyEnabled,
                 false, false, Set.of("Paint_Rus"), 10_000,
                 lockTimeoutMs, queryTimeoutSeconds, queryTimeoutSeconds,
@@ -155,7 +159,7 @@ public class FolioAccountingPriceService {
             int queryTimeoutSeconds,
             int maxReportedWarnings
     ) {
-        this(dao, executor, clock, transactionManager,
+        this(dao, FolioProductVerificationRecorder.NOOP, executor, clock, transactionManager,
                 apiEnabled, applyEnabled, fullApplyEnabled,
                 nativeFullEnabled, nativeFullApplyEnabled,
                 nativeFullAllowedDatabases, nativeFullMaxChunks,
@@ -180,7 +184,33 @@ public class FolioAccountingPriceService {
             int nativeFullTimeoutSeconds,
             int maxReportedWarnings
     ) {
+        this(dao, FolioProductVerificationRecorder.NOOP, executor, clock,
+                transactionManager, apiEnabled, applyEnabled, fullApplyEnabled,
+                nativeFullEnabled, nativeFullApplyEnabled,
+                nativeFullAllowedDatabases, nativeFullMaxChunks, lockTimeoutMs,
+                queryTimeoutSeconds, nativeFullTimeoutSeconds, maxReportedWarnings);
+    }
+
+    FolioAccountingPriceService(
+            FolioAccountingPriceDao dao,
+            FolioProductVerificationRecorder verificationRecorder,
+            @Qualifier("folioAccountingPriceExecutor") TaskExecutor executor,
+            Clock clock,
+            @Qualifier("mssqlTransactionManager") PlatformTransactionManager transactionManager,
+            boolean apiEnabled,
+            boolean applyEnabled,
+            boolean fullApplyEnabled,
+            boolean nativeFullEnabled,
+            boolean nativeFullApplyEnabled,
+            Set<String> nativeFullAllowedDatabases,
+            int nativeFullMaxChunks,
+            int lockTimeoutMs,
+            int queryTimeoutSeconds,
+            int nativeFullTimeoutSeconds,
+            int maxReportedWarnings
+    ) {
         this.dao = dao;
+        this.verificationRecorder = verificationRecorder;
         this.executor = executor;
         this.clock = clock;
         this.apiEnabled = apiEnabled;
@@ -229,8 +259,16 @@ public class FolioAccountingPriceService {
                         inspect(sku, request.warehouseId(), false, true)));
             }
             try {
-                return Objects.requireNonNull(writeTransaction.execute(status ->
-                        applyOne(sku, request.warehouseId())));
+                AppliedProduct applied = Objects.requireNonNull(
+                        writeTransaction.execute(status ->
+                                applyOne(sku, request.warehouseId())));
+                FolioAccountingPriceRecalculationResponse response =
+                        recordAppliedVerification(applied);
+                if (!response.eligibleToApply()) {
+                    recordFailedVerificationForCurrentDatabase(
+                            request.warehouseId(), sku, firstIssueMessage(response));
+                }
+                return response;
             } catch (CannotAcquireLockException e) {
                 throw new FolioAccountingPriceBusyException(e);
             }
@@ -363,11 +401,11 @@ public class FolioAccountingPriceService {
         );
     }
 
-    private FolioAccountingPriceRecalculationResponse applyOne(String sku, int warehouseId) {
+    private AppliedProduct applyOne(String sku, int warehouseId) {
         dao.acquireRecalculationMutex(lockTimeoutMs);
         FolioAccountingPriceRecalculationResponse inspection = inspect(sku, warehouseId, true, false);
         if (!inspection.eligibleToApply()) {
-            return blockedApply(inspection);
+            return new AppliedProduct(blockedApply(inspection), Optional.empty());
         }
 
         WarehouseScope scope = requireScope(warehouseId);
@@ -382,15 +420,17 @@ public class FolioAccountingPriceService {
         List<MovementRow> movementsAfter = dao.findChronologicalMovements(
                 sku, scope.affectedWarehouseIds(), true);
         verifyPostconditions(inspection.before(), after, movementsBefore, movementsAfter);
+        Optional<ProductFingerprint> fingerprint = verificationRecorder.capture(
+                warehouseId, sku, queryTimeoutSeconds);
         boolean changed = pricesChanged(inspection.before(), after);
         log.info("[folio.accounting-price] recalculated sku={} warehouse={} affected={} priceChanged={}",
                 sku, warehouseId, scope.affectedWarehouseIds(), changed);
-        return new FolioAccountingPriceRecalculationResponse(
+        return new AppliedProduct(new FolioAccountingPriceRecalculationResponse(
                 true, false, "RECALCULATED", sku, warehouseId,
                 scope.affectedWarehouseIds(), inspection.accountingMethod(),
                 true, true, changed, inspection.before(), after,
                 inspection.warnings(), List.of()
-        );
+        ), fingerprint);
     }
 
     private FolioAccountingPriceRecalculationResponse inspect(String sku,
@@ -617,6 +657,7 @@ public class FolioAccountingPriceService {
     private void runFull(String jobId, FolioAccountingPriceFullRecalculationRequest request) {
         MutableProgress progress = new MutableProgress(jobId, request, LocalDateTime.now(clock));
         try {
+            String sourceDatabase = dao.currentDatabaseName();
             WarehouseScope scope = requireScope(request.warehouseId());
             AccountingMethod method = method(scope.requested().rawAccountingCode());
             if (method.calculationMode() != 0) {
@@ -644,8 +685,15 @@ public class FolioAccountingPriceService {
                         result = Objects.requireNonNull(readTransaction.execute(status ->
                                 inspect(sku, request.warehouseId(), false, true)));
                     } else {
-                        result = Objects.requireNonNull(writeTransaction.execute(status ->
-                                applyOne(sku, request.warehouseId())));
+                        AppliedProduct applied = Objects.requireNonNull(
+                                writeTransaction.execute(status ->
+                                        applyOne(sku, request.warehouseId())));
+                        result = recordAppliedVerification(applied);
+                        if (!result.eligibleToApply()) {
+                            recordFailedVerification(
+                                    sourceDatabase, request.warehouseId(), sku,
+                                    firstIssueMessage(result));
+                        }
                     }
                 } catch (FolioAccountingPriceNotFoundException e) {
                     result = missingDuringFull(request, sku, e);
@@ -874,18 +922,28 @@ public class FolioAccountingPriceService {
 
             if (output.hasProblem()) {
                 problemDetected = true;
+                Issue diagnosedIssue = null;
                 String problemKey = (output.problemCode() == null
                         ? "NEGATIVE_CHRONOLOGICAL_STOCK" : output.problemCode())
                         + '\u0000'
                         + (output.problemArt() == null ? output.art() : output.problemArt());
                 if (progress.reportedProblemKeys.add(problemKey)) {
-                    Issue issue = diagnoseNativeProblem(
+                    diagnosedIssue = diagnoseNativeProblem(
                             progress.request.warehouseId(), output, cursor);
-                    addNativeIssue(progress, issue);
+                    addNativeIssue(progress, diagnosedIssue);
                     log.warn("[folio.accounting-price] native_safe_sku_skipped job={} warehouse={} art={} code={} date={} checkpoint={} newArt={} committedChunks={}",
                             progress.jobId, progress.request.warehouseId(), output.art(),
                             output.problemCode(), output.problemDate(), cursor,
                             output.newArt(), progress.committedChunks);
+                }
+                if (!rollbackOnly) {
+                    String failedSku = output.problemArt() == null
+                            ? output.art() : output.problemArt();
+                    recordFailedVerification(
+                            progress.database, progress.request.warehouseId(), failedSku,
+                            diagnosedIssue == null
+                                    ? nativeProblemMessage(output)
+                                    : diagnosedIssue.code() + ": " + diagnosedIssue.message());
                 }
                 publishNative(progress, true, true, null);
                 // LAVKA_I_UCHET_TOVAR_SAFE processes exactly one SKU. Its
@@ -894,6 +952,7 @@ public class FolioAccountingPriceService {
             } else if (!rollbackOnly) {
                 progress.committedChunks++;
                 progress.lastCommittedArt = executed.processedEndArt();
+                recordNativeAppliedVerification(progress, executed.fingerprint());
                 log.info("[folio.accounting-price] native_chunk_committed job={} warehouse={} inputArt={} outputArt={} processedEndArt={} newArt={} nCur={} nTot={}",
                         progress.jobId, progress.request.warehouseId(), cursor,
                         output.art(), executed.processedEndArt(), output.newArt(), output.currentUnits(),
@@ -1269,6 +1328,7 @@ public class FolioAccountingPriceService {
                     throw validationError;
                 }
                 String processedEndArt = null;
+                Optional<ProductFingerprint> fingerprint = Optional.empty();
                 if (!output.hasProblem() && !rollbackOnly) {
                     processedEndArt = dao.findProcessedRangeEnd(
                             warehouseId, output.newArt());
@@ -1287,11 +1347,13 @@ public class FolioAccountingPriceService {
                         throw new IllegalStateException(
                                 "I_UCHET_TOVAR changed a protected stock or movement invariant");
                     }
+                    fingerprint = verificationRecorder.capture(
+                            warehouseId, processedEndArt, nativeFullTimeoutSeconds);
                 }
                 if (output.hasProblem() || rollbackOnly) {
                     status.setRollbackOnly();
                 }
-                return new NativeExecutedChunk(output, processedEndArt);
+                return new NativeExecutedChunk(output, processedEndArt, fingerprint);
             }));
         } catch (CannotAcquireLockException e) {
             throw new FolioAccountingPriceBusyException(e);
@@ -1528,6 +1590,103 @@ public class FolioAccountingPriceService {
             return;
         }
         progress.warnings.add(issue);
+    }
+
+    private FolioAccountingPriceRecalculationResponse recordAppliedVerification(
+            AppliedProduct applied) {
+        FolioAccountingPriceRecalculationResponse response = applied.response();
+        if (applied.fingerprint().isEmpty()) return response;
+        ProductFingerprint fingerprint = applied.fingerprint().get();
+        try {
+            if (verificationRecorder.confirmApplied(fingerprint)) return response;
+            return withAdditionalWarning(response, snapshotConfirmationIssue(
+                    fingerprint.sku(), fingerprint.warehouseId(),
+                    "The active product snapshot has no matching SKU row"));
+        } catch (RuntimeException error) {
+            log.error("[folio.product.snapshot] applied_digest_publish_failed db={} warehouse={} sku={}",
+                    fingerprint.sourceDatabase(), fingerprint.warehouseId(),
+                    fingerprint.sku(), error);
+            return withAdditionalWarning(response, snapshotConfirmationIssue(
+                    fingerprint.sku(), fingerprint.warehouseId(), safeMessage(error)));
+        }
+    }
+
+    private void recordNativeAppliedVerification(
+            NativeProgress progress, Optional<ProductFingerprint> fingerprint) {
+        if (fingerprint.isEmpty()) return;
+        ProductFingerprint value = fingerprint.get();
+        try {
+            if (verificationRecorder.confirmApplied(value)) return;
+            addNativeIssue(progress, snapshotConfirmationIssue(
+                    value.sku(), value.warehouseId(),
+                    "The active product snapshot has no matching SKU row"));
+        } catch (RuntimeException error) {
+            log.error("[folio.product.snapshot] native_applied_digest_publish_failed job={} db={} warehouse={} sku={}",
+                    progress.jobId, value.sourceDatabase(), value.warehouseId(),
+                    value.sku(), error);
+            addNativeIssue(progress, snapshotConfirmationIssue(
+                    value.sku(), value.warehouseId(), safeMessage(error)));
+        }
+    }
+
+    private void recordFailedVerification(String sourceDatabase, int warehouseId,
+                                          String sku, String error) {
+        if (sourceDatabase == null || sku == null) return;
+        try {
+            verificationRecorder.markFailed(
+                    sourceDatabase, warehouseId, sku, error);
+        } catch (RuntimeException publishError) {
+            log.error("[folio.product.snapshot] recalculation_failure_publish_failed db={} warehouse={} sku={}",
+                    sourceDatabase, warehouseId, sku, publishError);
+        }
+    }
+
+    private void recordFailedVerificationForCurrentDatabase(int warehouseId,
+                                                             String sku,
+                                                             String error) {
+        try {
+            recordFailedVerification(
+                    dao.currentDatabaseName(), warehouseId, sku, error);
+        } catch (RuntimeException databaseError) {
+            log.warn("[folio.product.snapshot] recalculation_failure_database_not_resolved warehouse={} sku={} msg={}",
+                    warehouseId, sku, databaseError.getMessage());
+        }
+    }
+
+    private static FolioAccountingPriceRecalculationResponse withAdditionalWarning(
+            FolioAccountingPriceRecalculationResponse response, Issue warning) {
+        List<Issue> warnings = new ArrayList<>(response.warnings());
+        warnings.add(warning);
+        return new FolioAccountingPriceRecalculationResponse(
+                response.ok(), response.previewOnly(), response.status(), response.sku(),
+                response.requestedWarehouseId(), response.affectedWarehouseIds(),
+                response.accountingMethod(), response.eligibleToApply(),
+                response.procedureExecuted(), response.priceChanged(), response.before(),
+                response.after(), List.copyOf(warnings), response.errors());
+    }
+
+    private static Issue snapshotConfirmationIssue(String sku, int warehouseId,
+                                                    String reason) {
+        return issue(
+                "SNAPSHOT_CONFIRMATION_NOT_RECORDED",
+                "Folio recalculation committed, but the product snapshot confirmation was not recorded; rerun the snapshot before incremental recalculation",
+                "sku", sku, "warehouseId", warehouseId, "reason", reason);
+    }
+
+    private static String firstIssueMessage(
+            FolioAccountingPriceRecalculationResponse response) {
+        Issue issue = !response.errors().isEmpty()
+                ? response.errors().get(0)
+                : !response.warnings().isEmpty() ? response.warnings().get(0) : null;
+        return issue == null ? "Folio recalculation was not applied"
+                : issue.code() + ": " + issue.message();
+    }
+
+    private static String nativeProblemMessage(NativeFullChunkOutput output) {
+        String code = output.problemCode() == null
+                ? "FOLIO_NATIVE_RECALCULATION_PROBLEM" : output.problemCode();
+        return code + (output.problemDate() == null
+                ? "" : " on " + output.problemDate());
     }
 
     private void validateNativeOutput(int warehouseId,
@@ -2157,7 +2316,14 @@ public class FolioAccountingPriceService {
 
     private record NativeExecutedChunk(
             NativeFullChunkOutput output,
-            String processedEndArt
+            String processedEndArt,
+            Optional<ProductFingerprint> fingerprint
+    ) {
+    }
+
+    private record AppliedProduct(
+            FolioAccountingPriceRecalculationResponse response,
+            Optional<ProductFingerprint> fingerprint
     ) {
     }
 

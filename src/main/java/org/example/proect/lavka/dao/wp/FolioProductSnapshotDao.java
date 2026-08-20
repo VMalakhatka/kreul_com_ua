@@ -108,6 +108,39 @@ public class FolioProductSnapshotDao {
         return result;
     }
 
+    /**
+     * Records a fingerprint captured inside the successful MSSQL
+     * recalculation transaction. The current observation is not rewritten:
+     * the next warehouse snapshot independently observes the source and turns
+     * the row VERIFIED when both digests match.
+     */
+    public int confirmApplied(String sourceDatabase, int warehouseId, String sku,
+                              String appliedDigest, LocalDateTime appliedAt) {
+        return jdbc.update("""
+                UPDATE folio_product_snapshot_item
+                   SET applied_digest=?, applied_at=?, last_error=NULL,
+                       verification_state=CASE
+                           WHEN observed_digest=? THEN 'VERIFIED'
+                           ELSE verification_state
+                       END
+                 WHERE source_database=? AND warehouse_id=? AND sku=?
+                   AND present_in_folio=1
+                """, appliedDigest, ts(appliedAt), appliedDigest,
+                sourceDatabase, warehouseId, sku);
+    }
+
+    public int markRecalculationFailed(String sourceDatabase, int warehouseId,
+                                       String sku, String error) {
+        return jdbc.update("""
+                UPDATE folio_product_snapshot_item
+                   SET verification_state='FAILED', last_error=?
+                 WHERE source_database=? AND warehouse_id=? AND sku=?
+                   AND present_in_folio=1
+                   AND (applied_digest IS NULL OR observed_digest IS NULL
+                        OR applied_digest<>observed_digest)
+                """, truncate(error, 1000), sourceDatabase, warehouseId, sku);
+    }
+
     @Transactional(transactionManager = "wpTransactionManager")
     public void publish(Publish publish) {
         saveItems(publish.items());
@@ -162,15 +195,43 @@ public class FolioProductSnapshotDao {
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON DUPLICATE KEY UPDATE
                     product_name=VALUES(product_name),observed_digest=VALUES(observed_digest),
-                    applied_digest=VALUES(applied_digest),verification_state=VALUES(verification_state),
+                    verification_state=CASE
+                        WHEN folio_product_snapshot_item.applied_at IS NOT NULL
+                         AND (VALUES(applied_at) IS NULL
+                              OR folio_product_snapshot_item.applied_at>VALUES(applied_at))
+                         AND folio_product_snapshot_item.applied_digest=VALUES(observed_digest)
+                        THEN 'VERIFIED'
+                        ELSE VALUES(verification_state)
+                    END,
+                    applied_digest=CASE
+                        WHEN folio_product_snapshot_item.applied_at IS NOT NULL
+                         AND (VALUES(applied_at) IS NULL
+                              OR folio_product_snapshot_item.applied_at>VALUES(applied_at))
+                        THEN folio_product_snapshot_item.applied_digest
+                        ELSE VALUES(applied_digest)
+                    END,
                     present_in_folio=VALUES(present_in_folio),movement_count=VALUES(movement_count),
                     min_movement_recno=VALUES(min_movement_recno),
                     max_movement_recno=VALUES(max_movement_recno),
                     first_movement_date=VALUES(first_movement_date),
                     last_movement_date=VALUES(last_movement_date),
                     price_rule_count=VALUES(price_rule_count),last_seen_at=VALUES(last_seen_at),
-                    last_observed_at=VALUES(last_observed_at),applied_at=VALUES(applied_at),
-                    last_generation_id=VALUES(last_generation_id),last_error=VALUES(last_error)
+                    last_observed_at=VALUES(last_observed_at),
+                    last_error=CASE
+                        WHEN folio_product_snapshot_item.applied_at IS NOT NULL
+                         AND (VALUES(applied_at) IS NULL
+                              OR folio_product_snapshot_item.applied_at>VALUES(applied_at))
+                        THEN NULL
+                        ELSE VALUES(last_error)
+                    END,
+                    applied_at=CASE
+                        WHEN folio_product_snapshot_item.applied_at IS NOT NULL
+                         AND (VALUES(applied_at) IS NULL
+                              OR folio_product_snapshot_item.applied_at>VALUES(applied_at))
+                        THEN folio_product_snapshot_item.applied_at
+                        ELSE VALUES(applied_at)
+                    END,
+                    last_generation_id=VALUES(last_generation_id)
                 """, rows, BATCH, (ps, row) -> {
             int p = 1;
             ps.setString(p++, row.sourceDatabase()); ps.setInt(p++, row.warehouseId());

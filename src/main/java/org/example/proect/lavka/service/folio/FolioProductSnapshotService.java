@@ -223,12 +223,15 @@ public class FolioProductSnapshotService {
             } else if (!before.present()) {
                 state = "NEW";
                 change = "RESTORED";
-            } else if (!card.sourceDigest().equals(before.observedDigest())) {
-                state = "FAILED".equals(before.state()) ? "FAILED" : "DIRTY";
-                change = "CHANGED";
             } else if (before.appliedDigest() != null
                     && before.appliedDigest().equals(card.sourceDigest())) {
                 state = "VERIFIED";
+                if (!card.sourceDigest().equals(before.observedDigest())) {
+                    change = "CHANGED";
+                }
+            } else if (!card.sourceDigest().equals(before.observedDigest())) {
+                state = "FAILED".equals(before.state()) ? "FAILED" : "DIRTY";
+                change = "CHANGED";
             } else {
                 state = before.state();
             }
