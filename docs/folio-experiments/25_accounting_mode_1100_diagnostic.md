@@ -90,6 +90,20 @@ production-отказ точно: `return_code=32`,
 состав и количество движений, а также baseline `TMP_MOVE` до/после совпали;
 лаборатория завершила run состоянием `ROLLED_BACK`.
 
+После ручного выполнения upgrade в Paint_Rus тот же probe дважды на независимых
+соединениях вернул `return_code=0`, обработал ровно `A-AZ РАЗНОЕ` и продвинул
+`next_art` на следующий SKU. В обоих запусках транзакционная граница осталась
+`1 -> 1`, protected-остатки и движения совпали, baseline `TMP_MOVE` не
+изменился, итог лаборатории — `ROLLED_BACK`. Это закрывает golden-master для
+`N_2=1100` / `uch_nal=1` на средней цене и незгруппированном складе.
+
+После ручного выполнения того же upgrade в Paint_Ua точечный Java
+`native-range` preview склада 20 для `A-AZ РАЗНОЕ` завершился
+`PREVIEW_READY`: Java декодировала `rawCode=1100` как `AVERAGE`,
+`includeTax=true`; safe-процедура вернула `0`, обработан один SKU,
+`committedChunks=0`, warnings отсутствуют. Это подтверждает устранение кода `32`
+в production без сохранения перерасчёта.
+
 Read-only Java source snapshot того же склада завершён отдельно: 35 398 SKU,
 6 316 учитываемых движений и 61 правило цены, без orphan-строк.
 
@@ -116,15 +130,9 @@ install-скрипта код 32 не устраняют. Upgrade использ
 сохраняет выданные `GRANT EXECUTE` и разрешает `uch_nal=0/1` только для средней
 цены, периода 0 и незгруппированного склада.
 
-## Оставшийся release gate
+## Оставшийся production gate
 
-1. Вручную выполнить
-   `26_upgrade_safe_accounting_price_procedure_paint_rus_n2_1100.sql` только в
-   Paint_Rus.
-2. Через лабораторию в режиме `ROLLBACK` выполнить
-   `28_verify_safe_accounting_price_n2_1100_paint_rus.sql`; ожидать код `0`
-   либо диагностируемый `20`, неизменные protected-поля и чистый rollback.
-3. Только после успешного golden-master вручную выполнить
-   `27_upgrade_safe_accounting_price_procedure_paint_ua_n2_1100.sql` в Paint_Ua
-   и запустить rollback-preview склада 19 или 20 в окно без работы менеджеров.
-4. Apply Paint_Ua не запускать в рамках этой диагностики.
+1. Запустить полный rollback-preview склада 20 в окно без работы менеджеров.
+2. Проверить итог `PREVIEW_READY` либо `PREVIEW_READY_WITH_WARNINGS`, отсутствие
+   технических ошибок и подробную диагностику каждого пропущенного SKU.
+3. Только после успешного полного preview отдельно согласовать первый Apply.

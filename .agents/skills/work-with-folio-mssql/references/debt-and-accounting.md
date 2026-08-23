@@ -438,6 +438,17 @@ fail-stop код, ничего не commit-ить и не помечать то�
 Первичный install-скрипт намеренно не перезаписывает существующие объекты;
 поддержку `1100` разворачивать отдельным проверяемым `ALTER PROCEDURE`, сохраняя
 EXECUTE permissions, затем выполнять только rollback-preview.
+Paint_Rus golden-master после такого upgrade подтверждён на реальном
+`N_2=1100`, `N_4=NULL`: два независимых rollback-only запуска одного SKU дали
+`returnCode=0`, корректный следующий cursor, неизменную транзакционную границу,
+остатки, движения и baseline `TMP_MOVE`. До upgrade тот же exact probe стабильно
+возвращал `32/UNSUPPORTED_SCOPE_OR_MODE`. Обобщать результат можно только на
+average mode, period 0 и `uch_nal=0/1`; production apply требует отдельного
+успешного preview после установки объекта в конкретную базу.
+Первый Paint_Ua `native-range` preview после upgrade подтверждён для склада с
+`N_2=1100`: `returnCode=0`, `PREVIEW_READY`, один обработанный SKU,
+`committedChunks=0`, без warnings. Это подтверждает развёртывание процедуры, но
+не заменяет полный rollback-preview всего склада перед первым Apply.
 
 FIFO, LIFO, фиксированную цену и партии не обобщать из этих экспериментов.
 Настройки склада нужно блокировать и повторно сверять в каждой порции.
