@@ -28,5 +28,9 @@ public record FolioProductSnapshotStatusResponse(
         int newProducts,
         int removedProducts,
         String warehouseDigest,
+        String errorCode,
+        Integer accountingRawCode,
+        String accountingMode,
+        String recommendation,
         String error
 ) { }

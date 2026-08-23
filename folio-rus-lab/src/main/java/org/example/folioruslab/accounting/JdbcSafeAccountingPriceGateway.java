@@ -48,11 +48,11 @@ final class JdbcSafeAccountingPriceGateway implements SafeAccountingPriceGateway
                 throw new SafeAccountingPriceException("The connection is not Paint_Rus");
             }
             verifyProcedure(connection);
-            verifyWarehouseMode(connection, warehouseId);
+            boolean includeTax = verifyWarehouseMode(connection, warehouseId);
             PreviewScope scope = new PreviewScope(
                     warehouseId, loadSkus(connection, warehouseId)
             );
-            return new JdbcPreviewSession(connection, scope);
+            return new JdbcPreviewSession(connection, scope, includeTax);
         } catch (SQLException exception) {
             closeQuietly(connection);
             throw new SafeAccountingPriceException(
@@ -64,11 +64,12 @@ final class JdbcSafeAccountingPriceGateway implements SafeAccountingPriceGateway
         }
     }
 
-    private SkuPreview previewOne(Connection connection, int warehouseId, String sku) {
+    private SkuPreview previewOne(Connection connection, int warehouseId, String sku,
+                                  boolean includeTax) {
         try {
             beginTransaction(connection);
             verifyTransactionCount(connection, 1, "before procedure");
-            SkuPreview result = callProcedure(connection, warehouseId, sku);
+            SkuPreview result = callProcedure(connection, warehouseId, sku, includeTax);
             verifyTransactionCount(connection, 1, "after procedure");
             rollbackAndVerify(connection);
             return result;
@@ -96,7 +97,7 @@ final class JdbcSafeAccountingPriceGateway implements SafeAccountingPriceGateway
         }
     }
 
-    private void verifyWarehouseMode(Connection connection, int warehouseId) throws SQLException {
+    private boolean verifyWarehouseMode(Connection connection, int warehouseId) throws SQLException {
         String sql = "SELECT N_2,N_4 FROM dbo.SCLAD_R WHERE ID_SCLAD=" + warehouseId;
         try (Statement statement = connection.createStatement();
              ResultSet resultSet = statement.executeQuery(sql)) {
@@ -109,11 +110,14 @@ final class JdbcSafeAccountingPriceGateway implements SafeAccountingPriceGateway
             boolean rawModeNull = resultSet.wasNull();
             resultSet.getDouble(2);
             boolean groupNull = resultSet.wasNull();
-            if (rawModeNull || Math.abs(rawMode - 1000.0d) > 0.0000001d || !groupNull) {
+            boolean withoutTax = Math.abs(rawMode - 1000.0d) <= 0.0000001d;
+            boolean withTax = Math.abs(rawMode - 1100.0d) <= 0.0000001d;
+            if (rawModeNull || (!withoutTax && !withTax) || !groupNull) {
                 throw new SafeAccountingPriceException(
-                        "Safe preview currently requires N_2=1000 and N_4 IS NULL"
+                        "Safe preview requires average accounting N_2=1000 or 1100 and N_4 IS NULL"
                 );
             }
+            return withTax;
         }
     }
 
@@ -136,7 +140,8 @@ final class JdbcSafeAccountingPriceGateway implements SafeAccountingPriceGateway
         return skus;
     }
 
-    private SkuPreview callProcedure(Connection connection, int warehouseId, String sku)
+    private SkuPreview callProcedure(Connection connection, int warehouseId, String sku,
+                                     boolean includeTax)
             throws SQLException {
         try (CallableStatement statement = connection.prepareCall(CALL_SQL)) {
             statement.setQueryTimeout(queryTimeoutSeconds);
@@ -146,7 +151,7 @@ final class JdbcSafeAccountingPriceGateway implements SafeAccountingPriceGateway
             statement.setBoolean(4, false);
             statement.setInt(5, 0);
             statement.setInt(6, 0);
-            statement.setBoolean(7, false);
+            statement.setBoolean(7, includeTax);
             setInOutString(statement, 8, sku, Types.VARCHAR);
             setInOutInt(statement, 9, 0);
             setInOutInt(statement, 10, 0);
@@ -357,11 +362,14 @@ final class JdbcSafeAccountingPriceGateway implements SafeAccountingPriceGateway
     private final class JdbcPreviewSession implements PreviewSession {
         private final Connection connection;
         private final PreviewScope scope;
+        private final boolean includeTax;
         private boolean closed;
 
-        private JdbcPreviewSession(Connection connection, PreviewScope scope) {
+        private JdbcPreviewSession(Connection connection, PreviewScope scope,
+                                   boolean includeTax) {
             this.connection = connection;
             this.scope = scope;
+            this.includeTax = includeTax;
         }
 
         @Override
@@ -375,7 +383,7 @@ final class JdbcSafeAccountingPriceGateway implements SafeAccountingPriceGateway
                 throw new SafeAccountingPriceException("The preview session is closed");
             }
             return JdbcSafeAccountingPriceGateway.this.previewOne(
-                    connection, scope.warehouseId(), sku
+                    connection, scope.warehouseId(), sku, includeTax
             );
         }
 

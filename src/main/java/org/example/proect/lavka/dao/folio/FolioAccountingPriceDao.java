@@ -89,6 +89,18 @@ public class FolioAccountingPriceDao {
                 """, (rs, rowNum) -> rs.getString(1).trim(), warehouseId);
     }
 
+    public List<String> findSkusInRange(int warehouseId, String fromSku, String toSku) {
+        return jdbc.query("""
+                SELECT COD_ARTIC
+                  FROM dbo.SCL_ARTC
+                 WHERE ID_SCLAD = ?
+                   AND COD_ARTIC >= ?
+                   AND COD_ARTIC <= ?
+                 ORDER BY COD_ARTIC
+                """, (rs, rowNum) -> rs.getString(1).trim(),
+                warehouseId, fromSku, toSku);
+    }
+
     /**
      * Returns the exact article order used by the native recalculation while
      * excluding product types which Folio itself does not calculate.

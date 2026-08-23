@@ -193,9 +193,10 @@ public final class JdbcAccountingPriceSourceSnapshotGateway
 
     private static void validateWarehouse(WarehouseSettings settings) {
         if (settings.rawCode() == null
-                || Double.compare(settings.rawCode(), 1000.0d) != 0) {
+                || (Double.compare(settings.rawCode(), 1000.0d) != 0
+                && Double.compare(settings.rawCode(), 1100.0d) != 0)) {
             throw new IllegalArgumentException(
-                    "Snapshot v1 supports only Folio average accounting mode N_2=1000"
+                    "Snapshot supports Folio average accounting modes N_2=1000 and N_2=1100"
             );
         }
         if (settings.group() != null) {

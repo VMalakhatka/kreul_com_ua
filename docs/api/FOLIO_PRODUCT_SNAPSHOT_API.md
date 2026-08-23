@@ -133,9 +133,27 @@ Fingerprint включает значимые поля карточки `SCL_ART
 - используется тот же application lock, что и Java-перерасчёт учётных цен;
 - настольная ФОЛІО этот lock не соблюдает, поэтому первый большой baseline
   лучше запускать вне активной работы менеджеров;
-- первая версия поддерживает `N_2=1000` и `N_4 IS NULL`;
+- snapshot поддерживает среднюю учётную цену `SCLAD_R.N_2=1000`
+  (`includeTax=false`) и `SCLAD_R.N_2=1100` (`includeTax=true`), только при
+  `N_4 IS NULL`;
+- режим учёта находится в `SCLAD_R.N_2`; в `NSF_ORG` такого поля нет;
 - при ошибке предыдущие опубликованные данные MariaDB остаются доступными;
 - endpoint не запускает `I_UCHET_TOVAR` и не изменяет ФОЛІО.
+
+Для неподдержанного режима terminal status дополнительно возвращает:
+
+```json
+{
+  "status": "FAILED",
+  "errorCode": "PRODUCT_SNAPSHOT_ACCOUNTING_MODE_UNSUPPORTED",
+  "accountingRawCode": 1001,
+  "accountingMode": "LIFO",
+  "recommendation": "Exclude this warehouse ...; do not change N_2 automatically"
+}
+```
+
+Фронт должен показать эти поля как диагностику конфигурации и не предлагать
+оператору автоматически исправлять `SCLAD_R.N_2`.
 
 Настройки:
 

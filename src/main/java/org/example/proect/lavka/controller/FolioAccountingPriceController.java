@@ -77,9 +77,29 @@ public class FolioAccountingPriceController {
                 : ResponseEntity.status(409).body(response);
     }
 
+    @PostMapping("/recalculate/native-range")
+    @Operation(
+            summary = "Запустить штатный перерасчёт выбранных SKU или диапазона",
+            description = "Принимает либо fromSku+toSku, либо skus[]. Каждый SKU обрабатывается safe-процедурой в отдельной транзакции. Preview всегда откатывается; apply фиксирует только успешно проверенные SKU и продолжает после диагностируемых проблем."
+    )
+    public ResponseEntity<FolioAccountingPriceNativeFullStatusResponse> recalculateNativeRange(
+            @Valid @RequestBody FolioAccountingPriceNativeFullRequest request) {
+        FolioAccountingPriceNativeFullStatusResponse response =
+                service.requestNativeRange(request);
+        return response.accepted()
+                ? ResponseEntity.accepted().body(response)
+                : ResponseEntity.status(409).body(response);
+    }
+
     @GetMapping("/recalculate/native-full/status")
     @Operation(summary = "Получить прогресс штатного полного перерасчёта I_UCHET_TOVAR")
     public ResponseEntity<FolioAccountingPriceNativeFullStatusResponse> nativeFullStatus() {
+        return ResponseEntity.ok(service.nativeFullStatus(false));
+    }
+
+    @GetMapping("/recalculate/native-range/status")
+    @Operation(summary = "Получить прогресс перерасчёта выбранных SKU или диапазона")
+    public ResponseEntity<FolioAccountingPriceNativeFullStatusResponse> nativeRangeStatus() {
         return ResponseEntity.ok(service.nativeFullStatus(false));
     }
 

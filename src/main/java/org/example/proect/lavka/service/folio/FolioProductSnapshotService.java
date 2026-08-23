@@ -101,7 +101,8 @@ public class FolioProductSnapshotService {
         live.set(new FolioProductSnapshotStatusResponse(
                 true, true, true, null, "QUEUED", "QUEUED",
                 sourceDatabase, warehouseId, horizonMonths, started, null,
-                0, 0, 0, 0, 0, 0, 0, null, null));
+                0, 0, 0, 0, 0, 0, 0, null,
+                null, null, null, null, null));
         try {
             executor.execute(() -> run(sourceDatabase, warehouseId, horizonMonths, started));
             return live.get();
@@ -119,10 +120,11 @@ public class FolioProductSnapshotService {
                 g.sourceDatabase(), g.warehouseId(), g.horizonMonths(), g.startedAt(),
                 g.completedAt(), g.totalProducts(), g.movementRows(), g.monthlyMetricRows(),
                 g.unverified(), g.dirty(), g.created(), g.removed(),
-                g.warehouseDigest(), g.error()
+                g.warehouseDigest(), null, null, null, null, g.error()
         )).orElseGet(() -> new FolioProductSnapshotStatusResponse(
                 true, false, false, null, "NOT_READY", "IDLE", null, null,
-                null, null, null, 0, 0, 0, 0, 0, 0, 0, null, null));
+                null, null, null, 0, 0, 0, 0, 0, 0, 0, null,
+                null, null, null, null, null));
     }
 
     private void run(String sourceDatabase, int warehouseId, int horizonMonths,
@@ -178,7 +180,11 @@ public class FolioProductSnapshotService {
                     capture.products().size(), capture.movementRows(), economics.monthly().size(),
                     classification.unverified(), classification.dirty(),
                     classification.created(), classification.removed(),
-                    capture.warehouseDigest(), null));
+                    capture.warehouseDigest(), null,
+                    capture.warehouse().rawAccountingCode().intValue(),
+                    FolioAccountingMode.decode(
+                            capture.warehouse().rawAccountingCode().intValue()).name(),
+                    null, null));
             log.info("[folio.product.snapshot] generation={} db={} warehouse={} products={} movements={} monthly={} unverified={} dirty={} new={} removed={}",
                     generationId, sourceDatabase, warehouseId, capture.products().size(),
                     capture.movementRows(), economics.monthly().size(),
@@ -186,6 +192,7 @@ public class FolioProductSnapshotService {
                     classification.created(), classification.removed());
         } catch (Exception e) {
             LocalDateTime failedAt = LocalDateTime.now(clock);
+            ModeFailure modeFailure = modeFailure(e);
             if (generationId != null) {
                 try { snapshotDao.failGeneration(generationId, rootMessage(e), failedAt); }
                 catch (Exception failure) { e.addSuppressed(failure); }
@@ -193,7 +200,10 @@ public class FolioProductSnapshotService {
             live.set(new FolioProductSnapshotStatusResponse(
                     false, false, false, generationId, "FAILED", "FAILED",
                     sourceDatabase, warehouseId, horizonMonths, startedAt, failedAt,
-                    0, 0, 0, 0, 0, 0, 0, null, rootMessage(e)));
+                    0, 0, 0, 0, 0, 0, 0, null,
+                    modeFailure.errorCode(), modeFailure.rawCode(),
+                    modeFailure.modeName(), modeFailure.recommendation(),
+                    rootMessage(e)));
             log.error("[folio.product.snapshot] failed generation={} db={} warehouse={}",
                     generationId, sourceDatabase, warehouseId, e);
         } finally {
@@ -272,7 +282,8 @@ public class FolioProductSnapshotService {
         live.set(new FolioProductSnapshotStatusResponse(
                 true, false, true, generationId, "BUILDING", phase, db,
                 warehouseId, horizonMonths, started, null,
-                0, 0, 0, 0, 0, 0, 0, null, null));
+                0, 0, 0, 0, 0, 0, 0, null,
+                null, null, null, null, null));
     }
 
     private static FolioProductSnapshotStatusResponse withAccepted(
@@ -283,7 +294,23 @@ public class FolioProductSnapshotService {
                 value.horizonMonths(), value.startedAt(), value.completedAt(),
                 value.totalProducts(), value.movementRows(), value.monthlyMetricRows(),
                 value.unverifiedProducts(), value.dirtyProducts(), value.newProducts(),
-                value.removedProducts(), value.warehouseDigest(), value.error());
+                value.removedProducts(), value.warehouseDigest(), value.errorCode(),
+                value.accountingRawCode(), value.accountingMode(),
+                value.recommendation(), value.error());
+    }
+
+    private static ModeFailure modeFailure(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof FolioAccountingModeUnsupportedException unsupported) {
+                return new ModeFailure(
+                        unsupported.getCode(), unsupported.rawCode(),
+                        unsupported.modeName(), unsupported.recommendation());
+            }
+            if (current.getCause() == current) break;
+            current = current.getCause();
+        }
+        return new ModeFailure(null, null, null, null);
     }
 
     private static String rootMessage(Throwable error) {
@@ -297,4 +324,7 @@ public class FolioProductSnapshotService {
 
     private record Classification(List<Item> items, List<Change> changes,
                                   int unverified, int dirty, int created, int removed) { }
+
+    private record ModeFailure(String errorCode, Integer rawCode,
+                               String modeName, String recommendation) { }
 }

@@ -1,5 +1,7 @@
 package org.example.proect.lavka.dao.folio;
 
+import org.example.proect.lavka.service.folio.FolioAccountingMode;
+import org.example.proect.lavka.service.folio.FolioAccountingModeUnsupportedException;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -39,11 +41,7 @@ public class FolioProductSnapshotSourceDao {
     public Capture capture(int warehouseId, LocalDate horizonStart, LocalDate asOfDate,
                            int queryTimeoutSeconds) {
         Warehouse warehouse = readWarehouse(warehouseId, queryTimeoutSeconds);
-        if (warehouse.rawAccountingCode() == null
-                || warehouse.rawAccountingCode().compareTo(new BigDecimal("1000")) != 0) {
-            throw new IllegalArgumentException(
-                    "Product snapshot v1 supports only Folio average accounting mode N_2=1000");
-        }
+        validateAccountingMode(warehouse);
         if (warehouse.accountingGroup() != null) {
             throw new IllegalArgumentException(
                     "Product snapshot v1 supports only ungrouped Folio warehouses N_4=NULL");
@@ -75,6 +73,35 @@ public class FolioProductSnapshotSourceDao {
                 monthly,
                 movementRows
         );
+    }
+
+    static void validateAccountingMode(Warehouse warehouse) {
+        Integer rawCode = integerOrNull(warehouse.rawAccountingCode());
+        FolioAccountingMode.Decoded mode = FolioAccountingMode.decode(rawCode);
+        if (!FolioAccountingMode.supportsProductSnapshot(rawCode)) {
+            String recommendation = "Exclude this warehouse from product snapshot until its "
+                    + "SCLAD_R.N_2 mode has a separate verified implementation; do not change N_2 automatically";
+            throw new FolioAccountingModeUnsupportedException(
+                    "PRODUCT_SNAPSHOT_ACCOUNTING_MODE_UNSUPPORTED",
+                    rawCode,
+                    mode.name(),
+                    recommendation,
+                    "Unsupported Folio accounting mode: SCLAD_R.N_2=" + rawCode
+                            + ", mode=" + mode.name()
+                            + ", periodMode=" + mode.periodMode()
+                            + ", includeTax=" + mode.includeTax()
+                            + ". " + recommendation
+            );
+        }
+    }
+
+    private static Integer integerOrNull(BigDecimal value) {
+        if (value == null) return null;
+        try {
+            return value.stripTrailingZeros().intValueExact();
+        } catch (ArithmeticException ignored) {
+            return null;
+        }
     }
 
     /**

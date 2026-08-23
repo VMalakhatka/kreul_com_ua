@@ -324,8 +324,25 @@ public class FolioAccountingPriceService {
 
     public FolioAccountingPriceNativeFullStatusResponse requestNativeFull(
             FolioAccountingPriceNativeFullRequest request) {
-        requireApiEnabled();
         validateNativeFullRequest(request);
+        if (request.hasSelection()) {
+            throw new FolioAccountValidationException(
+                    "NATIVE_FULL_SELECTION_NOT_ALLOWED",
+                    "Use /recalculate/native-range for fromSku/toSku or skus[]");
+        }
+        return requestNative(request, false);
+    }
+
+    public FolioAccountingPriceNativeFullStatusResponse requestNativeRange(
+            FolioAccountingPriceNativeFullRequest request) {
+        validateNativeFullRequest(request);
+        validateNativeSelection(request);
+        return requestNative(request, true);
+    }
+
+    private FolioAccountingPriceNativeFullStatusResponse requestNative(
+            FolioAccountingPriceNativeFullRequest request, boolean selection) {
+        requireApiEnabled();
         if (!nativeFullEnabled) {
             throw new FolioAccountingPriceDisabledException(
                     "ACCOUNTING_PRICE_NATIVE_FULL_DISABLED",
@@ -357,7 +374,13 @@ public class FolioAccountingPriceService {
         progress.phase = "QUEUED";
         publishNative(progress, true, true, null);
         try {
-            executor.execute(() -> runNativeFull(progress));
+            executor.execute(() -> {
+                if (selection) {
+                    runNativeSelection(progress);
+                } else {
+                    runNativeFull(progress);
+                }
+            });
         } catch (RuntimeException e) {
             operationRunning.set(false);
             progress.status = "FAILED";
@@ -381,9 +404,11 @@ public class FolioAccountingPriceService {
         return new FolioAccountingPriceNativeFullStatusResponse(
                 false, false, true, null, "BUSY", "BUSY", null,
                 null, null, null, null,
-                0, 0, 0, 0, 0, null,
+                0, 0, 0, 0, 0,
+                null, null, null, null, null,
                 null, null, null, null, null,
                 0, false, List.of(), null,
+                null, null,
                 "Another Folio accounting-price operation is already running"
         );
     }
@@ -755,12 +780,12 @@ public class FolioAccountingPriceService {
         try {
             WarehouseScope scope = requireScope(progress.request.warehouseId());
             AccountingMethod method = method(scope.requested().rawAccountingCode());
+            progress.accountingMethod = method;
             validateNativeScope(scope, method);
             if (!dao.safeNativeProceduresInstalled()) {
                 throw new IllegalStateException(
                         "Required dbo.LAVKA_I_UCHET_*_SAFE procedures are not installed");
             }
-            progress.accountingMethod = method;
             logNativeArithmeticSessionOptions(progress);
 
             // The guarded procedure handles one SKU per transaction and
@@ -828,6 +853,7 @@ public class FolioAccountingPriceService {
             progress.phase = "APPLY_STOPPED";
             publishNative(progress, false, false, e.getMessage());
         } catch (Exception e) {
+            captureNativeFailureMetadata(progress, e);
             boolean outcomeUnknown = isNativeOutcomeUnknown(e);
             progress.status = outcomeUnknown
                     ? "OUTCOME_UNKNOWN"
@@ -841,6 +867,172 @@ public class FolioAccountingPriceService {
         } finally {
             operationRunning.set(false);
         }
+    }
+
+    private void runNativeSelection(NativeProgress progress) {
+        try {
+            WarehouseScope scope = requireScope(progress.request.warehouseId());
+            AccountingMethod method = method(scope.requested().rawAccountingCode());
+            progress.accountingMethod = method;
+            validateNativeScope(scope, method);
+            if (!dao.safeNativeProceduresInstalled()) {
+                throw new IllegalStateException(
+                        "Required dbo.LAVKA_I_UCHET_*_SAFE procedures are not installed");
+            }
+            List<String> selectedSkus = resolveNativeSelection(progress.request);
+            if (selectedSkus.isEmpty()) {
+                throw new FolioAccountValidationException(
+                        "NATIVE_RANGE_TOTAL_UNKNOWN",
+                        "Java could not determine the selected batch size before apply");
+            }
+            progress.totalUnits = selectedSkus.size();
+            progress.processedSku = 0;
+            logNativeArithmeticSessionOptions(progress);
+
+            progress.phase = "PRECHECK_RUNNING";
+            progress.status = "RUNNING";
+            publishNative(progress, true, true, null);
+            runNativeSelectionPass(progress, method, selectedSkus, true, null);
+
+            if (progress.request.previewOnly()) {
+                progress.status = progress.warningCount == 0
+                        ? "PREVIEW_READY" : "PREVIEW_READY_WITH_WARNINGS";
+                progress.phase = "PRECHECK_COMPLETED";
+                clearNativeCursor(progress);
+                publishNative(progress, false, true, null);
+                return;
+            }
+
+            NativeProtectedSnapshot protectedBaseline = captureNativeBaseline(
+                    progress.database, progress.request.warehouseId(), method);
+            progress.phase = "APPLY_RUNNING";
+            progress.status = "RUNNING";
+            progress.progressUnits = 0;
+            progress.processedSku = 0;
+            clearNativeCursor(progress);
+            publishNative(progress, true, true, null);
+            runNativeSelectionPass(
+                    progress, method, selectedSkus, false, protectedBaseline);
+            verifyNativeBaseline(progress.database, progress.request.warehouseId(),
+                    method, protectedBaseline);
+
+            progress.status = progress.warningCount == 0
+                    ? "COMPLETED" : "COMPLETED_WITH_WARNINGS";
+            progress.phase = "APPLY_COMPLETED";
+            clearNativeCursor(progress);
+            publishNative(progress, false, true, null);
+        } catch (Exception error) {
+            captureNativeFailureMetadata(progress, error);
+            boolean outcomeUnknown = isNativeOutcomeUnknown(error);
+            progress.status = outcomeUnknown
+                    ? "OUTCOME_UNKNOWN"
+                    : progress.committedChunks == 0 ? "FAILED" : "FAILED_PARTIAL";
+            progress.phase = "FAILED";
+            log.error("[folio.accounting-price] native_selection_failed job={} warehouse={} checkpoint={} committed={}: {}",
+                    progress.jobId, progress.request.warehouseId(),
+                    progress.checkpointArt, progress.committedChunks,
+                    safeMessage(error), error);
+            publishNative(progress, false, false, safeMessage(error));
+        } finally {
+            operationRunning.set(false);
+        }
+    }
+
+    private void runNativeSelectionPass(NativeProgress progress,
+                                        AccountingMethod method,
+                                        List<String> selectedSkus,
+                                        boolean rollbackOnly,
+                                        NativeProtectedSnapshot protectedBaseline) {
+        int processed = 0;
+        for (String sku : selectedSkus) {
+            progress.currentArt = sku;
+            progress.checkpointArt = sku;
+            progress.nextArt = null;
+            Set<String> seen = new HashSet<>();
+            seen.add(sku);
+            NativeExecutedChunk executed = executeNativeChunk(
+                    progress, progress.database, progress.request.warehouseId(), method,
+                    sku, 0, 0, seen, rollbackOnly, selectedSkus.size(),
+                    protectedBaseline, Set.of(), null, true);
+            NativeFullChunkOutput output = executed.output();
+            progress.returnCode = output.returnCode();
+            progress.currentArt = output.art();
+            progress.nextArt = output.newArt();
+            progress.currentUnits = output.currentUnits();
+            progress.procedureCurrentUnits = output.currentUnits();
+            progress.procedureTotalUnits = output.totalUnits();
+            processed++;
+            progress.progressUnits = processed;
+            progress.processedSku = processed;
+            progress.totalUnits = selectedSkus.size();
+
+            if (output.hasProblem()) {
+                String problemSku = output.problemArt() == null
+                        ? sku : output.problemArt();
+                String key = (output.problemCode() == null
+                        ? "FOLIO_NATIVE_RECALCULATION_PROBLEM"
+                        : output.problemCode()) + '\u0000' + problemSku;
+                Issue issue = null;
+                if (progress.reportedProblemKeys.add(key)) {
+                    issue = diagnoseNativeProblem(
+                            progress.request.warehouseId(), output, sku);
+                    addNativeIssue(progress, issue);
+                }
+                if (!rollbackOnly) {
+                    recordFailedVerification(
+                            progress.database, progress.request.warehouseId(), problemSku,
+                            issue == null ? nativeProblemMessage(output)
+                                    : issue.code() + ": " + issue.message());
+                }
+            } else if (!rollbackOnly) {
+                progress.committedChunks++;
+                progress.lastCommittedArt = sku;
+                recordNativeAppliedVerification(progress, executed.fingerprint());
+            }
+            publishNative(progress, true, true, null);
+        }
+    }
+
+    private List<String> resolveNativeSelection(
+            FolioAccountingPriceNativeFullRequest request) {
+        List<String> selected;
+        if (request.skus() != null && !request.skus().isEmpty()) {
+            Set<String> requested = request.skus().stream()
+                    .map(String::trim)
+                    .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+            selected = dao.findSkus(request.warehouseId()).stream()
+                    .filter(requested::contains)
+                    .toList();
+            if (selected.size() != requested.size()) {
+                Set<String> missing = new LinkedHashSet<>(requested);
+                missing.removeAll(selected);
+                throw new FolioAccountingPriceNotFoundException(
+                        "ACCOUNTING_PRICE_SELECTED_PRODUCTS_NOT_FOUND",
+                        "Selected Folio products were not found: " + missing);
+            }
+        } else {
+            String fromSku = request.fromSku().trim();
+            String toSku = request.toSku().trim();
+            selected = dao.findSkusInRange(
+                    request.warehouseId(), fromSku, toSku);
+            if (selected.isEmpty()) {
+                throw new FolioAccountingPriceNotFoundException(
+                        "ACCOUNTING_PRICE_RANGE_EMPTY",
+                        "No Folio products were found in range " + fromSku + ".." + toSku);
+            }
+            if (selected.size() > 500) {
+                throw new FolioAccountValidationException(
+                        "NATIVE_SELECTION_TOO_LARGE",
+                        "native-range is limited to 500 SKU per request");
+            }
+        }
+        return List.copyOf(selected);
+    }
+
+    private static void clearNativeCursor(NativeProgress progress) {
+        progress.currentArt = null;
+        progress.nextArt = null;
+        progress.checkpointArt = null;
     }
 
     private void logNativeArithmeticSessionOptions(NativeProgress progress) {
@@ -899,7 +1091,8 @@ public class FolioAccountingPriceService {
                         progress, progress.database, progress.request.warehouseId(), method,
                         cursor, passTotalUnits, passProgressUnits,
                         seenCursors, rollbackOnly, requiredTotalUnits,
-                        protectedBaseline, skippedSkus, effectiveQuarantineMarker);
+                        protectedBaseline, skippedSkus, effectiveQuarantineMarker,
+                        false);
             } catch (RuntimeException error) {
                 // The installed safe procedure must convert every supported
                 // zero-denominator branch into return code 20. A raw SQL 8134
@@ -912,6 +1105,9 @@ public class FolioAccountingPriceService {
             progress.returnCode = output.returnCode();
             progress.currentArt = output.art();
             progress.nextArt = output.newArt();
+            progress.currentUnits = output.currentUnits();
+            progress.procedureCurrentUnits = output.currentUnits();
+            progress.procedureTotalUnits = output.totalUnits();
 
             passProgressUnits += output.currentUnits();
             if (passTotalUnits == 0 && output.totalUnits() > 0) {
@@ -1115,7 +1311,8 @@ public class FolioAccountingPriceService {
                     }
                     validateNativeOutput(
                             progress.request.warehouseId(), output, cursor,
-                            totalUnits, 0, cumulativeUnits, seenCursors);
+                            totalUnits, 0, cumulativeUnits, seenCursors,
+                            false, true);
                     if (output.hasProblem()) {
                         throw new IllegalStateException(
                                 "Native isolation found an unexpected Folio problem for "
@@ -1240,7 +1437,8 @@ public class FolioAccountingPriceService {
                                                     int requiredTotalUnits,
                                                     NativeProtectedSnapshot protectedBaseline,
                                                     Set<String> skippedSkus,
-                                                    String quarantineMarker) {
+                                                    String quarantineMarker,
+                                                    boolean partialSelection) {
         try {
             return Objects.requireNonNull(nativeWriteTransaction.execute(status -> {
                 dao.acquireRecalculationMutex(lockTimeoutMs);
@@ -1313,10 +1511,20 @@ public class FolioAccountingPriceService {
                 try {
                     validateNativeOutput(
                             warehouseId, output, cursor, totalUnits, requiredTotalUnits,
-                            cumulativeUnits, seenCursors);
+                            cumulativeUnits, seenCursors, partialSelection,
+                            !partialSelection);
+                    if (partialSelection
+                            && (cursor == null || !cursor.equals(output.art()))) {
+                        throw new IllegalStateException(
+                                "LAVKA_I_UCHET_TOVAR_SAFE processed a different SKU than requested");
+                    }
                 } catch (RuntimeException validationError) {
+                    if (partialSelection) {
+                        progress.errorCode = "NATIVE_RANGE_CONTRACT_INVALID";
+                    }
                     progress.failedChunk = chunkDiagnostics(
-                            cursor, output, validationError.getMessage());
+                            cursor, output, requiredTotalUnits, partialSelection,
+                            validationError.getMessage());
                     log.error("[folio.accounting-price] native_chunk_rejected job={} warehouse={} inputArt={} outputArt={} nextArt={} returnCode={} nCur={} nTot={} problemDate={} resultRows={} tranBefore={} tranAfter={} reason={}",
                             progress.jobId, warehouseId, cursor, output.art(),
                             output.newArt(), output.returnCode(),
@@ -1337,6 +1545,10 @@ public class FolioAccountingPriceService {
                             warehouseId, cursor, processedEndArt))) {
                         throw new IllegalStateException(
                                 "Cannot determine the protected article range processed by I_UCHET_TOVAR");
+                    }
+                    if (partialSelection && !cursor.equals(processedEndArt)) {
+                        throw new IllegalStateException(
+                                "LAVKA_I_UCHET_TOVAR_SAFE changed more than the selected SKU");
                     }
                     NativeProtectedSnapshot protectedAfter =
                             dao.captureNativeProtectedSnapshot(
@@ -1695,7 +1907,9 @@ public class FolioAccountingPriceService {
                                       int expectedTotalUnits,
                                       int requiredTotalUnits,
                                       int cumulativeUnits,
-                                      Set<String> seenCursors) {
+                                      Set<String> seenCursors,
+                                      boolean partialSelection,
+                                      boolean requireCompleteOnNull) {
         if (output.transactionCountBefore() < 1
                 || output.transactionCountAfter() < 1) {
             throw new NativeOutcomeUnknownException(
@@ -1729,25 +1943,41 @@ public class FolioAccountingPriceService {
             throw new IllegalStateException(
                     "LAVKA_I_UCHET_TOVAR_SAFE returned work without the last processed art");
         }
-        int requiredTotal = expectedTotalUnits > 0
-                ? expectedTotalUnits
-                : requiredTotalUnits;
-        if (requiredTotal > 0 && output.totalUnits() != requiredTotal) {
-            throw new IllegalStateException(
-                    "LAVKA_I_UCHET_TOVAR_SAFE changed total progress from " + requiredTotal
-                            + " to " + output.totalUnits());
-        }
-        int effectiveTotal = requiredTotal > 0
-                ? requiredTotal
-                : output.totalUnits();
-        if (output.currentUnits() > 0 && effectiveTotal == 0) {
-            throw new IllegalStateException(
-                    "LAVKA_I_UCHET_TOVAR_SAFE returned work without total progress");
-        }
-        long nextCumulative = (long) cumulativeUnits + output.currentUnits();
-        if (effectiveTotal > 0 && nextCumulative > effectiveTotal) {
-            throw new IllegalStateException(
-                    "I_UCHET_TOVAR progress exceeded total work");
+        int effectiveTotal;
+        long nextCumulative;
+        if (partialSelection) {
+            if (requiredTotalUnits <= 0) {
+                throw new FolioAccountValidationException(
+                        "NATIVE_RANGE_TOTAL_UNKNOWN",
+                        "Java could not determine the selected batch size before apply");
+            }
+            // The safe procedure processes exactly one SKU. Its n_tot OUT
+            // parameter describes neither the Java selection nor the WordPress
+            // campaign and is therefore diagnostic only. Java owns the
+            // canonical selected-SKU total and progress counter.
+            effectiveTotal = requiredTotalUnits;
+            nextCumulative = cumulativeUnits;
+        } else {
+            int requiredTotal = expectedTotalUnits > 0
+                    ? expectedTotalUnits
+                    : requiredTotalUnits;
+            if (requiredTotal > 0 && output.totalUnits() != requiredTotal) {
+                throw new IllegalStateException(
+                        "LAVKA_I_UCHET_TOVAR_SAFE changed total progress from " + requiredTotal
+                                + " to " + output.totalUnits());
+            }
+            effectiveTotal = requiredTotal > 0
+                    ? requiredTotal
+                    : output.totalUnits();
+            if (output.currentUnits() > 0 && effectiveTotal == 0) {
+                throw new IllegalStateException(
+                        "LAVKA_I_UCHET_TOVAR_SAFE returned work without total progress");
+            }
+            nextCumulative = (long) cumulativeUnits + output.currentUnits();
+            if (effectiveTotal > 0 && nextCumulative > effectiveTotal) {
+                throw new IllegalStateException(
+                        "I_UCHET_TOVAR progress exceeded total work");
+            }
         }
         if (output.newArt() != null && output.newArt().equals(inputCursor)) {
             throw new IllegalStateException(
@@ -1762,7 +1992,8 @@ public class FolioAccountingPriceService {
                 throw new IllegalStateException(
                         "I_UCHET_TOVAR returned an invalid continuation cursor");
             }
-        } else if (effectiveTotal > 0 && nextCumulative != effectiveTotal) {
+        } else if (requireCompleteOnNull
+                && effectiveTotal > 0 && nextCumulative != effectiveTotal) {
             throw new IllegalStateException(
                     "I_UCHET_TOVAR ended before all progress units were processed");
         }
@@ -1778,11 +2009,21 @@ public class FolioAccountingPriceService {
 
     private static void validateNativeScope(WarehouseScope scope,
                                             AccountingMethod method) {
-        if (!Objects.equals(scope.requested().rawAccountingCode(), 1000)
-                || method.calculationMode() != 0) {
-            throw new FolioAccountValidationException(
+        if (!FolioAccountingMode.supportsSafeNativeRecalculation(
+                scope.requested().rawAccountingCode())
+                || method.calculationMode() != 0
+                || method.periodMode() != 0) {
+            String recommendation = "Exclude this warehouse from native recalculation until "
+                    + "its SCLAD_R.N_2 mode has a separate Paint_Rus golden-master; do not change N_2 automatically";
+            throw new FolioAccountingModeUnsupportedException(
                     "ACCOUNTING_NATIVE_METHOD_UNSUPPORTED",
-                    "Native full recalculation is currently verified only for SCLAD_R.N_2=1000"
+                    scope.requested().rawAccountingCode(), method.name(), recommendation,
+                    "Unsupported native accounting mode: SCLAD_R.N_2="
+                            + scope.requested().rawAccountingCode()
+                            + ", mode=" + method.name()
+                            + ", periodMode=" + method.periodMode()
+                            + ", includeTax=" + method.includeTax()
+                            + ". " + recommendation
             );
         }
         if (scope.requested().accountingGroup() != null
@@ -1862,22 +2103,10 @@ public class FolioAccountingPriceService {
     }
 
     private static AccountingMethod method(Integer rawCode) {
-        if (rawCode == null || rawCode < 1000) {
-            return new AccountingMethod(rawCode, 3, 0, false, "NO_RECALCULATION");
-        }
-        int calculationMode = Math.abs(rawCode) % 10;
-        int periodMode = (Math.abs(rawCode) / 10) % 10;
-        boolean includeTax = ((Math.abs(rawCode) / 100) % 10) != 0;
-        String name = switch (calculationMode) {
-            case 0 -> "AVERAGE";
-            case 1 -> "LIFO";
-            case 2 -> "FIFO";
-            case 3 -> "NO_RECALCULATION";
-            case 4 -> "FIXED";
-            case 5 -> "BATCH";
-            default -> "UNKNOWN";
-        };
-        return new AccountingMethod(rawCode, calculationMode, periodMode, includeTax, name);
+        FolioAccountingMode.Decoded decoded = FolioAccountingMode.decode(rawCode);
+        return new AccountingMethod(
+                decoded.rawCode(), decoded.calculationMode(), decoded.periodMode(),
+                decoded.includeTax(), decoded.name());
     }
 
     private static List<PriceState> priceStates(List<ArticleRow> articles,
@@ -2036,9 +2265,14 @@ public class FolioAccountingPriceService {
             throw new FolioAccountValidationException(
                     "WAREHOUSE_ID_INVALID", "warehouseId must be greater than zero");
         }
-        String sku = request.sku() == null ? null : request.sku().trim();
+        return validateSku(request.sku(), "sku");
+    }
+
+    private static String validateSku(String value, String field) {
+        String sku = value == null ? null : value.trim();
         if (sku == null || sku.isEmpty()) {
-            throw new FolioAccountValidationException("SKU_REQUIRED", "sku is required");
+            throw new FolioAccountValidationException(
+                    "SKU_REQUIRED", field + " is required");
         }
         CharsetEncoder encoder = FOLIO_CHARSET.newEncoder();
         if (!encoder.canEncode(sku)) {
@@ -2087,6 +2321,42 @@ public class FolioAccountingPriceService {
                     "confirmApply=true is required for a native full recalculation"
             );
         }
+    }
+
+    private static void validateNativeSelection(
+            FolioAccountingPriceNativeFullRequest request) {
+        boolean hasList = request.skus() != null && !request.skus().isEmpty();
+        boolean hasFrom = request.fromSku() != null && !request.fromSku().isBlank();
+        boolean hasTo = request.toSku() != null && !request.toSku().isBlank();
+        if (hasList == (hasFrom || hasTo)) {
+            throw new FolioAccountValidationException(
+                    "NATIVE_SELECTION_INVALID",
+                    "Provide either non-empty skus[] or both fromSku and toSku");
+        }
+        if (hasList) {
+            if (request.skus().size() > 500) {
+                throw new FolioAccountValidationException(
+                        "NATIVE_SELECTION_TOO_LARGE",
+                        "native-range is limited to 500 SKU per request");
+            }
+            Set<String> unique = new LinkedHashSet<>();
+            for (String sku : request.skus()) {
+                unique.add(validateSku(sku, "skus[]"));
+            }
+            if (unique.size() != request.skus().size()) {
+                throw new FolioAccountValidationException(
+                        "NATIVE_SELECTION_DUPLICATE_SKU",
+                        "skus[] must not contain duplicate articles");
+            }
+            return;
+        }
+        if (!hasFrom || !hasTo) {
+            throw new FolioAccountValidationException(
+                    "NATIVE_SELECTION_RANGE_INCOMPLETE",
+                    "Both fromSku and toSku are required for a range");
+        }
+        validateSku(request.fromSku(), "fromSku");
+        validateSku(request.toSku(), "toSku");
     }
 
     private boolean databaseAllowed(String database) {
@@ -2148,7 +2418,8 @@ public class FolioAccountingPriceService {
                 null, null, null, null,
                 0, 0, 0, 0, 0, null,
                 null, null, null, null, null,
-                0, false, List.of(), null, null
+                null, null, null, null,
+                0, false, List.of(), null, null, null, null
         );
     }
 
@@ -2167,11 +2438,14 @@ public class FolioAccountingPriceService {
                 progress.database, progress.accountingMethod,
                 progress.procedureCalls, progress.preflightChunks,
                 progress.committedChunks, progress.progressUnits,
-                progress.totalUnits, percent, progress.currentArt,
+                progress.totalUnits, progress.processedSku,
+                progress.currentUnits, progress.procedureCurrentUnits,
+                progress.procedureTotalUnits, percent, progress.currentArt,
                 progress.nextArt, progress.lastCommittedArt,
                 progress.checkpointArt, progress.returnCode,
                 progress.warningCount, progress.warningsTruncated,
-                List.copyOf(progress.warnings), progress.failedChunk, error
+                List.copyOf(progress.warnings), progress.failedChunk,
+                progress.errorCode, progress.recommendation, error
         ));
     }
 
@@ -2185,23 +2459,50 @@ public class FolioAccountingPriceService {
                 current.accountingMethod(), current.procedureCalls(),
                 current.preflightChunks(), current.committedChunks(),
                 current.progressUnits(), current.totalUnits(),
+                current.processedSku(), current.currentUnits(),
+                current.procedureCurrentUnits(), current.procedureTotalUnits(),
                 current.progressPercent(), current.currentArt(), current.nextArt(),
                 current.lastCommittedArt(), current.checkpointArt(),
                 current.returnCode(), current.warningCount(),
                 current.warningsTruncated(), current.warnings(),
-                current.failedChunk(), current.error()
+                current.failedChunk(), current.errorCode(),
+                current.recommendation(), current.error()
         );
+    }
+
+    private static void captureNativeFailureMetadata(
+            NativeProgress progress, Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof FolioAccountingModeUnsupportedException unsupported) {
+                progress.errorCode = unsupported.getCode();
+                progress.recommendation = unsupported.recommendation();
+                return;
+            }
+            if (current instanceof FolioAccountValidationException validation) {
+                progress.errorCode = validation.getCode();
+                return;
+            }
+            if (current.getCause() == current) return;
+            current = current.getCause();
+        }
     }
 
     private static ChunkDiagnostics chunkDiagnostics(
             String inputArt,
             NativeFullChunkOutput output,
+            int requiredTotalUnits,
+            boolean partialSelection,
             String validationError) {
+        Integer canonicalTotal = partialSelection && requiredTotalUnits > 0
+                ? requiredTotalUnits : output.totalUnits();
         return new ChunkDiagnostics(
                 inputArt,
                 output.art(),
                 output.newArt(),
                 output.returnCode(),
+                output.currentUnits(),
+                canonicalTotal,
                 output.currentUnits(),
                 output.totalUnits(),
                 output.problemDate(),
@@ -2287,6 +2588,10 @@ public class FolioAccountingPriceService {
         private int committedChunks;
         private int progressUnits;
         private int totalUnits;
+        private Integer processedSku;
+        private Integer currentUnits;
+        private Integer procedureCurrentUnits;
+        private Integer procedureTotalUnits;
         private String currentArt;
         private String nextArt;
         private String lastCommittedArt;
@@ -2296,6 +2601,8 @@ public class FolioAccountingPriceService {
         private boolean warningsTruncated;
         private ChunkDiagnostics failedChunk;
         private int divideIsolationProbes;
+        private String errorCode;
+        private String recommendation;
 
         private NativeProgress(String jobId,
                                FolioAccountingPriceNativeFullRequest request,

@@ -26,6 +26,10 @@ public record FolioAccountingPriceNativeFullStatusResponse(
         int committedChunks,
         int progressUnits,
         int totalUnits,
+        Integer processedSku,
+        Integer currentUnits,
+        Integer procedureCurrentUnits,
+        Integer procedureTotalUnits,
         Integer progressPercent,
         String currentArt,
         String nextArt,
@@ -36,6 +40,8 @@ public record FolioAccountingPriceNativeFullStatusResponse(
         boolean warningsTruncated,
         List<FolioAccountingPriceRecalculationResponse.Issue> warnings,
         ChunkDiagnostics failedChunk,
+        String errorCode,
+        String recommendation,
         String error
 ) {
     public record ChunkDiagnostics(
@@ -45,6 +51,8 @@ public record FolioAccountingPriceNativeFullStatusResponse(
             Integer returnCode,
             Integer currentUnits,
             Integer totalUnits,
+            Integer procedureCurrentUnits,
+            Integer procedureTotalUnits,
             String problemDate,
             int resultRowCount,
             int transactionCountBefore,

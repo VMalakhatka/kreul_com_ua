@@ -1,5 +1,8 @@
 # Перерасчёт учётных цен ФОЛИО: контракт для фронта
 
+Полная инструкция для фронта, оператора и ночного cron:
+[FOLIO_ACCOUNTING_PRICE_OPERATIONS_FRONTEND.md](FOLIO_ACCOUNTING_PRICE_OPERATIONS_FRONTEND.md).
+
 ## Главное различие двух полных режимов
 
 В API есть два разных фоновых прохода. Их нельзя показывать как один и тот же
@@ -14,9 +17,11 @@ Java-full умеет пропускать проблемный SKU через `c
 Native-full такого параметра **не имеет**: он всегда откатывает проблемный SKU,
 записывает warning и продолжает остальные товары.
 
-На первом rollout native-full разрешён только для точного режима
-`SCLAD_R.N_2=1000`, `SCLAD_R.N_4 IS NULL`. Rollback-preview доступен в
-`Paint_Rus` и `Paint_Ua`; apply управляется отдельными флагами.
+Native-full разрешён для проверенной средней цены `SCLAD_R.N_2=1000`
+(`includeTax=false`) и `1100` (`includeTax=true`), при `SCLAD_R.N_4 IS NULL`.
+Для `1100` в целевой базе должна быть установлена обновлённая
+`LAVKA_I_UCHET_*_SAFE`; одной новой версии Java недостаточно. Rollback-preview
+доступен в `Paint_Rus` и `Paint_Ua`; apply управляется отдельными флагами.
 
 ## Что такое учётная цена
 
@@ -168,6 +173,98 @@ native preview менеджеры не должны создавать, сохр
 неожиданных SQL, connection, contract или protected-data ошибок, а не для
 диагностированного отрицательного остатка.
 
+### Native-range: один SKU, диапазон или явный список
+
+После исправления проблемных документов не нужно повторять весь склад:
+
+```http
+POST /admin/folio/accounting-prices/recalculate/native-range
+Content-Type: application/json
+```
+
+Один SKU или непрерывный диапазон:
+
+```json
+{
+  "warehouseId": 5,
+  "fromSku": "KR-84127",
+  "toSku": "KR-84127",
+  "previewOnly": false,
+  "confirmApply": true
+}
+```
+
+```json
+{
+  "warehouseId": 5,
+  "fromSku": "KR-84127",
+  "toSku": "KR-84999",
+  "previewOnly": false,
+  "confirmApply": true
+}
+```
+
+Несмежные исправленные товары лучше передавать явно:
+
+```json
+{
+  "warehouseId": 5,
+  "skus": ["KR-84127", "СТИ-741449R", "ТП-0001"],
+  "previewOnly": false,
+  "confirmApply": true
+}
+```
+
+Передаётся либо `skus[]`, либо одновременно `fromSku` и `toSku`; смешивать
+режимы нельзя. Максимум — 500 SKU. Артикулы проверяются и упорядочиваются самой
+ФОЛІО, отсутствующий SKU блокирует запуск до каких-либо commit.
+
+Preview использует `previewOnly=true`, `confirmApply=false`. Apply сначала
+проверяет все выбранные SKU с rollback, затем повторяет только этот же набор и
+фиксирует каждый чистый SKU отдельным commit. Диагностируемый проблемный SKU
+откатывается, получает warning/`FAILED`, а остальные продолжаются.
+
+Статус можно читать по адресу:
+
+```http
+GET /admin/folio/accounting-prices/recalculate/native-range/status
+```
+
+Он использует тот же общий слот и тот же формат ответа, что native-full.
+Одновременно point/full/native-full/native-range не выполняются.
+
+Для `native-range` счётчики имеют отдельный формальный смысл:
+
+- `processedSku` и `progressUnits` — сколько выбранных Java SKU уже завершено;
+- `totalUnits` — каноническое количество SKU выбранной кампании, заранее
+  полученное Java из ФОЛІО;
+- `currentUnits` / `procedureCurrentUnits` — вес работы последнего вызова
+  safe-процедуры (например `40` за карточку плюс движения);
+- `procedureTotalUnits` — сырой `n_tot` safe-процедуры и только диагностика.
+
+`procedureTotalUnits=0` для `native-range` является допустимым: процедура
+обрабатывает один SKU и не обязана знать размер WordPress-кампании. Фронт строит
+индикатор выполнения по `progressUnits/totalUnits` или
+`processedSku/totalUnits`, но не по `procedureTotalUnits`.
+
+Пример после успешной обработки первого SKU кампании из 118 товаров:
+
+```json
+{
+  "status": "RUNNING",
+  "phase": "APPLY_RUNNING",
+  "currentArt": "A-AZ БАНК.РАСХ",
+  "nextArt": "A-AZ Краски б/у",
+  "processedSku": 1,
+  "progressUnits": 1,
+  "totalUnits": 118,
+  "currentUnits": 40,
+  "procedureCurrentUnits": 40,
+  "procedureTotalUnits": 0,
+  "committedChunks": 1
+}
+```
+
 ### Ответ на принятый POST
 
 HTTP `202 Accepted`:
@@ -301,7 +398,10 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 | `procedureCalls` | число вызовов `LAVKA_I_UCHET_TOVAR_SAFE` в обоих проходах |
 | `preflightChunks` | число гарантированно откатившихся SKU проверки |
 | `committedChunks` | число чистых SKU, подтверждённо зафиксированных apply |
-| `progressUnits` / `totalUnits` | legacy-счётчики текущего прохода |
+| `progressUnits` / `totalUnits` | для native-full — legacy work units; для native-range — обработанные/выбранные SKU |
+| `processedSku` | число завершённых SKU native-range; для native-full отсутствует |
+| `currentUnits` / `procedureCurrentUnits` | сырой `n_cur` последнего вызова safe-процедуры |
+| `procedureTotalUnits` | сырой `n_tot`; для native-range может корректно быть `0` и не является знаменателем прогресса кампании |
 | `progressPercent` | приблизительный процент; может отсутствовать до получения `n_tot` |
 | `currentArt` / `nextArt` | текущий SKU и следующий SKU в порядке ФОЛИО |
 | `lastCommittedArt` | последний подтверждённо зафиксированный SKU |
@@ -317,10 +417,20 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 
 При `FAILED` и непустом `failedChunk` показывайте отдельный технический блок:
 `inputArt`, `outputArt`, `nextArt`, `returnCode`, `currentUnits`, `totalUnits`,
-`problemDate` и `validationError`. Не подменяйте его значениями верхнего уровня:
+`procedureCurrentUnits`, `procedureTotalUnits`, `problemDate` и
+`validationError`. Для native-range `totalUnits` — известный Java размер
+выборки, а `procedureTotalUnits` — сырой OUT процедуры. Не подменяйте этот блок
+значениями верхнего уровня:
 они могут относиться к предыдущему успешно принятому SKU. Кнопку
 автоматического повтора не показывать; при `committedChunks=0` данные откатились,
 но сначала нужно разобрать сырой OUT-контракт.
+
+Если Java действительно не смогла определить размер выбранной кампании, job
+завершается с `errorCode=NATIVE_RANGE_TOTAL_UNKNOWN`. Если нарушен другой
+контракт safe-процедуры, используется
+`errorCode=NATIVE_RANGE_CONTRACT_INVALID`. Нулевой
+`procedureTotalUnits` при известном ненулевом `totalUnits` сам по себе ни одним
+из этих состояний не является.
 
 Не сравнивайте артикулы лексикографически в PHP/JavaScript и не определяйте по
 ним движение курсора. Порядок ФОЛИО задаётся legacy CP1251-collation колонки

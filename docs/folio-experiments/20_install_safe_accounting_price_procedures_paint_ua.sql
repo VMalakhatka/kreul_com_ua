@@ -14,7 +14,7 @@
     - refuses the wrong database, server/compatibility level, missing Folio
       source procedures, an open caller transaction, or an existing LAVKA
       installation;
-    - first release supports only N_4 IS NULL and N_2=1000;
+    - supports only N_4 IS NULL and average accounting N_2=1000/1100;
     - one call processes exactly one SKU;
     - every call requires an existing outer transaction;
     - return code 20 is a diagnosed zero-denominator stop and must be rolled
@@ -120,7 +120,7 @@ BEGIN
   RETURN 31
 END
 
-IF @n_group IS NOT NULL OR @uchet_rsc<>0 OR @period_rsc<>0 OR @uch_nal<>0
+IF @n_group IS NOT NULL OR @uchet_rsc<>0 OR @period_rsc<>0
 BEGIN
   SELECT @problem_code='UNSUPPORTED_SCOPE_OR_MODE'
   RETURN 32

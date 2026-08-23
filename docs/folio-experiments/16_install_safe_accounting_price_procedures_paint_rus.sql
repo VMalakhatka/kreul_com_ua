@@ -1,7 +1,8 @@
 /*
   Paint_Rus only. Validated against SQL Server 8.00 / compatibility 80.
   Creates separate LAVKA procedures; does not alter Folio I_UCHET_* objects.
-  First release supports only N_4 IS NULL and average accounting mode (N_2=1000).
+  Supports only N_4 IS NULL and average accounting mode:
+  N_2=1000 (without tax) or N_2=1100 (with tax).
   One call processes exactly one SKU and returns new_art for Java continuation.
   Calls require an existing outer transaction. Return code 20 must be rolled back.
   After installation, DBA must grant EXECUTE only to the intended lab service user.
@@ -62,7 +63,7 @@ BEGIN
   RETURN 31
 END
 
-IF @n_group IS NOT NULL OR @uchet_rsc<>0 OR @period_rsc<>0 OR @uch_nal<>0
+IF @n_group IS NOT NULL OR @uchet_rsc<>0 OR @period_rsc<>0
 BEGIN
   SELECT @problem_code='UNSUPPORTED_SCOPE_OR_MODE'
   RETURN 32

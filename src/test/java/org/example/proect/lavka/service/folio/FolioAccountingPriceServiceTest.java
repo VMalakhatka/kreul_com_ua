@@ -393,6 +393,64 @@ class FolioAccountingPriceServiceTest {
     }
 
     @Test
+    void nativePreviewPassesIncludeTaxForVerifiedN1100Mode() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        WarehouseRow taxWarehouse = new WarehouseRow(
+                WAREHOUSE_ID, "Sale warehouse", 1100, null);
+        when(dao.findWarehouseScope(WAREHOUSE_ID))
+                .thenReturn(new WarehouseScope(taxWarehouse, List.of(taxWarehouse)));
+        when(dao.findWarehouseForUpdate(WAREHOUSE_ID)).thenReturn(taxWarehouse);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(true),
+                eq(null), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 100, 100, null, null));
+
+        FolioAccountingPriceService service = nativeService(
+                dao, new TrackingTransactionManager(), false);
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("PREVIEW_READY");
+        assertThat(completed.accountingMethod().rawCode()).isEqualTo(1100);
+        assertThat(completed.accountingMethod().name()).isEqualTo("AVERAGE");
+        assertThat(completed.accountingMethod().includeTax()).isTrue();
+        verify(dao).callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(true),
+                eq(null), eq(0), eq(0), eq(120));
+    }
+
+    @Test
+    void nativeUnsupportedModeReturnsStructuredDiagnosticsWithoutProcedureCall() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        WarehouseRow lifo = new WarehouseRow(
+                WAREHOUSE_ID, "Unsupported warehouse", 1001, null);
+        when(dao.currentDatabaseName()).thenReturn("Paint_Rus");
+        when(dao.findWarehouseScope(WAREHOUSE_ID))
+                .thenReturn(new WarehouseScope(lifo, List.of(lifo)));
+
+        FolioAccountingPriceService service = nativeService(
+                dao, new TrackingTransactionManager(), false);
+        service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.errorCode())
+                .isEqualTo("ACCOUNTING_NATIVE_METHOD_UNSUPPORTED");
+        assertThat(failed.accountingMethod().rawCode()).isEqualTo(1001);
+        assertThat(failed.accountingMethod().name()).isEqualTo("LIFO");
+        assertThat(failed.recommendation())
+                .contains("Exclude this warehouse")
+                .contains("do not change N_2 automatically");
+        verify(dao, never()).safeNativeProceduresInstalled();
+        verify(dao, never()).callNativeFullChunk(
+                any(), anyInt(), anyInt(), anyInt(), anyBoolean(),
+                any(), anyInt(), anyInt(), anyInt());
+    }
+
+    @Test
     void nativePreviewTreatsRawDivideByZeroAsInstallationMismatch() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
@@ -608,6 +666,129 @@ class FolioAccountingPriceServiceTest {
         assertThat(service.nativeFullStatus(false).status()).isEqualTo("COMPLETED");
         verify(recorder).capture(WAREHOUSE_ID, CLEAN_SKU, 120);
         verify(recorder).confirmApplied(fingerprint);
+    }
+
+    @Test
+    void nativeRangePreviewProcessesOnlyDatabaseRange() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.findSkusInRange(WAREHOUSE_ID, "A", "Z"))
+                .thenReturn(List.of(CLEAN_SKU));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(CLEAN_SKU), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 40, 100, null, null));
+        FolioAccountingPriceService service = nativeService(
+                dao, new TrackingTransactionManager(), false);
+
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false, "A", "Z", null));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("PREVIEW_READY");
+        assertThat(completed.preflightChunks()).isEqualTo(1);
+        assertThat(completed.progressUnits()).isEqualTo(1);
+        assertThat(completed.totalUnits()).isEqualTo(1);
+        assertThat(completed.committedChunks()).isZero();
+    }
+
+    @Test
+    void nativeRangeUsesJavaBatchTotalWhenSafeProcedureReturnsZeroTotal() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        String firstSku = "A-AZ БАНК.РАСХ";
+        String immediateNext = "A-AZ Краски б/у";
+        List<String> selectedSkus = new ArrayList<>();
+        selectedSkus.add(firstSku);
+        selectedSkus.add(immediateNext);
+        for (int index = 2; index < 118; index++) {
+            selectedSkus.add(String.format("SKU-%03d", index));
+        }
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(selectedSkus);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                anyString(), eq(0), eq(0), eq(120)))
+                .thenAnswer(invocation -> {
+                    String sku = invocation.getArgument(5);
+                    String next = firstSku.equals(sku) ? immediateNext : null;
+                    return nativeChunk(sku, 40, 0, next, null);
+                });
+        FolioAccountingPriceService service = nativeService(
+                dao, new TrackingTransactionManager(), false);
+
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false, null, null, selectedSkus));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("PREVIEW_READY");
+        assertThat(completed.error()).isNull();
+        assertThat(completed.preflightChunks()).isEqualTo(118);
+        assertThat(completed.progressUnits()).isEqualTo(118);
+        assertThat(completed.totalUnits()).isEqualTo(118);
+        assertThat(completed.processedSku()).isEqualTo(118);
+        assertThat(completed.currentUnits()).isEqualTo(40);
+        assertThat(completed.procedureCurrentUnits()).isEqualTo(40);
+        assertThat(completed.procedureTotalUnits()).isZero();
+    }
+
+    @Test
+    void nativeRangeReportsCanonicalAndProcedureTotalsForRealContractFailure() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        String sku = "A-AZ БАНК.РАСХ";
+        String invalidNext = "NOT-IMMEDIATE";
+        when(dao.findSkusInRange(WAREHOUSE_ID, sku, sku))
+                .thenReturn(List.of(sku));
+        when(dao.isImmediateNextArt(WAREHOUSE_ID, sku, invalidNext))
+                .thenReturn(false);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(sku), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(sku, 40, 0, invalidNext, null));
+        FolioAccountingPriceService service = nativeService(
+                dao, new TrackingTransactionManager(), false);
+
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false, sku, sku, null));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.errorCode()).isEqualTo("NATIVE_RANGE_CONTRACT_INVALID");
+        assertThat(failed.failedChunk()).isNotNull();
+        assertThat(failed.failedChunk().currentUnits()).isEqualTo(40);
+        assertThat(failed.failedChunk().totalUnits()).isEqualTo(1);
+        assertThat(failed.failedChunk().procedureCurrentUnits()).isEqualTo(40);
+        assertThat(failed.failedChunk().procedureTotalUnits()).isZero();
+        assertThat(failed.failedChunk().validationError())
+                .contains("invalid continuation cursor");
+    }
+
+    @Test
+    void nativeSkuSelectionApplyRunsPreflightThenCommitsSelectedSku() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(List.of(CLEAN_SKU));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(CLEAN_SKU), eq(0), eq(0), eq(120)))
+                .thenReturn(
+                        nativeChunk(CLEAN_SKU, 40, 0, null, null),
+                        nativeChunk(CLEAN_SKU, 40, 0, null, null));
+        FolioAccountingPriceService service = nativeService(
+                dao, new TrackingTransactionManager(), true);
+
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true, null, null, List.of(CLEAN_SKU)));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("COMPLETED");
+        assertThat(completed.preflightChunks()).isEqualTo(1);
+        assertThat(completed.procedureCalls()).isEqualTo(2);
+        assertThat(completed.committedChunks()).isEqualTo(1);
+        assertThat(completed.lastCommittedArt()).isEqualTo(CLEAN_SKU);
+        assertThat(completed.totalUnits()).isEqualTo(1);
+        assertThat(completed.processedSku()).isEqualTo(1);
+        assertThat(completed.procedureTotalUnits()).isZero();
     }
 
     @Test

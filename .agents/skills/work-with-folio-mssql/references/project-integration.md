@@ -7,6 +7,7 @@
 - [Партнёры](#партнёры)
 - [Документы клиента](#документы-клиента)
 - [Медиа товаров](#медиа-товаров)
+- [Снимок товаров и экономика](#снимок-товаров-и-экономика)
 - [Заказы WooCommerce](#заказы-woocommerce)
 - [Конфигурация](#конфигурация)
 - [Проверка изменений](#проверка-изменений)
@@ -102,6 +103,40 @@ Legacy-пагинация DAO специально избегает `OFFSET/FETC
 Живая схема подтверждает `ALL_ARTC.PLUS_ARTIC bigint IDENTITY` и `img_prod.id int IDENTITY`, но на обоих `PLUS_ARTIC` нет индекса, unique constraint или FK. Не воспринимай логическую media-связь как обеспеченную базой; измеряй scan перед расширением массовых запросов и не добавляй индекс как побочное изменение без отдельного плана.
 
 Полное `card_tov_export` подтверждает `ALL_ARTC.S50` как main image, но не обращается к gallery `img_prod`; view также не фильтрует active/status. Поле `SCL_SROK.S50P`, встречающееся в `I_GET_FROM_ARTC_TO_NAKL`, не связано с main image. Не переносить это сходство имён в media-модель.
+
+## Снимок товаров и экономика
+
+Текущий проект строит read-only снимок одного склада через
+`FolioProductSnapshotService` и публикует его во вторичную MariaDB. Управление:
+
+- `POST /admin/folio/accounting-prices/snapshot/refresh`;
+- `GET /admin/folio/accounting-prices/snapshot/status`.
+
+Полный контракт находится в `docs/api/FOLIO_PRODUCT_SNAPSHOT_API.md`, а
+инструкция WordPress — в `docs/api/FOLIO_PRODUCT_STATISTICS_FRONTEND.md`.
+Endpoint не вызывает `I_UCHET_TOVAR` и не изменяет ФОЛІО, но разные склады
+обрабатываются последовательно из-за общего application lock и нагрузки
+согласованного чтения.
+
+Технические таблицы: `folio_product_snapshot_generation`,
+`folio_product_snapshot_item`, `folio_product_snapshot_change`. Экономические:
+`folio_product_metric_current`, `folio_product_metric_monthly`,
+`folio_product_metric_alert`. Они принадлежат MariaDB, а не ФОЛІО/MS SQL.
+Основной ключ всегда `source_database + warehouse_id + sku`; нельзя join-ить
+только по SKU.
+
+Первый baseline помечает существующие карточки `UNVERIFIED`, последующие
+изменения — `DIRTY/NEW/REMOVED`. Это техническое состояние fingerprint и не
+заменяет экономические `health_status`/alerts. `applied_digest` продвигается
+только после успешного commit и postcheck перерасчёта, а не простым повторным
+снимком.
+
+Первая экономическая версия объединяет все подтверждённые внешние продажи и не
+доказывает канал `WHOLESALE/RETAIL`. Возвраты сохраняются отдельно, но пока не
+дают net-прибыль. До добавления поставщика, lead time, MOQ, кратности и товара в
+пути разрешено показывать дефицит/покрытие, но не готовое количество закупки.
+Фронт не должен заново считать финансовые формулы или автоматически запускать
+перерасчёт учётных цен со страницы статистики.
 
 ## Заказы WooCommerce
 
