@@ -764,6 +764,47 @@ class FolioAccountingPriceServiceTest {
     }
 
     @Test
+    void nativeRangeCode32ExplainsOutdatedSafeProcedureAndStopsWithoutCommit() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        String sku = "A-AZ РАЗНОЕ";
+        when(dao.findSkusInRange(WAREHOUSE_ID, sku, sku))
+                .thenReturn(List.of(sku));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(sku), eq(0), eq(0), eq(120)))
+                .thenReturn(new NativeFullChunkOutput(
+                        32, sku, 0, 0, null, null,
+                        "UNSUPPORTED_SCOPE_OR_MODE", sku, null, null,
+                        null, null, null, null, null,
+                        2, 2, 0));
+        TrackingTransactionManager transactions = new TrackingTransactionManager();
+        FolioAccountingPriceService service = nativeService(
+                dao, transactions, false);
+
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, true, false, sku, sku, null));
+        var failed = service.nativeFullStatus(false);
+
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.committedChunks()).isZero();
+        assertThat(failed.errorCode())
+                .isEqualTo("NATIVE_SAFE_PROCEDURE_UNSUPPORTED_SCOPE_OR_MODE");
+        assertThat(failed.error()).contains("code 32")
+                .contains("SCLAD_R.N_2=1100")
+                .contains("uch_nal=1");
+        assertThat(failed.recommendation()).contains("Upgrade")
+                .contains("previewOnly=true")
+                .contains("do not run apply");
+        assertThat(failed.failedChunk()).isNotNull();
+        assertThat(failed.failedChunk().returnCode()).isEqualTo(32);
+        assertThat(failed.failedChunk().problemCode())
+                .isEqualTo("UNSUPPORTED_SCOPE_OR_MODE");
+        assertThat(failed.failedChunk().problemArt()).isEqualTo(sku);
+        assertThat(transactions.commits).isZero();
+    }
+
+    @Test
     void nativeSkuSelectionApplyRunsPreflightThenCommitsSelectedSku() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);

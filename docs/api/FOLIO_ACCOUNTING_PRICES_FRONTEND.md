@@ -432,6 +432,19 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 `procedureTotalUnits` при известном ненулевом `totalUnits` сам по себе ни одним
 из этих состояний не является.
 
+`NATIVE_SAFE_PROCEDURE_UNSUPPORTED_SCOPE_OR_MODE` соответствует return code
+`32`. Это fail-stop несовместимой или устаревшей safe-процедуры, а не
+пропущенный товар. Для склада с `SCLAD_R.N_2=1100` наиболее вероятна ранняя
+версия, запрещающая `uch_nal=1`. Показывайте «Зупинено: несумісна версія
+процедури ФОЛІО», `status=FAILED`, склад в списке ошибок и запрет
+автоматического retry. Не показывайте «Завершено з пропущеними товарами» и не
+меняйте SKU на обычный `FAILED` до обновления процедуры и успешного preview.
+
+`NATIVE_SAFE_PROCEDURE_TRANSACTION_REQUIRED` соответствует коду `31`. Любой
+другой код, кроме `0`, `20`, `31`, `32`, возвращается как
+`NATIVE_SAFE_PROCEDURE_UNDOCUMENTED_CODE`; курсор автоматически не
+продолжается.
+
 Не сравнивайте артикулы лексикографически в PHP/JavaScript и не определяйте по
 ним движение курсора. Порядок ФОЛИО задаётся legacy CP1251-collation колонки
 `SCL_ARTC.COD_ARTIC`; корректность курсора проверяет только Java API через эту

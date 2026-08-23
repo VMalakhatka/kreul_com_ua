@@ -1915,10 +1915,27 @@ public class FolioAccountingPriceService {
             throw new NativeOutcomeUnknownException(
                     "LAVKA_I_UCHET_TOVAR_SAFE was not enclosed by the required transaction");
         }
-        if (output.returnCode() == null
-                || output.returnCode() != 0 && output.returnCode() != 20) {
-            throw new IllegalStateException(
-                    "LAVKA_I_UCHET_TOVAR_SAFE returned code " + output.returnCode());
+        if (output.returnCode() == null) {
+            throw new FolioAccountValidationException(
+                    "NATIVE_SAFE_PROCEDURE_UNDOCUMENTED_CODE",
+                    "LAVKA_I_UCHET_TOVAR_SAFE returned a null return code");
+        }
+        if (output.returnCode() == 31) {
+            throw new FolioAccountValidationException(
+                    "NATIVE_SAFE_PROCEDURE_TRANSACTION_REQUIRED",
+                    "LAVKA_I_UCHET_TOVAR_SAFE returned code 31: the required outer transaction was not detected");
+        }
+        if (output.returnCode() == 32) {
+            throw new FolioAccountValidationException(
+                    "NATIVE_SAFE_PROCEDURE_UNSUPPORTED_SCOPE_OR_MODE",
+                    "LAVKA_I_UCHET_TOVAR_SAFE returned code 32 (UNSUPPORTED_SCOPE_OR_MODE). "
+                            + "For an average warehouse with SCLAD_R.N_2=1100 this means the installed safe procedure may still reject uch_nal=1; upgrade the LAVKA safe procedures and rerun preview");
+        }
+        if (output.returnCode() != 0 && output.returnCode() != 20) {
+            throw new FolioAccountValidationException(
+                    "NATIVE_SAFE_PROCEDURE_UNDOCUMENTED_CODE",
+                    "LAVKA_I_UCHET_TOVAR_SAFE returned code "
+                            + output.returnCode() + " (undocumented)");
         }
         if (output.returnCode() == 20
                 && (output.problemCode() == null || output.problemCode().isBlank())) {
@@ -2481,6 +2498,15 @@ public class FolioAccountingPriceService {
             }
             if (current instanceof FolioAccountValidationException validation) {
                 progress.errorCode = validation.getCode();
+                progress.recommendation = switch (validation.getCode()) {
+                    case "NATIVE_SAFE_PROCEDURE_UNSUPPORTED_SCOPE_OR_MODE" ->
+                            "Upgrade dbo.LAVKA_I_UCHET_1_TOVAR_SAFE for N_2=1100, then rerun previewOnly=true; do not run apply before preview succeeds";
+                    case "NATIVE_SAFE_PROCEDURE_TRANSACTION_REQUIRED" ->
+                            "Do not retry automatically; verify the Java transaction boundary and rerun previewOnly=true";
+                    case "NATIVE_SAFE_PROCEDURE_UNDOCUMENTED_CODE" ->
+                            "Do not advance the SKU cursor or retry automatically; inspect the safe-procedure OUT diagnostics and T-SQL contract";
+                    default -> progress.recommendation;
+                };
                 return;
             }
             if (current.getCause() == current) return;
@@ -2506,6 +2532,15 @@ public class FolioAccountingPriceService {
                 output.currentUnits(),
                 output.totalUnits(),
                 output.problemDate(),
+                output.problemCode(),
+                output.problemArt(),
+                output.problemRecno(),
+                formatDate(output.problemOperationDate()),
+                output.problemFormula(),
+                output.problemNumerator(),
+                output.problemDenominator(),
+                output.problemQuantityBefore(),
+                output.problemMovementQuantity(),
                 output.resultRowCount(),
                 output.transactionCountBefore(),
                 output.transactionCountAfter(),

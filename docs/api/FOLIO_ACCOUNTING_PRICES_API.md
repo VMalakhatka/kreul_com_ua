@@ -723,6 +723,24 @@ OUT-контракта — `NATIVE_RANGE_CONTRACT_INVALID`.
 содержат сырой OUT. Для native-range `totalUnits` содержит канонический размер
 Java-выборки, а не legacy `n_tot`.
 
+### Return codes safe-процедуры
+
+| Return code | Контракт Java |
+|---:|---|
+| `0` | SKU обработан, все OUT/cursor/invariant проверки обязательны |
+| `20` | диагностируемый SKU безопасно откатан; `problemCode` обязателен, job может продолжить |
+| `31` | `NATIVE_SAFE_PROCEDURE_TRANSACTION_REQUIRED`, fail-stop без commit |
+| `32` | `NATIVE_SAFE_PROCEDURE_UNSUPPORTED_SCOPE_OR_MODE`, fail-stop без продолжения курсора |
+| прочий/`NULL` | `NATIVE_SAFE_PROCEDURE_UNDOCUMENTED_CODE`, fail-stop |
+
+Код `32` в ранней production-версии процедуры возвращался guard-веткой
+`UNSUPPORTED_SCOPE_OR_MODE`, в том числе при `uch_nal=1`. Для склада с
+`SCLAD_R.N_2=1100` Java корректно передаёт средний метод и `uch_nal=1`, поэтому
+такой ответ означает необходимость обновить объект `LAVKA_I_UCHET_*_SAFE`, а не
+пропустить товар. Java сохраняет в `failedChunk` `problemCode`, `problemArt`,
+`problemRecno`, дату операции, формулу, числитель, знаменатель и количества,
+если процедура их вернула.
+
 Порядок артикулов проверяется через фактическую колонку
 `SCL_ARTC.COD_ARTIC` выбранного склада. Это принципиально для legacy
 `SQL_Ukrainian_CP1251_CI_AS`: сравнение двух JDBC-параметров или строк Java
