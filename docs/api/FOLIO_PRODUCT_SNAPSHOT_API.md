@@ -120,7 +120,10 @@ Fingerprint включает значимые поля карточки `SCL_ART
   подтверждённые условия. Условия оплаты не изменяют класс и направление
   движения;
 - `customer_segment` хранит `RETAIL/NON_RETAIL/UNKNOWN/NOT_APPLICABLE`.
-  Сырой `_PARTNER.MY_ORGANIZ` сохраняется отдельно как `organization_type`;
+  Сырой односимвольный `_PARTNER.MY_ORGANIZ` сохраняется отдельно как
+  `organization_type`. Не подставлять сюда `SCL_NAKL.MY_ORGANIZ`: это полное
+  имя получателя документа, а не тип контрагента. Если партнёр не найден,
+  `organization_type` остаётся пустым, а сегмент — `UNKNOWN`;
 - `current_supplier` — текущий поставщик карточки на дату поколения;
   `counterparty_*` — исторический контрагент конкретного документа.
 

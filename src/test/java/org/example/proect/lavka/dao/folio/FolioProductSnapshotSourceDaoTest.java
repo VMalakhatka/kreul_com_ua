@@ -53,6 +53,13 @@ class FolioProductSnapshotSourceDaoTest {
         });
     }
 
+    @Test
+    void organizationTypeAcceptsOnlyTheSingleCharacterPartnerCode() {
+        assertThat(FolioProductSnapshotSourceDao.partnerOrganizationType(" Д ")).isEqualTo("Д");
+        assertThat(FolioProductSnapshotSourceDao.partnerOrganizationType("КИЕВ ОПТ")).isEmpty();
+        assertThat(FolioProductSnapshotSourceDao.partnerOrganizationType(null)).isEmpty();
+    }
+
     private static FolioProductSnapshotSourceDao.MovementFact movement(
             long recno, String operation, String demandMode, String movementClass,
             String quantity, String revenue, String cost) {

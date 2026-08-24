@@ -357,8 +357,7 @@ public class FolioProductSnapshotSourceDao {
                            CASE WHEN ISNULL(m.ORG_PREDM,'')<>'' THEN m.ORG_PREDM
                                 ELSE n.BRIEFORG END AS COUNTERPARTY_ID,
                            o.NAME_USER AS COUNTERPARTY_NAME,
-                           CASE WHEN ISNULL(o.MY_ORGANIZ,'')<>'' THEN o.MY_ORGANIZ
-                                ELSE n.MY_ORGANIZ END AS ORGANIZATION_TYPE,
+                           o.MY_ORGANIZ AS ORGANIZATION_TYPE,
                            a.DOP2_ARTIC AS CURRENT_SUPPLIER
                       FROM dbo.SCL_MOVE m WITH (HOLDLOCK)
                       LEFT JOIN dbo.SCL_NAKL n WITH (HOLDLOCK)
@@ -387,7 +386,7 @@ public class FolioProductSnapshotSourceDao {
         String movementType = trim(rs.getString("TYPDOCM_PR"));
         String documentType = trim(rs.getString("TYPE_DOC"));
         String operationKind = trim(rs.getString("OPERATION_KIND"));
-        String organizationType = trim(rs.getString("ORGANIZATION_TYPE"));
+        String organizationType = partnerOrganizationType(rs.getString("ORGANIZATION_TYPE"));
         boolean accounted = rs.getBoolean("STND_UCHET");
         boolean returnFlag = rs.getBoolean("VOZVRAT_PR");
         Classification classification = FolioProductMovementClassifier.classify(
@@ -430,6 +429,11 @@ public class FolioProductSnapshotSourceDao {
                 classification.affectsFinancialSales(),
                 classification.affectsPlanningDemand()
         );
+    }
+
+    static String partnerOrganizationType(String rawValue) {
+        String value = trim(rawValue);
+        return value != null && value.length() == 1 ? value : "";
     }
 
     static List<MonthlyActivity> aggregateMonthlyActivity(List<MovementFact> movements) {
