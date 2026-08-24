@@ -100,8 +100,8 @@ public class FolioProductSnapshotService {
         LocalDateTime started = LocalDateTime.now(clock);
         live.set(new FolioProductSnapshotStatusResponse(
                 true, true, true, null, "QUEUED", "QUEUED",
-                sourceDatabase, warehouseId, horizonMonths, started, null,
-                0, 0, 0, 0, 0, 0, 0, null,
+                sourceDatabase, warehouseId, horizonMonths, 2, started, null,
+                0, 0, 0, 0, 0, 0, 0, 0, null,
                 null, null, null, null, null));
         try {
             executor.execute(() -> run(sourceDatabase, warehouseId, horizonMonths, started));
@@ -117,13 +117,15 @@ public class FolioProductSnapshotService {
         if (current != null) return withAccepted(current, false);
         return snapshotDao.latest().map(g -> new FolioProductSnapshotStatusResponse(
                 "ACTIVE".equals(g.status()), false, false, g.id(), g.status(), g.status(),
-                g.sourceDatabase(), g.warehouseId(), g.horizonMonths(), g.startedAt(),
-                g.completedAt(), g.totalProducts(), g.movementRows(), g.monthlyMetricRows(),
+                g.sourceDatabase(), g.warehouseId(), g.horizonMonths(),
+                g.analyticsSchemaVersion(), g.startedAt(),
+                g.completedAt(), g.totalProducts(), g.movementRows(),
+                g.movementFactRows(), g.monthlyMetricRows(),
                 g.unverified(), g.dirty(), g.created(), g.removed(),
                 g.warehouseDigest(), null, null, null, null, g.error()
         )).orElseGet(() -> new FolioProductSnapshotStatusResponse(
                 true, false, false, null, "NOT_READY", "IDLE", null, null,
-                null, null, null, 0, 0, 0, 0, 0, 0, 0, null,
+                null, null, null, null, 0, 0, 0, 0, 0, 0, 0, 0, null,
                 null, null, null, null, null));
     }
 
@@ -170,14 +172,16 @@ public class FolioProductSnapshotService {
                     generationId, sourceDatabase, warehouseId,
                     capture.warehouseDigest(), capture.movementRows(),
                     classification.items(), classification.changes(),
-                    economics.monthly(), economics.current(), economics.alerts(),
+                    economics.monthly(), capture.movements(),
+                    economics.current(), economics.alerts(),
                     classification.unverified(), classification.dirty(),
                     classification.created(), classification.removed(), calculatedAt));
 
             live.set(new FolioProductSnapshotStatusResponse(
                     true, false, false, generationId, "ACTIVE", "COMPLETED",
-                    sourceDatabase, warehouseId, horizonMonths, startedAt, calculatedAt,
-                    capture.products().size(), capture.movementRows(), economics.monthly().size(),
+                    sourceDatabase, warehouseId, horizonMonths, 2, startedAt, calculatedAt,
+                    capture.products().size(), capture.movementRows(),
+                    capture.movements().size(), economics.monthly().size(),
                     classification.unverified(), classification.dirty(),
                     classification.created(), classification.removed(),
                     capture.warehouseDigest(), null,
@@ -199,8 +203,8 @@ public class FolioProductSnapshotService {
             }
             live.set(new FolioProductSnapshotStatusResponse(
                     false, false, false, generationId, "FAILED", "FAILED",
-                    sourceDatabase, warehouseId, horizonMonths, startedAt, failedAt,
-                    0, 0, 0, 0, 0, 0, 0, null,
+                    sourceDatabase, warehouseId, horizonMonths, 2, startedAt, failedAt,
+                    0, 0, 0, 0, 0, 0, 0, 0, null,
                     modeFailure.errorCode(), modeFailure.rawCode(),
                     modeFailure.modeName(), modeFailure.recommendation(),
                     rootMessage(e)));
@@ -250,6 +254,7 @@ public class FolioProductSnapshotService {
             if ("NEW".equals(state)) created++;
             LocalDateTime firstSeen = before == null ? at : before.firstSeenAt();
             items.add(new Item(db, warehouseId, card.sku(), card.productName(),
+                    card.currentSupplier(), card.supplierState(),
                     card.sourceDigest(), before == null ? null : before.appliedDigest(),
                     state, true, card.movementCount(), card.minRecno(), card.maxRecno(),
                     card.firstMovementDate(), card.lastMovementDate(), card.priceRuleCount(),
@@ -264,7 +269,8 @@ public class FolioProductSnapshotService {
         for (ExistingItem before : existing.values()) {
             if (seen.contains(before.sku()) || !before.present()) continue;
             removed++;
-            items.add(new Item(db, warehouseId, before.sku(), before.productName(), null,
+            items.add(new Item(db, warehouseId, before.sku(), before.productName(),
+                    before.currentSupplier(), before.supplierState(), null,
                     before.appliedDigest(), "REMOVED", false, before.movementCount(),
                     before.minRecno(), before.maxRecno(), before.firstMovementDate(),
                     before.lastMovementDate(), before.priceRuleCount(),
@@ -281,8 +287,8 @@ public class FolioProductSnapshotService {
                             int warehouseId, int horizonMonths, LocalDateTime started) {
         live.set(new FolioProductSnapshotStatusResponse(
                 true, false, true, generationId, "BUILDING", phase, db,
-                warehouseId, horizonMonths, started, null,
-                0, 0, 0, 0, 0, 0, 0, null,
+                warehouseId, horizonMonths, 2, started, null,
+                0, 0, 0, 0, 0, 0, 0, 0, null,
                 null, null, null, null, null));
     }
 
@@ -291,8 +297,10 @@ public class FolioProductSnapshotService {
         return new FolioProductSnapshotStatusResponse(
                 value.ok(), accepted, value.running(), value.generationId(), value.status(),
                 value.phase(), value.sourceDatabase(), value.warehouseId(),
-                value.horizonMonths(), value.startedAt(), value.completedAt(),
-                value.totalProducts(), value.movementRows(), value.monthlyMetricRows(),
+                value.horizonMonths(), value.analyticsSchemaVersion(),
+                value.startedAt(), value.completedAt(),
+                value.totalProducts(), value.movementRows(), value.movementFactRows(),
+                value.monthlyMetricRows(),
                 value.unverifiedProducts(), value.dirtyProducts(), value.newProducts(),
                 value.removedProducts(), value.warehouseDigest(), value.errorCode(),
                 value.accountingRawCode(), value.accountingMode(),

@@ -16,6 +16,7 @@ public record FolioProfitReportResponse(
         String ruleVersion,
         Inputs inputs,
         List<CityResult> cities,
+        List<InventoryResult> inventory,
         List<ExpenseSummary> expenses,
         List<DocumentLine> documents,
         Controls controls,
@@ -29,7 +30,36 @@ public record FolioProfitReportResponse(
             BigDecimal odesaMasterClassReturn,
             BigDecimal odesaAdditionalSalary,
             List<Integer> kyivWarehouseIds,
-            List<Integer> odesaWarehouseIds
+            List<Integer> odesaWarehouseIds,
+            List<Integer> kyivStockWarehouseIds,
+            List<Integer> odesaStockWarehouseIds
+    ) {
+    }
+
+    public record InventoryResult(
+            String city,
+            List<Integer> warehouseIds,
+            BigDecimal openingAccountingValue,
+            BigDecimal closingAccountingValue,
+            BigDecimal accountingValueChange,
+            int openingPositionCount,
+            int closingPositionCount,
+            int negativeClosingPositionCount,
+            int zeroValueClosingPositionCount,
+            List<WarehouseInventoryResult> warehouses
+    ) {
+    }
+
+    public record WarehouseInventoryResult(
+            int warehouseId,
+            String warehouseName,
+            BigDecimal openingAccountingValue,
+            BigDecimal closingAccountingValue,
+            BigDecimal accountingValueChange,
+            int openingPositionCount,
+            int closingPositionCount,
+            int negativeClosingPositionCount,
+            int zeroValueClosingPositionCount
     ) {
     }
 

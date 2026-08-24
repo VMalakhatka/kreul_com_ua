@@ -1,6 +1,6 @@
 ---
 name: work-with-folio-mssql
-description: "Безопасно анализирует, моделирует и изменяет интеграцию с ФОЛИО/WinСклад на старом Microsoft SQL Server: T-SQL, jTDS/JDBC, Spring Java, счета и накладные, остатки, задолженность клиентов, платежи, учётные цены, партнёры, изображения и WooCommerce; проводит golden-master эксперименты на копии Paint_Rus. Использовать при упоминании ФОЛИО, Folio, WinСклад, Paint_Ua/Paint_Rus, SCL_*/ALL_ARTC/_PARTNER/NSF_ORG, старого MS SQL или совместимости драйвера. Не применять к обычным задачам SQL вне ФОЛИО."
+description: "Безопасно анализирует и изменяет ФОЛИО/WinСклад на legacy MS SQL: T-SQL, SQL Server 2000, jTDS/Spring Java, документы, остатки, долги, платежи, цены, партнёры, изображения и WooCommerce. Использовать для Paint_Ua/Paint_Rus и таблиц SCL_*/ALL_ARTC/_PARTNER/NSF_ORG; не применять к обычному SQL."
 ---
 
 # Работа с ФОЛИО на MS SQL
@@ -28,6 +28,9 @@ description: "Безопасно анализирует, моделирует и
 - Для задолженности, платежного распределения и штатного перерасчёта учётных цен читай [debt-and-accounting.md](references/debt-and-accounting.md).
 - Для поведения штатного клиента, складов, партий, архивов, учётных цен и старого обмена читай [manufacturer-manual-notes.md](references/manufacturer-manual-notes.md).
 - Для счетов, строк документов, нумерации и резервов читай [documents-and-stock.md](references/documents-and-stock.md).
+- Для аналитического снимка движений, `VID_DOC`, разовых заказов, каналов,
+  условий оплаты и поставщика читай
+  [movement-analytics.md](references/movement-analytics.md).
 - Для соответствия подписей полей в штатном UI колонкам `SCL_NAKL`/`SCL_PLAT` и полям customer-documents API читай [document-ui-field-map.md](references/document-ui-field-map.md).
 - Для текущего Spring/Java API, партнёров, медиа и WooCommerce читай [project-integration.md](references/project-integration.md).
 - Перед любой записью или расследованием блокировок читай [safe-sql-playbook.md](references/safe-sql-playbook.md).
@@ -116,6 +119,8 @@ description: "Безопасно анализирует, моделирует и
 - Не использовать `db_owner`; выдавать сервисному пользователю только нужные действия по конкретным таблицам.
 - Не сравнивать кириллические `С/Р/П` с латинскими `C/P`; сверять кодовые точки.
 - Не считать `SCL_NAKL.UNICUM_NUM` видимым номером документа.
+- Не выводить направление и спрос из одного `VID_DOC`: `*РАЗОВАЯ` — режим
+  спроса, а `*ПРЕДОПЛАТА` и отсрочки — условия оплаты.
 - Не считать `KON_KOLCH` доступным остатком и не менять его при обычном счёте.
 - Не полагаться на MySQL-команду `SET NAMES utf8mb4` для соединения с ФОЛИО/MS SQL.
 - Не публиковать мутирующие `/admin` или `/sync` endpoints без проверки внешней аутентификации и авторизации.

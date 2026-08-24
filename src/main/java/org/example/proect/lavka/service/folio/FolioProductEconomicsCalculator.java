@@ -41,6 +41,7 @@ public class FolioProductEconomicsCalculator {
             List<MonthlyMetric> productMonths = new ArrayList<>();
             LocalDate lastReceipt = null;
             LocalDate lastSale = null;
+            LocalDate lastRegularSale = null;
             for (LocalDate month = firstMonth; !month.isAfter(lastMonth);
                  month = month.plusMonths(1)) {
                 MonthlyActivity row = activity.getOrDefault(card.sku(), Map.of()).get(month);
@@ -56,16 +57,29 @@ public class FolioProductEconomicsCalculator {
                 BigDecimal revenue = value(row, MonthlyActivity::salesRevenue);
                 BigDecimal cogs = value(row, MonthlyActivity::salesCogs);
                 BigDecimal grossProfit = revenue.subtract(cogs);
+                BigDecimal regularSalesQty = value(row, MonthlyActivity::regularSalesQuantity);
+                BigDecimal regularRevenue = value(row, MonthlyActivity::regularSalesRevenue);
+                BigDecimal regularCogs = value(row, MonthlyActivity::regularSalesCogs);
+                BigDecimal oneOffSalesQty = value(row, MonthlyActivity::oneOffSalesQuantity);
+                BigDecimal oneOffRevenue = value(row, MonthlyActivity::oneOffSalesRevenue);
+                BigDecimal oneOffCogs = value(row, MonthlyActivity::oneOffSalesCogs);
                 if (row != null && row.lastReceiptDate() != null) {
                     lastReceipt = max(lastReceipt, row.lastReceiptDate());
                 }
                 if (row != null && row.lastSaleDate() != null) {
                     lastSale = max(lastSale, row.lastSaleDate());
                 }
+                if (row != null && row.lastRegularSaleDate() != null) {
+                    lastRegularSale = max(lastRegularSale, row.lastRegularSaleDate());
+                }
                 MonthlyMetric metric = new MonthlyMetric(
                         card.sku(), month, openingQty, closingQty,
                         openingValue, closingValue, receiptQty, receiptCost,
                         salesQty, revenue, cogs, grossProfit,
+                        regularSalesQty, regularRevenue, regularCogs,
+                        regularRevenue.subtract(regularCogs),
+                        oneOffSalesQty, oneOffRevenue, oneOffCogs,
+                        oneOffRevenue.subtract(oneOffCogs),
                         value(row, MonthlyActivity::returnQuantity),
                         value(row, MonthlyActivity::returnRevenue),
                         averageValue,
@@ -82,7 +96,7 @@ public class FolioProductEconomicsCalculator {
             }
 
             CurrentMetric metric = current(card, productMonths, lastReceipt,
-                    lastSale, asOfDate);
+                    lastSale, lastRegularSale, asOfDate);
             current.add(metric);
             alerts.addAll(alerts(metric, card, asOfDate));
         }
@@ -91,6 +105,7 @@ public class FolioProductEconomicsCalculator {
 
     private CurrentMetric current(ProductCard card, List<MonthlyMetric> months,
                                   LocalDate lastReceipt, LocalDate lastSale,
+                                  LocalDate lastRegularSale,
                                   LocalDate asOfDate) {
         LocalDate currentMonth = asOfDate.withDayOfMonth(1);
         BigDecimal sold30 = sumLastMonths(months, currentMonth, 1, MetricValue.SALES_QUANTITY);
@@ -104,25 +119,67 @@ public class FolioProductEconomicsCalculator {
         BigDecimal cogs365 = sumLastMonths(months, currentMonth, 12, MetricValue.COGS);
         BigDecimal gross90 = sumLastMonths(months, currentMonth, 3, MetricValue.GROSS_PROFIT);
         BigDecimal gross365 = sumLastMonths(months, currentMonth, 12, MetricValue.GROSS_PROFIT);
+        BigDecimal regularSold30 = sumLastMonths(months, currentMonth, 1,
+                MetricValue.REGULAR_SALES_QUANTITY);
+        BigDecimal regularSoldPrevious30 = sumRange(months, currentMonth.minusMonths(1),
+                currentMonth.minusMonths(1), MetricValue.REGULAR_SALES_QUANTITY);
+        BigDecimal regularSold90 = sumLastMonths(months, currentMonth, 3,
+                MetricValue.REGULAR_SALES_QUANTITY);
+        BigDecimal regularSold365 = sumLastMonths(months, currentMonth, 12,
+                MetricValue.REGULAR_SALES_QUANTITY);
+        BigDecimal regularSold730 = sumLastMonths(months, currentMonth, 24,
+                MetricValue.REGULAR_SALES_QUANTITY);
+        BigDecimal oneOffSold30 = sumLastMonths(months, currentMonth, 1,
+                MetricValue.ONE_OFF_SALES_QUANTITY);
+        BigDecimal oneOffSold90 = sumLastMonths(months, currentMonth, 3,
+                MetricValue.ONE_OFF_SALES_QUANTITY);
+        BigDecimal oneOffSold365 = sumLastMonths(months, currentMonth, 12,
+                MetricValue.ONE_OFF_SALES_QUANTITY);
+        BigDecimal oneOffSold730 = sumLastMonths(months, currentMonth, 24,
+                MetricValue.ONE_OFF_SALES_QUANTITY);
+        BigDecimal regularRevenue90 = sumLastMonths(months, currentMonth, 3,
+                MetricValue.REGULAR_REVENUE);
+        BigDecimal regularRevenue365 = sumLastMonths(months, currentMonth, 12,
+                MetricValue.REGULAR_REVENUE);
+        BigDecimal oneOffRevenue90 = sumLastMonths(months, currentMonth, 3,
+                MetricValue.ONE_OFF_REVENUE);
+        BigDecimal oneOffRevenue365 = sumLastMonths(months, currentMonth, 12,
+                MetricValue.ONE_OFF_REVENUE);
+        BigDecimal regularGross90 = sumLastMonths(months, currentMonth, 3,
+                MetricValue.REGULAR_GROSS_PROFIT);
+        BigDecimal regularGross365 = sumLastMonths(months, currentMonth, 12,
+                MetricValue.REGULAR_GROSS_PROFIT);
+        BigDecimal oneOffGross90 = sumLastMonths(months, currentMonth, 3,
+                MetricValue.ONE_OFF_GROSS_PROFIT);
+        BigDecimal oneOffGross365 = sumLastMonths(months, currentMonth, 12,
+                MetricValue.ONE_OFF_GROSS_PROFIT);
         BigDecimal average90 = averageLastMonths(months, currentMonth, 3);
         BigDecimal average365 = averageLastMonths(months, currentMonth, 12);
         BigDecimal available = card.physicalQuantity().subtract(card.reservedQuantity());
         BigDecimal inventoryValue = card.accountingAmount().signum() != 0
                 ? card.accountingAmount()
                 : card.physicalQuantity().multiply(card.accountingPrice());
-        BigDecimal coverage = sold90.signum() > 0
+        BigDecimal coverage = regularSold90.signum() > 0
                 ? available.max(zero()).multiply(new BigDecimal("90"))
-                    .divide(sold90, 2, RoundingMode.HALF_UP)
+                    .divide(regularSold90, 2, RoundingMode.HALF_UP)
                 : null;
 
-        String health = health(card, available, sold30, soldPrevious30, sold90,
-                gross90, coverage, lastSale, asOfDate);
+        String health = health(card, available, regularSold30,
+                regularSoldPrevious30, regularSold90, oneOffSold365,
+                gross90, coverage, lastRegularSale, asOfDate);
         return new CurrentMetric(
-                card.sku(), card.productName(), card.physicalQuantity(),
+                card.sku(), card.productName(), card.currentSupplier(), card.supplierState(),
+                card.physicalQuantity(),
                 card.reservedQuantity(), available, card.accountingPrice(),
-                inventoryValue, lastReceipt, lastSale,
+                inventoryValue, lastReceipt, lastSale, lastRegularSale,
                 sold30, sold90, sold365, sold730,
+                regularSold30, regularSold90, regularSold365, regularSold730,
+                oneOffSold30, oneOffSold90, oneOffSold365, oneOffSold730,
                 revenue90, revenue365, gross90, gross365,
+                regularRevenue90, regularRevenue365,
+                oneOffRevenue90, oneOffRevenue365,
+                regularGross90, regularGross365,
+                oneOffGross90, oneOffGross365,
                 average90, average365, ratio(cogs365, average365),
                 ratio(gross365, average365), coverage, health
         );
@@ -130,7 +187,8 @@ public class FolioProductEconomicsCalculator {
 
     private static String health(ProductCard card, BigDecimal available,
                                  BigDecimal sold30, BigDecimal soldPrevious30,
-                                 BigDecimal sold90, BigDecimal gross90,
+                                 BigDecimal sold90, BigDecimal oneOffSold365,
+                                 BigDecimal gross90,
                                  BigDecimal coverage, LocalDate lastSale,
                                  LocalDate asOfDate) {
         if (card.physicalQuantity().signum() < 0) return "DATA_ISSUE";
@@ -139,6 +197,8 @@ public class FolioProductEconomicsCalculator {
         if (card.movementCount() == 0) return "NEW";
         if (available.signum() <= 0 && sold90.signum() > 0) return "STOCKOUT";
         if (gross90.signum() < 0) return "LOW_MARGIN";
+        if (card.physicalQuantity().signum() > 0 && sold90.signum() == 0
+                && oneOffSold365.signum() > 0) return "ONE_OFF_ONLY_STOCK";
         if (card.physicalQuantity().signum() > 0 && lastSale != null
                 && ChronoUnit.DAYS.between(lastSale, asOfDate) > 180) return "DEAD_STOCK";
         if (coverage != null && coverage.compareTo(new BigDecimal("180")) > 0)
@@ -159,6 +219,9 @@ public class FolioProductEconomicsCalculator {
                     "Demand exists, but available stock is zero"));
             case "LOW_MARGIN" -> result.add(new Alert(card.sku(), "LOW_MARGIN", "HIGH",
                     "Gross profit for the recent period is negative"));
+            case "ONE_OFF_ONLY_STOCK" -> result.add(new Alert(card.sku(),
+                    "ONE_OFF_ONLY_STOCK", "MEDIUM",
+                    "Stock remains, but recent demand consists only of one-off orders"));
             case "DEAD_STOCK" -> result.add(new Alert(card.sku(), "DEAD_STOCK", "MEDIUM",
                     "Stock exists, but the last sale is older than 180 days"));
             case "OVERSTOCK" -> result.add(new Alert(card.sku(), "OVERSTOCK", "MEDIUM",
@@ -236,9 +299,23 @@ public class FolioProductEconomicsCalculator {
 
     private enum MetricValue {
         SALES_QUANTITY { BigDecimal value(MonthlyMetric m) { return m.salesQuantity(); } },
+        REGULAR_SALES_QUANTITY {
+            BigDecimal value(MonthlyMetric m) { return m.regularSalesQuantity(); }
+        },
+        ONE_OFF_SALES_QUANTITY {
+            BigDecimal value(MonthlyMetric m) { return m.oneOffSalesQuantity(); }
+        },
         REVENUE { BigDecimal value(MonthlyMetric m) { return m.salesRevenue(); } },
+        REGULAR_REVENUE { BigDecimal value(MonthlyMetric m) { return m.regularSalesRevenue(); } },
+        ONE_OFF_REVENUE { BigDecimal value(MonthlyMetric m) { return m.oneOffSalesRevenue(); } },
         COGS { BigDecimal value(MonthlyMetric m) { return m.salesCogs(); } },
-        GROSS_PROFIT { BigDecimal value(MonthlyMetric m) { return m.grossProfit(); } };
+        GROSS_PROFIT { BigDecimal value(MonthlyMetric m) { return m.grossProfit(); } },
+        REGULAR_GROSS_PROFIT {
+            BigDecimal value(MonthlyMetric m) { return m.regularGrossProfit(); }
+        },
+        ONE_OFF_GROSS_PROFIT {
+            BigDecimal value(MonthlyMetric m) { return m.oneOffGrossProfit(); }
+        };
         abstract BigDecimal value(MonthlyMetric metric);
     }
 
@@ -253,19 +330,33 @@ public class FolioProductEconomicsCalculator {
             BigDecimal receiptQuantity, BigDecimal receiptCost,
             BigDecimal salesQuantity, BigDecimal salesRevenue,
             BigDecimal salesCogs, BigDecimal grossProfit,
+            BigDecimal regularSalesQuantity, BigDecimal regularSalesRevenue,
+            BigDecimal regularSalesCogs, BigDecimal regularGrossProfit,
+            BigDecimal oneOffSalesQuantity, BigDecimal oneOffSalesRevenue,
+            BigDecimal oneOffSalesCogs, BigDecimal oneOffGrossProfit,
             BigDecimal returnQuantity, BigDecimal returnRevenue,
             BigDecimal averageInventoryValue, BigDecimal inventoryTurns,
             BigDecimal gmroi, BigDecimal sellThroughPercent) { }
 
     public record CurrentMetric(
-            String sku, String productName, BigDecimal physicalQuantity,
+            String sku, String productName, String currentSupplier, String supplierState,
+            BigDecimal physicalQuantity,
             BigDecimal reservedQuantity, BigDecimal availableQuantity,
             BigDecimal accountingPrice, BigDecimal inventoryValue,
             LocalDate lastReceiptDate, LocalDate lastSaleDate,
+            LocalDate lastRegularSaleDate,
             BigDecimal soldUnits30d, BigDecimal soldUnits90d,
             BigDecimal soldUnits365d, BigDecimal soldUnits730d,
+            BigDecimal regularSoldUnits30d, BigDecimal regularSoldUnits90d,
+            BigDecimal regularSoldUnits365d, BigDecimal regularSoldUnits730d,
+            BigDecimal oneOffSoldUnits30d, BigDecimal oneOffSoldUnits90d,
+            BigDecimal oneOffSoldUnits365d, BigDecimal oneOffSoldUnits730d,
             BigDecimal revenue90d, BigDecimal revenue365d,
             BigDecimal grossProfit90d, BigDecimal grossProfit365d,
+            BigDecimal regularRevenue90d, BigDecimal regularRevenue365d,
+            BigDecimal oneOffRevenue90d, BigDecimal oneOffRevenue365d,
+            BigDecimal regularGrossProfit90d, BigDecimal regularGrossProfit365d,
+            BigDecimal oneOffGrossProfit90d, BigDecimal oneOffGrossProfit365d,
             BigDecimal averageInventory90d, BigDecimal averageInventory365d,
             BigDecimal inventoryTurns365d, BigDecimal gmroi365d,
             BigDecimal coverageDays, String healthStatus) { }

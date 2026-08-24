@@ -2,6 +2,8 @@ package org.example.proect.lavka.service.folio;
 
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.GrossMarginRow;
+import org.example.proect.lavka.dao.folio.FolioProfitReportDao.InventoryMovementRow;
+import org.example.proect.lavka.dao.folio.FolioProfitReportDao.InventoryOpeningRow;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.PaymentRow;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse;
 import org.example.proect.lavka.property.FolioProfitReportProperties;
@@ -14,8 +16,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
@@ -49,9 +53,22 @@ class FolioProfitReportServiceTest {
                 gross(1, "Я", false, true, "99"),
                 gross(5, "", true, true, "88")
         ));
+        when(dao.findWarehouseNames(any())).thenReturn(Map.of(
+                1, "Киев 1", 7, "Киев 7", 12, "Киев 12", 5, "Одесса"));
+        when(dao.findInventoryOpenings(any())).thenReturn(List.of(
+                new InventoryOpeningRow(1, "A", new BigDecimal("10"), new BigDecimal("5")),
+                new InventoryOpeningRow(5, "B", new BigDecimal("20"), new BigDecimal("4"))
+        ));
+        when(dao.findInventoryMovements(any(), any(), any())).thenReturn(List.of(
+                new InventoryMovementRow(1, "A", new BigDecimal("2"), new BigDecimal("12"),
+                        new BigDecimal("3"), new BigDecimal("18")),
+                new InventoryMovementRow(5, "B", BigDecimal.ZERO, BigDecimal.ZERO,
+                        new BigDecimal("-5"), new BigDecimal("-20"))
+        ));
 
         FolioProfitReportResponse report = service.calculate(new FolioProfitReportService.Request(
-                "2026-07", null, null, new BigDecimal("1000"), new BigDecimal("200"), BigDecimal.ZERO), true);
+                "2026-07", null, null, new BigDecimal("1000"), new BigDecimal("200"), BigDecimal.ZERO,
+                null, null), true);
 
         assertThat(city(report, "KYIV").baseGrossProfit()).isEqualByComparingTo("264551.50");
         assertThat(city(report, "KYIV").operatingExpenses()).isEqualByComparingTo("78496.96");
@@ -68,6 +85,13 @@ class FolioProfitReportServiceTest {
         });
         assertThat(report.documents()).hasSize(5);
         assertThat(report.documents().toString()).doesNotContain("бухгалтерские услуги");
+        assertThat(inventory(report, "KYIV").openingAccountingValue()).isEqualByComparingTo("62.00");
+        assertThat(inventory(report, "KYIV").closingAccountingValue()).isEqualByComparingTo("68.00");
+        assertThat(inventory(report, "KYIV").accountingValueChange()).isEqualByComparingTo("6.00");
+        assertThat(inventory(report, "ODESA").openingAccountingValue()).isEqualByComparingTo("80.00");
+        assertThat(inventory(report, "ODESA").closingAccountingValue()).isEqualByComparingTo("60.00");
+        assertThat(inventory(report, "ODESA").accountingValueChange()).isEqualByComparingTo("-20.00");
+        assertThat(report.complete()).isTrue();
     }
 
     @Test
@@ -79,9 +103,11 @@ class FolioProfitReportServiceTest {
                         "АРЕНДАКИ", null, "Августовский документ", null, "отнести на 2026 07")
         ));
         when(dao.findGrossMargins(any(), any())).thenReturn(List.of());
+        stubEmptyInventory();
 
         FolioProfitReportResponse report = service.calculate(new FolioProfitReportService.Request(
-                "2026-07", null, null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO), true);
+                "2026-07", null, null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                null, null), true);
 
         assertThat(report.controls().selectedDocumentCount()).isEqualTo(1);
         assertThat(report.documents()).extracting(FolioProfitReportResponse.DocumentLine::paymentId)
@@ -89,8 +115,31 @@ class FolioProfitReportServiceTest {
         assertThat(city(report, "KYIV").operatingExpenses()).isEqualByComparingTo("200.00");
     }
 
+    @Test
+    void rejectsWarehouseAssignedToBothCities() {
+        assertThatThrownBy(() -> service.calculate(new FolioProfitReportService.Request(
+                "2026-07", null, null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                List.of(1, 5), List.of(5)), false))
+                .isInstanceOf(FolioAccountValidationException.class)
+                .extracting(error -> ((FolioAccountValidationException) error).getCode())
+                .isEqualTo("STOCK_WAREHOUSES_OVERLAP");
+    }
+
     private static FolioProfitReportResponse.CityResult city(FolioProfitReportResponse report, String city) {
         return report.cities().stream().filter(row -> city.equals(row.city())).findFirst().orElseThrow();
+    }
+
+    private static FolioProfitReportResponse.InventoryResult inventory(
+            FolioProfitReportResponse report,
+            String city) {
+        return report.inventory().stream().filter(row -> city.equals(row.city())).findFirst().orElseThrow();
+    }
+
+    private void stubEmptyInventory() {
+        when(dao.findWarehouseNames(any())).thenReturn(Map.of(
+                1, "Киев 1", 7, "Киев 7", 12, "Киев 12", 5, "Одесса"));
+        when(dao.findInventoryOpenings(any())).thenReturn(List.of());
+        when(dao.findInventoryMovements(any(), any(), any())).thenReturn(List.of());
     }
 
     private static PaymentRow payment(

@@ -9,7 +9,10 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Repository
 public class FolioProfitReportDao {
@@ -65,6 +68,106 @@ public class FolioProfitReportDao {
                 Timestamp.valueOf(monthStart.atStartOfDay()),
                 Timestamp.valueOf(nextMonthStart.atStartOfDay()),
                 "Р");
+    }
+
+    public Map<Integer, String> findWarehouseNames(List<Integer> warehouseIds) {
+        if (warehouseIds.isEmpty()) {
+            return Map.of();
+        }
+        String sql = """
+                SELECT ID_SCLAD, NAME_SCLAD
+                  FROM dbo.SCLAD_R WITH (NOLOCK)
+                 WHERE ID_SCLAD IN (%s)
+                 ORDER BY ID_SCLAD
+                """.formatted(placeholders(warehouseIds.size()));
+        Map<Integer, String> result = new LinkedHashMap<>();
+        jdbc.query(sql, (org.springframework.jdbc.core.RowCallbackHandler) rs ->
+                result.put(rs.getInt("ID_SCLAD"), trim(rs.getString("NAME_SCLAD"))),
+                warehouseIds.toArray());
+        return result;
+    }
+
+    public List<InventoryOpeningRow> findInventoryOpenings(List<Integer> warehouseIds) {
+        if (warehouseIds.isEmpty()) {
+            return List.of();
+        }
+        String sql = """
+                SELECT a.ID_SCLAD, a.COD_ARTIC, a.NACH_KOLCH, a.UCHET_0_C
+                  FROM dbo.SCL_ARTC a WITH (NOLOCK)
+                 WHERE a.ID_SCLAD IN (%s)
+                """.formatted(placeholders(warehouseIds.size()));
+        return jdbc.query(sql, (rs, rowNum) -> new InventoryOpeningRow(
+                rs.getInt("ID_SCLAD"),
+                trim(rs.getString("COD_ARTIC")),
+                decimal(rs, "NACH_KOLCH"),
+                decimal(rs, "UCHET_0_C")
+        ), warehouseIds.toArray());
+    }
+
+    public List<InventoryMovementRow> findInventoryMovements(
+            List<Integer> warehouseIds,
+            LocalDate monthStart,
+            LocalDate nextMonthStart) {
+        if (warehouseIds.isEmpty()) {
+            return List.of();
+        }
+        String sql = """
+                SELECT m.ID_SCLAD,
+                       m.NAME_PREDM,
+                       SUM(CASE WHEN m.DATE_PREDM < ?
+                                THEN CASE WHEN m.TYPDOCM_PR = ?
+                                          THEN ISNULL(m.KOLC_PREDM, 0)
+                                          ELSE -ISNULL(m.KOLC_PREDM, 0) END
+                                ELSE 0 END) AS OPENING_QUANTITY_DELTA,
+                       SUM(CASE WHEN m.DATE_PREDM < ?
+                                THEN CASE WHEN m.TYPDOCM_PR = ?
+                                          THEN ISNULL(m.SUM_UCHET, 0)
+                                          ELSE -ISNULL(m.SUM_UCHET, 0) END
+                                ELSE 0 END) AS OPENING_VALUE_DELTA,
+                       SUM(CASE WHEN m.DATE_PREDM < ?
+                                THEN CASE WHEN m.TYPDOCM_PR = ?
+                                          THEN ISNULL(m.KOLC_PREDM, 0)
+                                          ELSE -ISNULL(m.KOLC_PREDM, 0) END
+                                ELSE 0 END) AS CLOSING_QUANTITY_DELTA,
+                       SUM(CASE WHEN m.DATE_PREDM < ?
+                                THEN CASE WHEN m.TYPDOCM_PR = ?
+                                          THEN ISNULL(m.SUM_UCHET, 0)
+                                          ELSE -ISNULL(m.SUM_UCHET, 0) END
+                                ELSE 0 END) AS CLOSING_VALUE_DELTA
+                  FROM dbo.SCL_MOVE m WITH (NOLOCK)
+                 WHERE m.STND_UCHET = 1
+                   AND m.DATE_PREDM < ?
+                   AND m.TYPDOCM_PR IN (?, ?)
+                   AND m.ID_SCLAD IN (%s)
+                 GROUP BY m.ID_SCLAD, m.NAME_PREDM
+                """.formatted(placeholders(warehouseIds.size()));
+        List<Object> args = new ArrayList<>();
+        Timestamp start = Timestamp.valueOf(monthStart.atStartOfDay());
+        Timestamp end = Timestamp.valueOf(nextMonthStart.atStartOfDay());
+        args.add(start);
+        args.add("П");
+        args.add(start);
+        args.add("П");
+        args.add(end);
+        args.add("П");
+        args.add(end);
+        args.add("П");
+        args.add(end);
+        args.add("П");
+        args.add("Р");
+        args.addAll(warehouseIds);
+        return jdbc.query(sql, (rs, rowNum) -> new InventoryMovementRow(
+                rs.getInt("ID_SCLAD"),
+                trim(rs.getString("NAME_PREDM")),
+                decimal(rs, "OPENING_QUANTITY_DELTA"),
+                decimal(rs, "OPENING_VALUE_DELTA"),
+                decimal(rs, "CLOSING_QUANTITY_DELTA"),
+                decimal(rs, "CLOSING_VALUE_DELTA")
+        ), args.toArray());
+    }
+
+    private static String placeholders(int count) {
+        return String.join(",", java.util.Collections.nCopies(count, "?"));
     }
 
     private static PaymentRow mapPayment(ResultSet rs) throws SQLException {
@@ -130,6 +233,24 @@ public class FolioProfitReportDao {
             boolean accounted,
             int lineCount,
             BigDecimal grossMargin
+    ) {
+    }
+
+    public record InventoryOpeningRow(
+            int warehouseId,
+            String sku,
+            BigDecimal initialQuantity,
+            BigDecimal initialAccountingPrice
+    ) {
+    }
+
+    public record InventoryMovementRow(
+            int warehouseId,
+            String sku,
+            BigDecimal openingQuantityDelta,
+            BigDecimal openingAccountingValueDelta,
+            BigDecimal closingQuantityDelta,
+            BigDecimal closingAccountingValueDelta
     ) {
     }
 }

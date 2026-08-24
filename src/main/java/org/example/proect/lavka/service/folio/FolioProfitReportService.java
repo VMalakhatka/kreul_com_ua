@@ -2,6 +2,8 @@ package org.example.proect.lavka.service.folio;
 
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.GrossMarginRow;
+import org.example.proect.lavka.dao.folio.FolioProfitReportDao.InventoryMovementRow;
+import org.example.proect.lavka.dao.folio.FolioProfitReportDao.InventoryOpeningRow;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.PaymentRow;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.CityResult;
@@ -9,7 +11,9 @@ import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.Controls;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.DocumentLine;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.ExpenseSummary;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.Inputs;
+import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.InventoryResult;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.Warning;
+import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.WarehouseInventoryResult;
 import org.example.proect.lavka.property.FolioProfitReportProperties;
 import org.example.proect.lavka.service.folio.FolioProfitClassifier.Category;
 import org.example.proect.lavka.service.folio.FolioProfitClassifier.City;
@@ -39,11 +43,13 @@ import java.util.regex.Pattern;
 @Service
 public class FolioProfitReportService {
 
-    private static final String RULE_VERSION = "2026-08-18.1";
+    private static final String RULE_VERSION = "2026-08-18.2";
     private static final String REPORT_CURRENCY = "UAH";
     private static final Pattern EXPLICIT_PERIOD = Pattern.compile("(?<!\\d)(\\d{4})\\s+(0[1-9]|1[0-2])(?!\\d)");
     private static final DateTimeFormatter FOLIO_PERIOD = DateTimeFormatter.ofPattern("yyyy MM");
     private static final ZoneId REPORT_ZONE = ZoneId.of("Europe/Kyiv");
+    private static final BigDecimal QUANTITY_EPSILON = new BigDecimal("0.000001");
+    private static final int MAX_STOCK_WAREHOUSES_PER_CITY = 50;
 
     private final FolioProfitReportDao dao;
     private final FolioProfitClassifier classifier;
@@ -73,10 +79,18 @@ public class FolioProfitReportService {
         BigDecimal mkReturn = optionalNonNegative(request.odesaMasterClassReturn(), "MASTER_CLASS_RETURN_INVALID");
         BigDecimal additionalSalary = optionalNonNegative(
                 request.odesaAdditionalSalary(), "ODESA_ADDITIONAL_SALARY_INVALID");
+        List<Integer> kyivStockWarehouseIds = warehouseIdsOrDefault(
+                request.kyivStockWarehouseIds(), properties.getKyivWarehouseIds(), "kyivStockWarehouseIds");
+        List<Integer> odesaStockWarehouseIds = warehouseIdsOrDefault(
+                request.odesaStockWarehouseIds(), List.of(properties.getOdesaWarehouseId()),
+                "odesaStockWarehouseIds");
+        assertWarehousesDoNotOverlap(kyivStockWarehouseIds, odesaStockWarehouseIds);
 
         List<Warning> warnings = new ArrayList<>();
         List<ResolvedPayment> resolved = resolvePayments(month, rubRate, warnings);
         List<GrossMarginRow> grossRows = dao.findGrossMargins(month.atDay(1), month.plusMonths(1).atDay(1));
+        InventoryComputation inventory = calculateInventory(
+                month, kyivStockWarehouseIds, odesaStockWarehouseIds);
 
         Map<SummaryKey, SummaryAccumulator> summaries = new LinkedHashMap<>();
         Map<String, BigDecimal> taxPools = new LinkedHashMap<>();
@@ -139,6 +153,19 @@ public class FolioProfitReportService {
         warnings.add(warning("NOLOCK_READ",
                 "Отчёт не блокирует работу ФОЛИО; при одновременном проведении документов показания могут кратковременно изменяться",
                 Map.of()));
+        warnings.add(warning("INVENTORY_CHANGE_INFORMATIONAL",
+                "Изменение учётной стоимости склада показано отдельно и не прибавляется к прибыли автоматически",
+                Map.of()));
+        if (inventory.negativeClosingPositionCount() > 0) {
+            warnings.add(warning("NEGATIVE_CLOSING_INVENTORY",
+                    "На конец месяца есть складские позиции с отрицательным расчётным остатком",
+                    Map.of("count", inventory.negativeClosingPositionCount())));
+        }
+        if (inventory.zeroValueClosingPositionCount() > 0) {
+            warnings.add(warning("ZERO_VALUE_CLOSING_INVENTORY",
+                    "На конец месяца есть ненулевые складские позиции с нулевой учётной стоимостью",
+                    Map.of("count", inventory.zeroValueClosingPositionCount())));
+        }
 
         List<ExpenseSummary> expenseRows = summaries.entrySet().stream()
                 .map(entry -> toSummary(entry.getKey(), entry.getValue()))
@@ -164,7 +191,9 @@ public class FolioProfitReportService {
         boolean complete = unclassifiedCount == 0
                 && request.odesaMasterClassIncome() != null
                 && request.odesaMasterClassReturn() != null
-                && request.odesaAdditionalSalary() != null;
+                && request.odesaAdditionalSalary() != null
+                && inventory.negativeClosingPositionCount() == 0
+                && inventory.zeroValueClosingPositionCount() == 0;
 
         return new FolioProfitReportResponse(
                 true,
@@ -175,8 +204,10 @@ public class FolioProfitReportService {
                 new Inputs(taxShare, "REGISTERED_EMPLOYEE_SHARE", rubRate,
                         request.odesaMasterClassIncome(), request.odesaMasterClassReturn(),
                         request.odesaAdditionalSalary(),
-                        List.copyOf(properties.getKyivWarehouseIds()), List.of(properties.getOdesaWarehouseId())),
+                        List.copyOf(properties.getKyivWarehouseIds()), List.of(properties.getOdesaWarehouseId()),
+                        kyivStockWarehouseIds, odesaStockWarehouseIds),
                 cities,
+                inventory.results(),
                 expenseRows,
                 documents,
                 new Controls(resolved.size(), money(selectedAmount), operatingTotal, money(capitalizedTotal),
@@ -184,6 +215,144 @@ public class FolioProfitReportService {
                         Map.copyOf(taxPools)),
                 List.copyOf(warnings)
         );
+    }
+
+    private InventoryComputation calculateInventory(
+            YearMonth month,
+            List<Integer> kyivWarehouseIds,
+            List<Integer> odesaWarehouseIds) {
+        LinkedHashSet<Integer> selected = new LinkedHashSet<>(kyivWarehouseIds);
+        selected.addAll(odesaWarehouseIds);
+        List<Integer> allWarehouseIds = List.copyOf(selected);
+        Map<Integer, String> warehouseNames = dao.findWarehouseNames(allWarehouseIds);
+        List<Integer> missing = allWarehouseIds.stream()
+                .filter(id -> !warehouseNames.containsKey(id))
+                .toList();
+        if (!missing.isEmpty()) {
+            throw validation("STOCK_WAREHOUSE_NOT_FOUND", "Не найдены склады ФОЛИО: " + missing);
+        }
+
+        Map<WarehouseSkuKey, InventoryPosition> positions = new LinkedHashMap<>();
+        for (InventoryOpeningRow row : dao.findInventoryOpenings(allWarehouseIds)) {
+            InventoryPosition position = positions.computeIfAbsent(
+                    new WarehouseSkuKey(row.warehouseId(), safe(row.sku())), ignored -> new InventoryPosition());
+            BigDecimal initialValue = row.initialQuantity().multiply(row.initialAccountingPrice());
+            position.openingQuantity = position.openingQuantity.add(row.initialQuantity());
+            position.closingQuantity = position.closingQuantity.add(row.initialQuantity());
+            position.openingValue = position.openingValue.add(initialValue);
+            position.closingValue = position.closingValue.add(initialValue);
+        }
+        for (InventoryMovementRow row : dao.findInventoryMovements(
+                allWarehouseIds, month.atDay(1), month.plusMonths(1).atDay(1))) {
+            InventoryPosition position = positions.computeIfAbsent(
+                    new WarehouseSkuKey(row.warehouseId(), safe(row.sku())), ignored -> new InventoryPosition());
+            position.openingQuantity = position.openingQuantity.add(row.openingQuantityDelta());
+            position.closingQuantity = position.closingQuantity.add(row.closingQuantityDelta());
+            position.openingValue = position.openingValue.add(row.openingAccountingValueDelta());
+            position.closingValue = position.closingValue.add(row.closingAccountingValueDelta());
+        }
+
+        InventoryResult kyiv = inventoryResult(
+                City.KYIV, kyivWarehouseIds, warehouseNames, positions);
+        InventoryResult odesa = inventoryResult(
+                City.ODESA, odesaWarehouseIds, warehouseNames, positions);
+        return new InventoryComputation(
+                List.of(kyiv, odesa),
+                kyiv.negativeClosingPositionCount() + odesa.negativeClosingPositionCount(),
+                kyiv.zeroValueClosingPositionCount() + odesa.zeroValueClosingPositionCount());
+    }
+
+    private static InventoryResult inventoryResult(
+            City city,
+            List<Integer> warehouseIds,
+            Map<Integer, String> warehouseNames,
+            Map<WarehouseSkuKey, InventoryPosition> positions) {
+        List<WarehouseInventoryResult> warehouses = warehouseIds.stream()
+                .map(id -> warehouseInventory(id, warehouseNames.get(id), positions))
+                .toList();
+        BigDecimal opening = warehouses.stream()
+                .map(WarehouseInventoryResult::openingAccountingValue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal closing = warehouses.stream()
+                .map(WarehouseInventoryResult::closingAccountingValue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return new InventoryResult(
+                city.name(), warehouseIds, money(opening), money(closing), money(closing.subtract(opening)),
+                warehouses.stream().mapToInt(WarehouseInventoryResult::openingPositionCount).sum(),
+                warehouses.stream().mapToInt(WarehouseInventoryResult::closingPositionCount).sum(),
+                warehouses.stream().mapToInt(WarehouseInventoryResult::negativeClosingPositionCount).sum(),
+                warehouses.stream().mapToInt(WarehouseInventoryResult::zeroValueClosingPositionCount).sum(),
+                warehouses);
+    }
+
+    private static WarehouseInventoryResult warehouseInventory(
+            int warehouseId,
+            String warehouseName,
+            Map<WarehouseSkuKey, InventoryPosition> positions) {
+        BigDecimal opening = BigDecimal.ZERO;
+        BigDecimal closing = BigDecimal.ZERO;
+        int openingPositions = 0;
+        int closingPositions = 0;
+        int negativeClosingPositions = 0;
+        int zeroValueClosingPositions = 0;
+        for (Map.Entry<WarehouseSkuKey, InventoryPosition> entry : positions.entrySet()) {
+            if (entry.getKey().warehouseId() != warehouseId) {
+                continue;
+            }
+            InventoryPosition position = entry.getValue();
+            opening = opening.add(position.openingValue);
+            closing = closing.add(position.closingValue);
+            if (nonZeroQuantity(position.openingQuantity)) {
+                openingPositions++;
+            }
+            if (nonZeroQuantity(position.closingQuantity)) {
+                closingPositions++;
+                if (position.closingQuantity.compareTo(QUANTITY_EPSILON.negate()) < 0) {
+                    negativeClosingPositions++;
+                }
+                if (position.closingValue.abs().compareTo(new BigDecimal("0.005")) < 0) {
+                    zeroValueClosingPositions++;
+                }
+            }
+        }
+        return new WarehouseInventoryResult(
+                warehouseId, warehouseName, money(opening), money(closing), money(closing.subtract(opening)),
+                openingPositions, closingPositions, negativeClosingPositions, zeroValueClosingPositions);
+    }
+
+    private static boolean nonZeroQuantity(BigDecimal value) {
+        return value.abs().compareTo(QUANTITY_EPSILON) > 0;
+    }
+
+    private static List<Integer> warehouseIdsOrDefault(
+            List<Integer> requested,
+            List<Integer> fallback,
+            String field) {
+        List<Integer> source = requested == null ? fallback : requested;
+        if (source == null || source.isEmpty()) {
+            throw validation("STOCK_WAREHOUSES_REQUIRED", field + " не может быть пустым");
+        }
+        if (source.size() > MAX_STOCK_WAREHOUSES_PER_CITY) {
+            throw validation("TOO_MANY_STOCK_WAREHOUSES",
+                    field + " содержит больше " + MAX_STOCK_WAREHOUSES_PER_CITY + " складов");
+        }
+        LinkedHashSet<Integer> normalized = new LinkedHashSet<>();
+        for (Integer warehouseId : source) {
+            if (warehouseId == null || warehouseId <= 0) {
+                throw validation("STOCK_WAREHOUSE_INVALID", field + " содержит некорректный номер склада");
+            }
+            normalized.add(warehouseId);
+        }
+        return List.copyOf(normalized);
+    }
+
+    private static void assertWarehousesDoNotOverlap(List<Integer> kyiv, List<Integer> odesa) {
+        Set<Integer> overlap = new LinkedHashSet<>(kyiv);
+        overlap.retainAll(odesa);
+        if (!overlap.isEmpty()) {
+            throw validation("STOCK_WAREHOUSES_OVERLAP",
+                    "Один склад нельзя одновременно отнести к Киеву и Одессе: " + overlap);
+        }
     }
 
     private List<ResolvedPayment> resolvePayments(YearMonth target, BigDecimal rubRate, List<Warning> warnings) {
@@ -387,7 +556,9 @@ public class FolioProfitReportService {
             BigDecimal rubToUahRate,
             BigDecimal odesaMasterClassIncome,
             BigDecimal odesaMasterClassReturn,
-            BigDecimal odesaAdditionalSalary
+            BigDecimal odesaAdditionalSalary,
+            List<Integer> kyivStockWarehouseIds,
+            List<Integer> odesaStockWarehouseIds
     ) {
     }
 
@@ -398,6 +569,22 @@ public class FolioProfitReportService {
     }
 
     private record SummaryKey(City city, Category category, Treatment treatment) {
+    }
+
+    private record WarehouseSkuKey(int warehouseId, String sku) {
+    }
+
+    private record InventoryComputation(
+            List<InventoryResult> results,
+            int negativeClosingPositionCount,
+            int zeroValueClosingPositionCount) {
+    }
+
+    private static final class InventoryPosition {
+        private BigDecimal openingQuantity = BigDecimal.ZERO;
+        private BigDecimal closingQuantity = BigDecimal.ZERO;
+        private BigDecimal openingValue = BigDecimal.ZERO;
+        private BigDecimal closingValue = BigDecimal.ZERO;
     }
 
     private static final class SummaryAccumulator {

@@ -2,6 +2,8 @@ package org.example.proect.lavka.dao.folio;
 
 import org.example.proect.lavka.service.folio.FolioAccountingMode;
 import org.example.proect.lavka.service.folio.FolioAccountingModeUnsupportedException;
+import org.example.proect.lavka.service.folio.FolioProductMovementClassifier;
+import org.example.proect.lavka.service.folio.FolioProductMovementClassifier.Classification;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -15,6 +17,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -52,8 +55,9 @@ public class FolioProductSnapshotSourceDao {
                 warehouseId, cards, queryTimeoutSeconds);
         readPriceRuleFingerprints(warehouseId, cards, queryTimeoutSeconds);
         readOpeningDeltas(warehouseId, horizonStart, cards, queryTimeoutSeconds);
-        List<MonthlyActivity> monthly = readMonthlyActivity(
+        List<MovementFact> movements = readMovementFacts(
                 warehouseId, horizonStart, asOfDate.plusDays(1), queryTimeoutSeconds);
+        List<MonthlyActivity> monthly = aggregateMonthlyActivity(movements);
 
         List<ProductCard> products = cards.values().stream()
                 .map(MutableCard::finish)
@@ -70,6 +74,7 @@ public class FolioProductSnapshotSourceDao {
                 warehouse,
                 HexFormat.of().formatHex(warehouseDigest.digest()),
                 products,
+                movements,
                 monthly,
                 movementRows
         );
@@ -162,7 +167,8 @@ public class FolioProductSnapshotSourceDao {
         Map<String, MutableCard> result = new LinkedHashMap<>();
         jdbc.query(con -> {
             String sql = """
-                    SELECT a.COD_ARTIC, a.NAME_ARTIC, a.NACH_KOLCH, a.KON_KOLCH,
+                    SELECT a.COD_ARTIC, a.NAME_ARTIC, a.DOP2_ARTIC,
+                           a.NACH_KOLCH, a.KON_KOLCH,
                            a.REZ_KOLCH, a.KOL_SUM, a.UCHET_SUM, a.UCHET_CENA,
                            a.UCHET_0_C, a.UCHET_0_VL, a.TIP_TOVR, a.PRIZN_VALT,
                            a.FIX_NACEN, a.CENA_ARTIC, a.CENA_VALT, a.CENA_BZNAL,
@@ -189,6 +195,7 @@ public class FolioProductSnapshotSourceDao {
             }
             MutableCard card = new MutableCard(
                     warehouse, sku, trim(rs.getString("NAME_ARTIC")),
+                    trim(rs.getString("DOP2_ARTIC")),
                     decimal(rs, "NACH_KOLCH"), decimal(rs, "KON_KOLCH"),
                     decimal(rs, "REZ_KOLCH"), decimal(rs, "KOL_SUM"),
                     decimal(rs, "UCHET_SUM"), decimal(rs, "UCHET_CENA"),
@@ -335,76 +342,126 @@ public class FolioProductSnapshotSourceDao {
         });
     }
 
-    private List<MonthlyActivity> readMonthlyActivity(int warehouseId,
-                                                      LocalDate start,
-                                                      LocalDate endExclusive,
-                                                      int timeout) {
+    private List<MovementFact> readMovementFacts(int warehouseId,
+                                                  LocalDate start,
+                                                  LocalDate endExclusive,
+                                                  int timeout) {
         return jdbc.query(con -> {
             var ps = con.prepareStatement("""
-                    SELECT a.COD_ARTIC, YEAR(m.DATE_PREDM) AS YR, MONTH(m.DATE_PREDM) AS MN,
-                           SUM(CASE WHEN m.TYPDOCM_PR=? AND ISNULL(m.VOZVRAT_PR,0)=0
-                                    THEN ISNULL(m.KOLC_PREDM,0) ELSE 0 END) AS RECEIPT_QTY,
-                           SUM(CASE WHEN m.TYPDOCM_PR=? AND ISNULL(m.VOZVRAT_PR,0)=0
-                                    THEN ISNULL(m.SUM_UCHET,0) ELSE 0 END) AS RECEIPT_COST,
-                           SUM(CASE WHEN m.TYPDOCM_PR=? AND ISNULL(m.VOZVRAT_PR,0)=0
-                                         AND ISNULL(o.MY_ORGANIZ,'')<>?
-                                    THEN ISNULL(m.KOLC_PREDM,0) ELSE 0 END) AS SALES_QTY,
-                           SUM(CASE WHEN m.TYPDOCM_PR=? AND ISNULL(m.VOZVRAT_PR,0)=0
-                                         AND ISNULL(o.MY_ORGANIZ,'')<>?
-                                    THEN ISNULL(m.SUM_PREDM,0) ELSE 0 END) AS SALES_REVENUE,
-                           SUM(CASE WHEN m.TYPDOCM_PR=? AND ISNULL(m.VOZVRAT_PR,0)=0
-                                         AND ISNULL(o.MY_ORGANIZ,'')<>?
-                                    THEN ISNULL(m.SUM_UCHET,0) ELSE 0 END) AS SALES_COGS,
-                           SUM(CASE WHEN ISNULL(m.VOZVRAT_PR,0)=1
-                                    THEN ISNULL(m.KOLC_PREDM,0) ELSE 0 END) AS RETURN_QTY,
-                           SUM(CASE WHEN ISNULL(m.VOZVRAT_PR,0)=1
-                                    THEN ISNULL(m.SUM_PREDM,0) ELSE 0 END) AS RETURN_REVENUE,
-                           MAX(CASE WHEN m.TYPDOCM_PR=? THEN m.DATE_PREDM ELSE NULL END)
-                               AS LAST_RECEIPT,
-                           MAX(CASE WHEN m.TYPDOCM_PR=? AND ISNULL(m.VOZVRAT_PR,0)=0
-                                         AND ISNULL(o.MY_ORGANIZ,'')<>?
-                                    THEN m.DATE_PREDM ELSE NULL END) AS LAST_SALE,
-                           SUM(CASE m.TYPDOCM_PR WHEN ? THEN ISNULL(m.KOLC_PREDM,0)
-                                                WHEN ? THEN -ISNULL(m.KOLC_PREDM,0)
-                                                ELSE 0 END) AS NET_QTY,
-                           SUM(CASE m.TYPDOCM_PR WHEN ? THEN ISNULL(m.SUM_UCHET,0)
-                                                WHEN ? THEN -ISNULL(m.SUM_UCHET,0)
-                                                ELSE 0 END) AS NET_VALUE
+                    SELECT m.RECNO, m.UNICUM_NUM, m.NUMDOCM_PR, m.DATE_PREDM,
+                           m.NAME_PREDM, m.KOLC_PREDM, m.SUM_PREDM, m.SUM_UCHET,
+                           m.TYPDOCM_PR, n.TYPE_DOC,
+                           CASE WHEN ISNULL(n.VID_DOC,'')<>'' THEN n.VID_DOC
+                                ELSE m.VID_DOC END AS OPERATION_KIND,
+                           m.STND_UCHET, m.VOZVRAT_PR,
+                           CASE WHEN ISNULL(m.ORG_PREDM,'')<>'' THEN m.ORG_PREDM
+                                ELSE n.BRIEFORG END AS COUNTERPARTY_ID,
+                           o.NAME_USER AS COUNTERPARTY_NAME,
+                           CASE WHEN ISNULL(o.MY_ORGANIZ,'')<>'' THEN o.MY_ORGANIZ
+                                ELSE n.MY_ORGANIZ END AS ORGANIZATION_TYPE,
+                           a.DOP2_ARTIC AS CURRENT_SUPPLIER
                       FROM dbo.SCL_MOVE m WITH (HOLDLOCK)
-                      JOIN dbo.SCL_ARTC a WITH (HOLDLOCK)
+                      LEFT JOIN dbo.SCL_NAKL n WITH (HOLDLOCK)
+                        ON n.UNICUM_NUM=m.UNICUM_NUM
+                      LEFT JOIN dbo._PARTNER o WITH (HOLDLOCK)
+                        ON o.N_USER=CASE WHEN ISNULL(m.ORG_PREDM,'')<>''
+                                       THEN m.ORG_PREDM ELSE n.BRIEFORG END
+                      LEFT JOIN dbo.SCL_ARTC a WITH (HOLDLOCK)
                         ON a.ID_SCLAD=m.ID_SCLAD AND a.COD_ARTIC=m.NAME_PREDM
-                      LEFT JOIN dbo._PARTNER o WITH (HOLDLOCK) ON o.N_USER=m.ORG_PREDM
-                     WHERE m.ID_SCLAD=? AND m.STND_UCHET=1
-                       AND m.TYPDOCM_PR IN (?,?)
+                     WHERE m.ID_SCLAD=? AND m.TYPDOCM_PR IN (?,?,?)
                        AND m.DATE_PREDM>=? AND m.DATE_PREDM<?
-                     GROUP BY a.COD_ARTIC,YEAR(m.DATE_PREDM),MONTH(m.DATE_PREDM)
-                     ORDER BY a.COD_ARTIC,YEAR(m.DATE_PREDM),MONTH(m.DATE_PREDM)
+                     ORDER BY m.RECNO
                     """);
-            int p = 1;
             ps.setQueryTimeout(timeout);
-            ps.setString(p++, RECEIPT); ps.setString(p++, RECEIPT);
-            ps.setString(p++, EXPENSE); ps.setString(p++, "\u042f");
-            ps.setString(p++, EXPENSE); ps.setString(p++, "\u042f");
-            ps.setString(p++, EXPENSE); ps.setString(p++, "\u042f");
-            ps.setString(p++, RECEIPT);
-            ps.setString(p++, EXPENSE); ps.setString(p++, "\u042f");
-            ps.setString(p++, RECEIPT); ps.setString(p++, EXPENSE);
-            ps.setString(p++, RECEIPT); ps.setString(p++, EXPENSE);
-            ps.setInt(p++, warehouseId);
-            ps.setString(p++, RECEIPT); ps.setString(p++, EXPENSE);
-            ps.setTimestamp(p++, Timestamp.valueOf(start.atStartOfDay()));
-            ps.setTimestamp(p, Timestamp.valueOf(endExclusive.atStartOfDay()));
+            ps.setInt(1, warehouseId);
+            ps.setString(2, RECEIPT);
+            ps.setString(3, EXPENSE);
+            ps.setString(4, "\u0421");
+            ps.setTimestamp(5, Timestamp.valueOf(start.atStartOfDay()));
+            ps.setTimestamp(6, Timestamp.valueOf(endExclusive.atStartOfDay()));
             return ps;
-        }, (rs, n) -> new MonthlyActivity(
-                trim(rs.getString("COD_ARTIC")),
-                LocalDate.of(rs.getInt("YR"), rs.getInt("MN"), 1),
-                decimal(rs, "RECEIPT_QTY"), decimal(rs, "RECEIPT_COST"),
-                decimal(rs, "SALES_QTY"), decimal(rs, "SALES_REVENUE"),
-                decimal(rs, "SALES_COGS"), decimal(rs, "RETURN_QTY"),
-                decimal(rs, "RETURN_REVENUE"), date(rs, "LAST_RECEIPT"),
-                date(rs, "LAST_SALE"), decimal(rs, "NET_QTY"),
-                decimal(rs, "NET_VALUE")
-        ));
+        }, (rs, n) -> movementFact(rs));
+    }
+
+    private static MovementFact movementFact(ResultSet rs) throws SQLException {
+        String movementType = trim(rs.getString("TYPDOCM_PR"));
+        String documentType = trim(rs.getString("TYPE_DOC"));
+        String operationKind = trim(rs.getString("OPERATION_KIND"));
+        String organizationType = trim(rs.getString("ORGANIZATION_TYPE"));
+        boolean accounted = rs.getBoolean("STND_UCHET");
+        boolean returnFlag = rs.getBoolean("VOZVRAT_PR");
+        Classification classification = FolioProductMovementClassifier.classify(
+                movementType, documentType, operationKind, organizationType,
+                accounted, returnFlag);
+        BigDecimal quantity = decimal(rs, "KOLC_PREDM");
+        BigDecimal accountingValue = decimal(rs, "SUM_UCHET");
+        BigDecimal signedQuantity = signed(
+                quantity, classification.stockDirection(), classification.affectsStock());
+        BigDecimal signedAccountingValue = signed(
+                accountingValue, classification.stockDirection(), classification.affectsStock());
+        String currentSupplier = trim(rs.getString("CURRENT_SUPPLIER"));
+        return new MovementFact(
+                rs.getLong("RECNO"),
+                nullableLong(rs, "UNICUM_NUM"),
+                decimalOrNull(rs, "NUMDOCM_PR"),
+                date(rs, "DATE_PREDM"),
+                trim(rs.getString("NAME_PREDM")),
+                quantity,
+                signedQuantity,
+                decimal(rs, "SUM_PREDM"),
+                accountingValue,
+                signedAccountingValue,
+                movementType,
+                documentType,
+                operationKind,
+                accounted,
+                returnFlag,
+                classification.movementClass(),
+                classification.stockDirection(),
+                classification.demandMode(),
+                classification.paymentTerms(),
+                classification.customerSegment(),
+                trim(rs.getString("COUNTERPARTY_ID")),
+                trim(rs.getString("COUNTERPARTY_NAME")),
+                organizationType,
+                currentSupplier,
+                supplierState(currentSupplier),
+                classification.affectsStock(),
+                classification.affectsFinancialSales(),
+                classification.affectsPlanningDemand()
+        );
+    }
+
+    static List<MonthlyActivity> aggregateMonthlyActivity(List<MovementFact> movements) {
+        Map<MonthlyKey, MutableMonthlyActivity> rows = new LinkedHashMap<>();
+        for (MovementFact movement : movements) {
+            if (movement.sku() == null || movement.sku().isBlank()
+                    || movement.documentDate() == null) continue;
+            MonthlyKey key = new MonthlyKey(
+                    movement.sku(), movement.documentDate().withDayOfMonth(1));
+            rows.computeIfAbsent(key, ignored -> new MutableMonthlyActivity(key))
+                    .add(movement);
+        }
+        return rows.values().stream()
+                .map(MutableMonthlyActivity::finish)
+                .sorted(Comparator.comparing(MonthlyActivity::sku)
+                        .thenComparing(MonthlyActivity::monthStart))
+                .toList();
+    }
+
+    private static BigDecimal signed(BigDecimal value, String direction, boolean affectsStock) {
+        if (!affectsStock) return BigDecimal.ZERO;
+        if ("IN".equals(direction)) return value;
+        if ("OUT".equals(direction)) return value.negate();
+        return BigDecimal.ZERO;
+    }
+
+    private static String supplierState(String supplier) {
+        return supplier == null || supplier.isBlank() ? "MISSING" : "CURRENT";
+    }
+
+    private static LocalDate max(LocalDate first, LocalDate second) {
+        return first == null || second.isAfter(first) ? second : first;
     }
 
     private static void add(MessageDigest digest, String value) {
@@ -451,6 +508,7 @@ public class FolioProductSnapshotSourceDao {
 
     public record Capture(Warehouse warehouse, String warehouseDigest,
                           List<ProductCard> products,
+                          List<MovementFact> movements,
                           List<MonthlyActivity> monthlyActivity,
                           long movementRows) {
     }
@@ -461,6 +519,7 @@ public class FolioProductSnapshotSourceDao {
 
     public record ProductCard(
             String sku, String productName, String sourceDigest,
+            String currentSupplier, String supplierState,
             BigDecimal initialQuantity, BigDecimal physicalQuantity,
             BigDecimal reservedQuantity, BigDecimal accountingQuantity,
             BigDecimal accountingAmount, BigDecimal accountingPrice,
@@ -482,15 +541,53 @@ public class FolioProductSnapshotSourceDao {
             String sku, LocalDate monthStart,
             BigDecimal receiptQuantity, BigDecimal receiptCost,
             BigDecimal salesQuantity, BigDecimal salesRevenue, BigDecimal salesCogs,
+            BigDecimal regularSalesQuantity, BigDecimal regularSalesRevenue,
+            BigDecimal regularSalesCogs,
+            BigDecimal oneOffSalesQuantity, BigDecimal oneOffSalesRevenue,
+            BigDecimal oneOffSalesCogs,
             BigDecimal returnQuantity, BigDecimal returnRevenue,
             LocalDate lastReceiptDate, LocalDate lastSaleDate,
+            LocalDate lastRegularSaleDate,
             BigDecimal netQuantity, BigDecimal netValue) {
+    }
+
+    public record MovementFact(
+            long movementRecno,
+            Long documentId,
+            BigDecimal documentNumber,
+            LocalDate documentDate,
+            String sku,
+            BigDecimal quantity,
+            BigDecimal signedQuantity,
+            BigDecimal saleAmount,
+            BigDecimal accountingValue,
+            BigDecimal signedAccountingValue,
+            String movementType,
+            String documentType,
+            String operationKind,
+            boolean accounted,
+            boolean returnFlag,
+            String movementClass,
+            String stockDirection,
+            String demandMode,
+            String paymentTerms,
+            String customerSegment,
+            String counterpartyShortName,
+            String counterpartyName,
+            String organizationType,
+            String currentSupplier,
+            String supplierState,
+            boolean affectsStock,
+            boolean affectsFinancialSales,
+            boolean affectsPlanningDemand) {
     }
 
     private static final class MutableCard {
         private final List<String> digestValues = new ArrayList<>();
         private final String sku;
         private final String productName;
+        private final String currentSupplier;
+        private final String supplierState;
         private final BigDecimal initialQuantity;
         private final BigDecimal physicalQuantity;
         private final BigDecimal reservedQuantity;
@@ -516,6 +613,7 @@ public class FolioProductSnapshotSourceDao {
         private Long priceRuleChecksum;
 
         private MutableCard(Warehouse warehouse, String sku, String productName,
+                            String currentSupplier,
                             BigDecimal initialQuantity, BigDecimal physicalQuantity,
                             BigDecimal reservedQuantity, BigDecimal accountingQuantity,
                             BigDecimal accountingAmount, BigDecimal accountingPrice,
@@ -528,6 +626,8 @@ public class FolioProductSnapshotSourceDao {
                             boolean hiddenForAccounting) {
             this.sku = sku;
             this.productName = productName == null ? "" : productName;
+            this.currentSupplier = currentSupplier;
+            this.supplierState = supplierState(currentSupplier);
             this.initialQuantity = initialQuantity;
             this.physicalQuantity = physicalQuantity;
             this.reservedQuantity = reservedQuantity;
@@ -562,6 +662,7 @@ public class FolioProductSnapshotSourceDao {
             digestValues.forEach(value -> add(md, value));
             return new ProductCard(
                     sku, productName, HexFormat.of().formatHex(md.digest()),
+                    currentSupplier, supplierState,
                     initialQuantity, physicalQuantity, reservedQuantity,
                     accountingQuantity, accountingAmount, accountingPrice,
                     initialAccountingPrice, initialAccountingCurrencyPrice,
@@ -570,6 +671,76 @@ public class FolioProductSnapshotSourceDao {
                     movementCount, minRecno, maxRecno, firstMovementDate,
                     lastMovementDate, priceRuleCount, hiddenForAccounting
             );
+        }
+    }
+
+    private record MonthlyKey(String sku, LocalDate monthStart) {
+    }
+
+    private static final class MutableMonthlyActivity {
+        private final MonthlyKey key;
+        private BigDecimal receiptQuantity = BigDecimal.ZERO;
+        private BigDecimal receiptCost = BigDecimal.ZERO;
+        private BigDecimal salesQuantity = BigDecimal.ZERO;
+        private BigDecimal salesRevenue = BigDecimal.ZERO;
+        private BigDecimal salesCogs = BigDecimal.ZERO;
+        private BigDecimal regularSalesQuantity = BigDecimal.ZERO;
+        private BigDecimal regularSalesRevenue = BigDecimal.ZERO;
+        private BigDecimal regularSalesCogs = BigDecimal.ZERO;
+        private BigDecimal oneOffSalesQuantity = BigDecimal.ZERO;
+        private BigDecimal oneOffSalesRevenue = BigDecimal.ZERO;
+        private BigDecimal oneOffSalesCogs = BigDecimal.ZERO;
+        private BigDecimal returnQuantity = BigDecimal.ZERO;
+        private BigDecimal returnRevenue = BigDecimal.ZERO;
+        private BigDecimal netQuantity = BigDecimal.ZERO;
+        private BigDecimal netValue = BigDecimal.ZERO;
+        private LocalDate lastReceiptDate;
+        private LocalDate lastSaleDate;
+        private LocalDate lastRegularSaleDate;
+
+        private MutableMonthlyActivity(MonthlyKey key) {
+            this.key = key;
+        }
+
+        private void add(MovementFact movement) {
+            netQuantity = netQuantity.add(movement.signedQuantity());
+            netValue = netValue.add(movement.signedAccountingValue());
+            if (movement.affectsStock() && "IN".equals(movement.stockDirection())
+                    && !movement.returnFlag()) {
+                receiptQuantity = receiptQuantity.add(movement.quantity());
+                receiptCost = receiptCost.add(movement.accountingValue());
+                lastReceiptDate = max(lastReceiptDate, movement.documentDate());
+            }
+            if (movement.affectsFinancialSales()) {
+                salesQuantity = salesQuantity.add(movement.quantity());
+                salesRevenue = salesRevenue.add(movement.saleAmount());
+                salesCogs = salesCogs.add(movement.accountingValue());
+                lastSaleDate = max(lastSaleDate, movement.documentDate());
+                if (movement.affectsPlanningDemand()) {
+                    regularSalesQuantity = regularSalesQuantity.add(movement.quantity());
+                    regularSalesRevenue = regularSalesRevenue.add(movement.saleAmount());
+                    regularSalesCogs = regularSalesCogs.add(movement.accountingValue());
+                    lastRegularSaleDate = max(lastRegularSaleDate, movement.documentDate());
+                } else if ("ONE_OFF_ORDER".equals(movement.demandMode())) {
+                    oneOffSalesQuantity = oneOffSalesQuantity.add(movement.quantity());
+                    oneOffSalesRevenue = oneOffSalesRevenue.add(movement.saleAmount());
+                    oneOffSalesCogs = oneOffSalesCogs.add(movement.accountingValue());
+                }
+            }
+            if ("CUSTOMER_RETURN".equals(movement.movementClass()) && movement.accounted()) {
+                returnQuantity = returnQuantity.add(movement.quantity());
+                returnRevenue = returnRevenue.add(movement.saleAmount());
+            }
+        }
+
+        private MonthlyActivity finish() {
+            return new MonthlyActivity(
+                    key.sku(), key.monthStart(), receiptQuantity, receiptCost,
+                    salesQuantity, salesRevenue, salesCogs,
+                    regularSalesQuantity, regularSalesRevenue, regularSalesCogs,
+                    oneOffSalesQuantity, oneOffSalesRevenue, oneOffSalesCogs,
+                    returnQuantity, returnRevenue, lastReceiptDate, lastSaleDate,
+                    lastRegularSaleDate, netQuantity, netValue);
         }
     }
 }

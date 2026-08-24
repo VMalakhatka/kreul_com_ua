@@ -24,8 +24,11 @@ class FolioProductEconomicsCalculatorTest {
         MonthlyActivity activity = new MonthlyActivity(
                 "SKU-1", LocalDate.of(2026, 8, 1),
                 bd("20"), bd("200"), bd("5"), bd("100"), bd("50"),
+                bd("5"), bd("100"), bd("50"),
+                bd("0"), bd("0"), bd("0"),
                 bd("0"), bd("0"), LocalDate.of(2026, 8, 2),
-                LocalDate.of(2026, 8, 18), bd("15"), bd("150"));
+                LocalDate.of(2026, 8, 18), LocalDate.of(2026, 8, 18),
+                bd("15"), bd("150"));
 
         var result = calculator.calculate(capture(card, activity),
                 LocalDate.of(2026, 7, 1), asOf);
@@ -71,15 +74,40 @@ class FolioProductEconomicsCalculatorTest {
                 .containsExactly("DATA_ISSUE");
     }
 
+    @Test
+    void oneOffSaleStaysInFinancialsButDoesNotCreateCoverageOrLiquidity() {
+        LocalDate asOf = LocalDate.of(2026, 8, 19);
+        ProductCard card = card("ONE-OFF", bd("25"), BigDecimal.ZERO, bd("10"), 3);
+        MonthlyActivity activity = new MonthlyActivity(
+                "ONE-OFF", LocalDate.of(2026, 8, 1),
+                BigDecimal.ZERO, BigDecimal.ZERO,
+                bd("5"), bd("100"), bd("50"),
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                bd("5"), bd("100"), bd("50"),
+                BigDecimal.ZERO, BigDecimal.ZERO, null,
+                LocalDate.of(2026, 8, 18), null,
+                bd("-5"), bd("-50"));
+
+        var current = calculator.calculate(capture(card, activity),
+                LocalDate.of(2026, 7, 1), asOf).current().get(0);
+
+        assertThat(current.soldUnits90d()).isEqualByComparingTo("5");
+        assertThat(current.regularSoldUnits90d()).isZero();
+        assertThat(current.oneOffSoldUnits90d()).isEqualByComparingTo("5");
+        assertThat(current.coverageDays()).isNull();
+        assertThat(current.healthStatus()).isEqualTo("ONE_OFF_ONLY_STOCK");
+    }
+
     private static Capture capture(ProductCard card, MonthlyActivity... activity) {
         return new Capture(new Warehouse("Paint_Rus", 12, "Lab", bd("1000"), null),
-                "digest", List.of(card), List.of(activity), card.movementCount());
+                "digest", List.of(card), List.of(), List.of(activity), card.movementCount());
     }
 
     private static ProductCard card(String sku, BigDecimal physical,
                                     BigDecimal reserved, BigDecimal price,
                                     long movementCount) {
-        return new ProductCard(sku, sku, "digest", BigDecimal.ZERO, physical,
+        return new ProductCard(sku, sku, "digest", "Supplier", "CURRENT",
+                BigDecimal.ZERO, physical,
                 reserved, physical, physical.multiply(price), price,
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                 movementCount, null, null, null, null, 0, false);
