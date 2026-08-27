@@ -986,6 +986,9 @@ lavka.folio.accounting-prices.query-timeout-seconds=${LAVKA_FOLIO_ACCOUNTING_PRI
 lavka.folio.accounting-prices.native-full-timeout-seconds=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_TIMEOUT_SECONDS:900}
 lavka.folio.accounting-prices.max-reported-warnings=${LAVKA_FOLIO_ACCOUNTING_PRICE_MAX_REPORTED_WARNINGS:200}
 lavka.folio.accounting-prices.zone=${LAVKA_FOLIO_ACCOUNTING_PRICE_ZONE:Europe/Kyiv}
+lavka.folio.accounting-prices.diagnostics-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_DIAGNOSTICS_ENABLED:true}
+lavka.folio.accounting-prices.diagnostics-interval-ms=${LAVKA_FOLIO_ACCOUNTING_PRICE_DIAGNOSTICS_INTERVAL_MS:30000}
+lavka.folio.accounting-prices.diagnostics-stall-seconds=${LAVKA_FOLIO_ACCOUNTING_PRICE_DIAGNOSTICS_STALL_SECONDS:120}
 ```
 
 `api-enabled` открывает все endpoint модуля, включая preview и status. В текущей
@@ -1024,6 +1027,51 @@ Safe production-проход не изменяет `TIP_TOVR` и не созда
 
 `max-reported-warnings` ограничивает массив `warnings` в status, но полный счётчик
 остаётся в `warningCount`; признак усечения передаётся в `warningsTruncated`.
+
+## Диагностика длительного native-перерасчёта
+
+Во время `native-full` и `native-range` отдельный watchdog-поток каждые 30 секунд
+пишет строку `[folio.accounting-price.runtime]`. Watchdog не получает соединение
+с БД и не участвует в транзакции, поэтому продолжает работать, даже когда
+основной Spring scheduler или JDBC-пул ожидает ресурс.
+
+Строка содержит:
+
+- `job`, склад, preview/apply, точный `sku`, `phase` и `stage`;
+- возраст текущего этапа и всей задачи;
+- обработанные SKU, число вызовов процедуры и commit;
+- используемую/выделенную/максимальную Java heap, non-heap, число потоков;
+- накопленное число/время GC, загрузку процесса и системы;
+- состояние рабочего потока перерасчёта и занятость HTTP/Tomcat-потоков;
+- `active`, `idle`, `total`, `waiting` для Folio- и MariaDB-пулов.
+
+Если один этап не меняется 120 секунд, строка получает `event=stalled`, а один
+раз для этого этапа записываются `[folio.accounting-price.thread-dump]` для
+рабочего потока перерасчёта и HTTP-потоков. Наиболее важные этапы:
+
+| `stage` | Где находится выполнение |
+|---|---|
+| `MSSQL_TRANSACTION_ACQUIRE` | ожидает соединение/начало MSSQL-транзакции |
+| `MUTEX_ACQUIRE` | ожидает межпроцессную блокировку перерасчёта |
+| `FOLIO_PROCEDURE_CALL` | находится внутри `LAVKA_I_UCHET_TOVAR_SAFE`/jTDS |
+| `PROTECTED_POSTCHECK` | читает и сравнивает защищённые строки ФОЛИО |
+| `FINGERPRINT_CAPTURE` | строит контрольный fingerprint SKU |
+| `TRANSACTION_COMPLETION` | callback завершён, Spring выполняет commit/rollback |
+| `PROTECTED_BASELINE_CAPTURE/VERIFY` | снимает или проверяет baseline склада |
+
+Интерпретация:
+
+- растущая heap вместе с частыми долгими GC указывает на давление памяти;
+- `folioPool waiting>0` при `active=total` указывает на исчерпание Folio-пула;
+- стабильная память и `FOLIO_PROCEDURE_CALL` указывают на SQL/jTDS, блокировку
+  или долгую legacy-процедуру конкретного SKU;
+- `TRANSACTION_COMPLETION` указывает на ожидание commit/rollback;
+- множество занятых HTTP-потоков видно в thread dump и объясняет зависание
+  `/healthz` отдельно от SQL-процедуры.
+
+Для инцидента сохранить журнал с начала задачи до зависания. Успешные commit
+предыдущих SKU не откатываются перезапуском контейнера; неизвестный текущий
+исход нельзя автоматически продолжать без status/postcheck.
 
 ## Технические ограничения
 

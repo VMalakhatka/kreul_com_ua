@@ -1,9 +1,7 @@
 package org.example.proect.lavka.service.folio;
 
-import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.Capture;
 import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.MonthlyActivity;
 import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.ProductCard;
-import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.Warehouse;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -30,7 +28,7 @@ class FolioProductEconomicsCalculatorTest {
                 LocalDate.of(2026, 8, 18), LocalDate.of(2026, 8, 18),
                 bd("15"), bd("150"));
 
-        var result = calculator.calculate(capture(card, activity),
+        var result = calculator.calculate(List.of(card), List.of(activity),
                 LocalDate.of(2026, 7, 1), asOf);
 
         assertThat(result.monthly()).hasSize(1);
@@ -52,7 +50,7 @@ class FolioProductEconomicsCalculatorTest {
     void emptyNewCardIsNormalAndDoesNotCreateAnAlert() {
         ProductCard card = card("NEW-1", BigDecimal.ZERO, BigDecimal.ZERO,
                 BigDecimal.ZERO, 0);
-        var result = calculator.calculate(capture(card),
+        var result = calculator.calculate(List.of(card), List.of(),
                 LocalDate.of(2025, 9, 1), LocalDate.of(2026, 8, 19));
 
         assertThat(result.monthly()).isEmpty();
@@ -66,7 +64,7 @@ class FolioProductEconomicsCalculatorTest {
     void nonZeroStockWithZeroAccountingPriceAfterMovementsIsDataIssue() {
         ProductCard card = card("BROKEN-1", bd("3"), BigDecimal.ZERO,
                 BigDecimal.ZERO, 2);
-        var result = calculator.calculate(capture(card),
+        var result = calculator.calculate(List.of(card), List.of(),
                 LocalDate.of(2025, 9, 1), LocalDate.of(2026, 8, 19));
 
         assertThat(result.current().get(0).healthStatus()).isEqualTo("DATA_ISSUE");
@@ -88,7 +86,7 @@ class FolioProductEconomicsCalculatorTest {
                 LocalDate.of(2026, 8, 18), null,
                 bd("-5"), bd("-50"));
 
-        var current = calculator.calculate(capture(card, activity),
+        var current = calculator.calculate(List.of(card), List.of(activity),
                 LocalDate.of(2026, 7, 1), asOf).current().get(0);
 
         assertThat(current.soldUnits90d()).isEqualByComparingTo("5");
@@ -96,11 +94,6 @@ class FolioProductEconomicsCalculatorTest {
         assertThat(current.oneOffSoldUnits90d()).isEqualByComparingTo("5");
         assertThat(current.coverageDays()).isNull();
         assertThat(current.healthStatus()).isEqualTo("ONE_OFF_ONLY_STOCK");
-    }
-
-    private static Capture capture(ProductCard card, MonthlyActivity... activity) {
-        return new Capture(new Warehouse("Paint_Rus", 12, "Lab", bd("1000"), null),
-                "digest", List.of(card), List.of(), List.of(activity), card.movementCount());
     }
 
     private static ProductCard card(String sku, BigDecimal physical,

@@ -10,7 +10,7 @@ REMOTE_DIR=${REMOTE_DIR:-/home/vmalakhatka/kreul-api}
 TAR_NAME=${TAR_NAME:-kreul-api.tar.gz}
 EXTERNAL_HEALTH=${EXTERNAL_HEALTH:-https://api.kreul.com.ua/healthz}
 INTERNAL_HEALTH=${INTERNAL_HEALTH:-http://127.0.0.1:8080/healthz}
-JAVA_OPTS=${JAVA_OPTS:-"-XX:+UseSerialGC -Xms64m -Xmx256m -XX:ActiveProcessorCount=2 -XX:CICompilerCount=2 -Xss256k"}
+JAVA_OPTS=${JAVA_OPTS:-"-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -Xms64m -Xmx256m -XX:ActiveProcessorCount=2 -XX:CICompilerCount=2 -Xss256k"}
 
 # ===== Checks =====
 if [[ ! -f "$ENV_LOCAL_FILE" ]]; then

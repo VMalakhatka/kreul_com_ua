@@ -809,6 +809,10 @@ class FolioAccountingPriceServiceTest {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
         when(dao.findSkus(WAREHOUSE_ID)).thenReturn(List.of(CLEAN_SKU));
+        // The nextArt cursor belongs to the legacy global article order.  A
+        // selected-SKU run must protect the requested SKU itself, not infer a
+        // predecessor range from that cursor.
+        when(dao.findProcessedRangeEnd(WAREHOUSE_ID, null)).thenReturn("NOT_THE_SELECTED_SKU");
         when(dao.callNativeFullChunk(
                 eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
                 eq(CLEAN_SKU), eq(0), eq(0), eq(120)))
@@ -830,6 +834,7 @@ class FolioAccountingPriceServiceTest {
         assertThat(completed.totalUnits()).isEqualTo(1);
         assertThat(completed.processedSku()).isEqualTo(1);
         assertThat(completed.procedureTotalUnits()).isZero();
+        verify(dao, never()).findProcessedRangeEnd(anyInt(), any());
     }
 
     @Test

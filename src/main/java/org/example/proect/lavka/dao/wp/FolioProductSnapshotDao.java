@@ -56,6 +56,53 @@ public class FolioProductSnapshotDao {
                 """, scopeKey, ownerId);
     }
 
+    public boolean renewLease(String scopeKey, String ownerId, int leaseSeconds) {
+        return jdbc.update("""
+                UPDATE folio_product_snapshot_lock
+                   SET locked_until=DATE_ADD(NOW(3), INTERVAL ? SECOND),updated_at=NOW(3)
+                 WHERE scope_key=? AND owner_id=? AND locked_until>=NOW(3)
+                """, leaseSeconds, scopeKey, ownerId) == 1;
+    }
+
+    public void heartbeatGeneration(long generationId, LocalDateTime at) {
+        if (jdbc.update("""
+                UPDATE folio_product_snapshot_generation
+                   SET last_heartbeat_at=?
+                 WHERE id=? AND status='BUILDING'
+                """, ts(at), generationId) != 1) {
+            throw new IllegalStateException("Product snapshot generation is no longer BUILDING");
+        }
+    }
+
+    public int failAbandonedGenerations(String sourceDatabase, int warehouseId,
+                                        LocalDateTime at) {
+        return jdbc.update("""
+                UPDATE folio_product_snapshot_generation
+                   SET status='FAILED',completed_at=?,last_heartbeat_at=?,
+                       error_message='Snapshot process stopped before completion'
+                 WHERE source_database=? AND warehouse_id=? AND status='BUILDING'
+                """, ts(at), ts(at), sourceDatabase, warehouseId);
+    }
+
+    public void discardStagingForScope(String sourceDatabase, int warehouseId) {
+        jdbc.update("""
+                DELETE FROM folio_product_movement_fact_stage
+                 WHERE source_database=? AND warehouse_id=?
+                """, sourceDatabase, warehouseId);
+        jdbc.update("""
+                DELETE FROM folio_product_metric_monthly_stage
+                 WHERE source_database=? AND warehouse_id=?
+                """, sourceDatabase, warehouseId);
+        jdbc.update("""
+                DELETE FROM folio_product_metric_current_stage
+                 WHERE source_database=? AND warehouse_id=?
+                """, sourceDatabase, warehouseId);
+        jdbc.update("""
+                DELETE FROM folio_product_metric_alert_stage
+                 WHERE source_database=? AND warehouse_id=?
+                """, sourceDatabase, warehouseId);
+    }
+
     public long createGeneration(String sourceDatabase, int warehouseId,
                                  int horizonMonths, String trigger,
                                  LocalDateTime startedAt) {
@@ -152,26 +199,30 @@ public class FolioProductSnapshotDao {
                 DELETE FROM folio_product_movement_fact
                  WHERE source_database=? AND warehouse_id=?
                 """, publish.sourceDatabase(), publish.warehouseId());
-        saveMovements(publish.generationId(), publish.sourceDatabase(),
-                publish.warehouseId(), publish.calculatedAt(), publish.movements());
+        jdbc.update("""
+                INSERT INTO folio_product_movement_fact
+                SELECT * FROM folio_product_movement_fact_stage
+                 WHERE generation_id=?
+                """, publish.generationId());
         jdbc.update("""
                 DELETE FROM folio_product_metric_monthly
                  WHERE source_database=? AND warehouse_id=?
                 """, publish.sourceDatabase(), publish.warehouseId());
-        saveMonthly(publish.generationId(), publish.sourceDatabase(),
-                publish.warehouseId(), publish.calculatedAt(), publish.monthly());
-        saveCurrent(publish.generationId(), publish.sourceDatabase(),
-                publish.warehouseId(), publish.calculatedAt(), publish.current());
         jdbc.update("""
-                DELETE c FROM folio_product_metric_current c
-                LEFT JOIN folio_product_snapshot_item i
-                  ON i.source_database=c.source_database
-                 AND i.warehouse_id=c.warehouse_id AND i.sku=c.sku
-                 WHERE c.source_database=? AND c.warehouse_id=?
-                   AND (i.sku IS NULL OR i.present_in_folio=0)
+                INSERT INTO folio_product_metric_monthly
+                SELECT * FROM folio_product_metric_monthly_stage
+                 WHERE generation_id=?
+                """, publish.generationId());
+        jdbc.update("""
+                DELETE FROM folio_product_metric_current
+                 WHERE source_database=? AND warehouse_id=?
                 """, publish.sourceDatabase(), publish.warehouseId());
-        saveAlerts(publish.generationId(), publish.sourceDatabase(),
-                publish.warehouseId(), publish.calculatedAt(), publish.alerts());
+        jdbc.update("""
+                INSERT INTO folio_product_metric_current
+                SELECT * FROM folio_product_metric_current_stage
+                 WHERE generation_id=?
+                """, publish.generationId());
+        publishStagedAlerts(publish);
 
         int updated = jdbc.update("""
                 UPDATE folio_product_snapshot_generation
@@ -183,7 +234,8 @@ public class FolioProductSnapshotDao {
                  WHERE id=? AND status='BUILDING'
                 """, ts(publish.calculatedAt()), ts(publish.calculatedAt()),
                 publish.items().stream().filter(Item::present).count(),
-                publish.movementRows(), publish.movements().size(), publish.monthly().size(),
+                publish.movementRows(), publish.movementFactRows(),
+                publish.monthlyMetricRows(),
                 publish.unverified(), publish.dirty(), publish.created(),
                 publish.removed(), publish.warehouseDigest(), publish.generationId());
         if (updated != 1) throw new IllegalStateException("Product snapshot generation is not publishable");
@@ -192,6 +244,28 @@ public class FolioProductSnapshotDao {
                    SET status='SUPERSEDED'
                  WHERE source_database=? AND warehouse_id=? AND status='ACTIVE' AND id<>?
                 """, publish.sourceDatabase(), publish.warehouseId(), publish.generationId());
+        discardStaging(publish.generationId());
+    }
+
+    private void publishStagedAlerts(Publish publish) {
+        jdbc.update("""
+                UPDATE folio_product_metric_alert
+                   SET status='RESOLVED',resolved_at=?,last_seen_at=?,generation_id=?
+                 WHERE source_database=? AND warehouse_id=? AND status='ACTIVE'
+                """, ts(publish.calculatedAt()), ts(publish.calculatedAt()),
+                publish.generationId(), publish.sourceDatabase(), publish.warehouseId());
+        jdbc.update("""
+                INSERT INTO folio_product_metric_alert
+                    (source_database,warehouse_id,sku,alert_code,status,severity,
+                     first_seen_at,last_seen_at,resolved_at,details,generation_id)
+                SELECT source_database,warehouse_id,sku,alert_code,status,severity,
+                       first_seen_at,last_seen_at,resolved_at,details,generation_id
+                  FROM folio_product_metric_alert_stage
+                 WHERE generation_id=?
+                ON DUPLICATE KEY UPDATE status='ACTIVE',severity=VALUES(severity),
+                    last_seen_at=VALUES(last_seen_at),resolved_at=NULL,
+                    details=VALUES(details),generation_id=VALUES(generation_id)
+                """, publish.generationId());
     }
 
     private void saveItems(List<Item> rows) {
@@ -277,11 +351,17 @@ public class FolioProductSnapshotDao {
         });
     }
 
-    private void saveMovements(long generationId, String db, int warehouseId,
+    public void stageMovements(long generationId, String db, int warehouseId,
+                               LocalDateTime at, List<MovementFact> rows) {
+        saveMovements("folio_product_movement_fact_stage", generationId, db,
+                warehouseId, at, rows);
+    }
+
+    private void saveMovements(String table, long generationId, String db, int warehouseId,
                                LocalDateTime at, List<MovementFact> rows) {
         if (rows.isEmpty()) return;
         jdbc.batchUpdate("""
-                INSERT INTO folio_product_movement_fact
+                INSERT INTO %s
                     (source_database,warehouse_id,movement_recno,generation_id,
                      document_id,document_number,document_date,sku,quantity,signed_quantity,
                      sale_amount,accounting_value,signed_accounting_value,movement_type,
@@ -291,7 +371,7 @@ public class FolioProductSnapshotDao {
                      current_supplier,supplier_state,affects_stock,affects_financial_sales,
                      affects_planning_demand,captured_at)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """, rows, BATCH, (ps, row) -> {
+                """.formatted(table), rows, BATCH, (ps, row) -> {
             int p = 1;
             ps.setString(p++, db); ps.setInt(p++, warehouseId);
             ps.setLong(p++, row.movementRecno()); ps.setLong(p++, generationId);
@@ -315,10 +395,17 @@ public class FolioProductSnapshotDao {
         });
     }
 
-    private void saveMonthly(long generationId, String db, int warehouseId,
+    public void stageMonthly(long generationId, String db, int warehouseId,
                              LocalDateTime at, List<MonthlyMetric> rows) {
+        saveMonthly("folio_product_metric_monthly_stage", generationId, db,
+                warehouseId, at, rows);
+    }
+
+    private void saveMonthly(String table, long generationId, String db, int warehouseId,
+                             LocalDateTime at, List<MonthlyMetric> rows) {
+        if (rows.isEmpty()) return;
         jdbc.batchUpdate("""
-                INSERT INTO folio_product_metric_monthly
+                INSERT INTO %s
                     (source_database,warehouse_id,sku,month_start,opening_quantity,
                      closing_quantity,opening_inventory_value,closing_inventory_value,
                      receipt_quantity,receipt_cost,sales_quantity,sales_revenue,sales_cogs,
@@ -328,7 +415,7 @@ public class FolioProductSnapshotDao {
                      return_quantity,return_revenue,average_inventory_value,
                      inventory_turns,gmroi,sell_through_percent,generation_id,calculated_at)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """, rows, BATCH, (ps, row) -> {
+                """.formatted(table), rows, BATCH, (ps, row) -> {
             int p=1; ps.setString(p++,db); ps.setInt(p++,warehouseId); ps.setString(p++,row.sku());
             ps.setObject(p++,row.monthStart()); ps.setBigDecimal(p++,row.openingQuantity());
             ps.setBigDecimal(p++,row.closingQuantity()); ps.setBigDecimal(p++,row.openingInventoryValue());
@@ -352,10 +439,17 @@ public class FolioProductSnapshotDao {
         });
     }
 
-    private void saveCurrent(long generationId, String db, int warehouseId,
+    public void stageCurrent(long generationId, String db, int warehouseId,
                              LocalDateTime at, List<CurrentMetric> rows) {
+        saveCurrent("folio_product_metric_current_stage", generationId, db,
+                warehouseId, at, rows);
+    }
+
+    private void saveCurrent(String table, long generationId, String db, int warehouseId,
+                             LocalDateTime at, List<CurrentMetric> rows) {
+        if (rows.isEmpty()) return;
         jdbc.batchUpdate("""
-                INSERT INTO folio_product_metric_current
+                INSERT INTO %s
                     (source_database,warehouse_id,sku,product_name,current_supplier,
                      supplier_state,physical_quantity,reserved_quantity,available_quantity,
                      accounting_price,inventory_value,last_receipt_date,last_sale_date,
@@ -404,7 +498,7 @@ public class FolioProductSnapshotDao {
                     inventory_turns_365d=VALUES(inventory_turns_365d),gmroi_365d=VALUES(gmroi_365d),
                     coverage_days=VALUES(coverage_days),health_status=VALUES(health_status),
                     generation_id=VALUES(generation_id),calculated_at=VALUES(calculated_at)
-                """, rows, BATCH, (ps,row)->{
+                """.formatted(table), rows, BATCH, (ps,row)->{
             int p=1; ps.setString(p++,db); ps.setInt(p++,warehouseId); ps.setString(p++,row.sku());
             ps.setString(p++,row.productName()); ps.setString(p++,row.currentSupplier());
             ps.setString(p++,row.supplierState()); ps.setBigDecimal(p++,row.physicalQuantity());
@@ -439,16 +533,11 @@ public class FolioProductSnapshotDao {
         });
     }
 
-    private void saveAlerts(long generationId, String db, int warehouseId,
+    public void stageAlerts(long generationId, String db, int warehouseId,
                             LocalDateTime at, List<Alert> rows) {
-        jdbc.update("""
-                UPDATE folio_product_metric_alert
-                   SET status='RESOLVED',resolved_at=?,last_seen_at=?,generation_id=?
-                 WHERE source_database=? AND warehouse_id=? AND status='ACTIVE'
-                """, ts(at),ts(at),generationId,db,warehouseId);
         if (rows.isEmpty()) return;
         jdbc.batchUpdate("""
-                INSERT INTO folio_product_metric_alert
+                INSERT INTO folio_product_metric_alert_stage
                     (source_database,warehouse_id,sku,alert_code,status,severity,
                      first_seen_at,last_seen_at,resolved_at,details,generation_id)
                 VALUES (?,?,?,?,'ACTIVE',?,?,?,NULL,?,?)
@@ -469,6 +558,17 @@ public class FolioProductSnapshotDao {
                    SET status='FAILED',completed_at=?,last_heartbeat_at=?,error_message=?
                  WHERE id=? AND status='BUILDING'
                 """, ts(at),ts(at),truncate(error,1000),generationId);
+    }
+
+    public void discardStaging(long generationId) {
+        jdbc.update("DELETE FROM folio_product_movement_fact_stage WHERE generation_id=?",
+                generationId);
+        jdbc.update("DELETE FROM folio_product_metric_monthly_stage WHERE generation_id=?",
+                generationId);
+        jdbc.update("DELETE FROM folio_product_metric_current_stage WHERE generation_id=?",
+                generationId);
+        jdbc.update("DELETE FROM folio_product_metric_alert_stage WHERE generation_id=?",
+                generationId);
     }
 
     public Optional<Generation> latest() {
@@ -526,9 +626,8 @@ public class FolioProductSnapshotDao {
                          String type,String beforeDigest,String afterDigest,LocalDateTime detectedAt){ }
     public record Publish(long generationId,String sourceDatabase,int warehouseId,
                           String warehouseDigest,long movementRows,List<Item> items,
-                          List<Change> changes,List<MonthlyMetric> monthly,
-                          List<MovementFact> movements,
-                          List<CurrentMetric> current,List<Alert> alerts,
+                          List<Change> changes,long movementFactRows,
+                          int monthlyMetricRows,
                           int unverified,int dirty,int created,int removed,
                           LocalDateTime calculatedAt){ }
     public record Generation(long id,String sourceDatabase,int warehouseId,int horizonMonths,

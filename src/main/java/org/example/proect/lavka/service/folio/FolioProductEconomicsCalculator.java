@@ -1,6 +1,5 @@
 package org.example.proect.lavka.service.folio;
 
-import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.Capture;
 import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.MonthlyActivity;
 import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.ProductCard;
 import org.springframework.stereotype.Component;
@@ -21,10 +20,12 @@ public class FolioProductEconomicsCalculator {
     private static final BigDecimal TWO = new BigDecimal("2");
     private static final BigDecimal HUNDRED = new BigDecimal("100");
 
-    public Result calculate(Capture capture, LocalDate horizonStart,
+    public Result calculate(List<ProductCard> products,
+                            List<MonthlyActivity> monthlyActivity,
+                            LocalDate horizonStart,
                             LocalDate asOfDate) {
         Map<String, Map<LocalDate, MonthlyActivity>> activity = new HashMap<>();
-        for (MonthlyActivity row : capture.monthlyActivity()) {
+        for (MonthlyActivity row : monthlyActivity) {
             activity.computeIfAbsent(row.sku(), ignored -> new HashMap<>())
                     .put(row.monthStart(), row);
         }
@@ -32,75 +33,88 @@ public class FolioProductEconomicsCalculator {
         List<MonthlyMetric> monthly = new ArrayList<>();
         List<CurrentMetric> current = new ArrayList<>();
         List<Alert> alerts = new ArrayList<>();
-        LocalDate firstMonth = horizonStart.withDayOfMonth(1);
-        LocalDate lastMonth = asOfDate.withDayOfMonth(1);
-
-        for (ProductCard card : capture.products()) {
-            BigDecimal openingQty = card.openingQuantityAtHorizon();
-            BigDecimal openingValue = card.openingValueAtHorizon();
-            List<MonthlyMetric> productMonths = new ArrayList<>();
-            LocalDate lastReceipt = null;
-            LocalDate lastSale = null;
-            LocalDate lastRegularSale = null;
-            for (LocalDate month = firstMonth; !month.isAfter(lastMonth);
-                 month = month.plusMonths(1)) {
-                MonthlyActivity row = activity.getOrDefault(card.sku(), Map.of()).get(month);
-                BigDecimal netQty = row == null ? zero() : row.netQuantity();
-                BigDecimal netValue = row == null ? zero() : row.netValue();
-                BigDecimal closingQty = openingQty.add(netQty);
-                BigDecimal closingValue = openingValue.add(netValue);
-                BigDecimal averageValue = openingValue.add(closingValue)
-                        .divide(TWO, 4, RoundingMode.HALF_UP);
-                BigDecimal receiptQty = value(row, MonthlyActivity::receiptQuantity);
-                BigDecimal receiptCost = value(row, MonthlyActivity::receiptCost);
-                BigDecimal salesQty = value(row, MonthlyActivity::salesQuantity);
-                BigDecimal revenue = value(row, MonthlyActivity::salesRevenue);
-                BigDecimal cogs = value(row, MonthlyActivity::salesCogs);
-                BigDecimal grossProfit = revenue.subtract(cogs);
-                BigDecimal regularSalesQty = value(row, MonthlyActivity::regularSalesQuantity);
-                BigDecimal regularRevenue = value(row, MonthlyActivity::regularSalesRevenue);
-                BigDecimal regularCogs = value(row, MonthlyActivity::regularSalesCogs);
-                BigDecimal oneOffSalesQty = value(row, MonthlyActivity::oneOffSalesQuantity);
-                BigDecimal oneOffRevenue = value(row, MonthlyActivity::oneOffSalesRevenue);
-                BigDecimal oneOffCogs = value(row, MonthlyActivity::oneOffSalesCogs);
-                if (row != null && row.lastReceiptDate() != null) {
-                    lastReceipt = max(lastReceipt, row.lastReceiptDate());
-                }
-                if (row != null && row.lastSaleDate() != null) {
-                    lastSale = max(lastSale, row.lastSaleDate());
-                }
-                if (row != null && row.lastRegularSaleDate() != null) {
-                    lastRegularSale = max(lastRegularSale, row.lastRegularSaleDate());
-                }
-                MonthlyMetric metric = new MonthlyMetric(
-                        card.sku(), month, openingQty, closingQty,
-                        openingValue, closingValue, receiptQty, receiptCost,
-                        salesQty, revenue, cogs, grossProfit,
-                        regularSalesQty, regularRevenue, regularCogs,
-                        regularRevenue.subtract(regularCogs),
-                        oneOffSalesQty, oneOffRevenue, oneOffCogs,
-                        oneOffRevenue.subtract(oneOffCogs),
-                        value(row, MonthlyActivity::returnQuantity),
-                        value(row, MonthlyActivity::returnRevenue),
-                        averageValue,
-                        ratio(cogs, averageValue),
-                        ratio(grossProfit, averageValue),
-                        percent(salesQty, openingQty.add(receiptQty))
-                );
-                productMonths.add(metric);
-                if (hasEconomicState(metric)) {
-                    monthly.add(metric);
-                }
-                openingQty = closingQty;
-                openingValue = closingValue;
-            }
-
-            CurrentMetric metric = current(card, productMonths, lastReceipt,
-                    lastSale, lastRegularSale, asOfDate);
-            current.add(metric);
-            alerts.addAll(alerts(metric, card, asOfDate));
+        for (ProductCard card : products) {
+            ProductResult product = calculateProduct(card,
+                    List.copyOf(activity.getOrDefault(card.sku(), Map.of()).values()),
+                    horizonStart, asOfDate);
+            monthly.addAll(product.monthly());
+            current.add(product.current());
+            alerts.addAll(product.alerts());
         }
         return new Result(List.copyOf(monthly), List.copyOf(current), List.copyOf(alerts));
+    }
+
+    /** Calculates one SKU so callers can persist results in bounded batches. */
+    public ProductResult calculateProduct(ProductCard card,
+                                          List<MonthlyActivity> activity,
+                                          LocalDate horizonStart,
+                                          LocalDate asOfDate) {
+        Map<LocalDate, MonthlyActivity> byMonth = new HashMap<>();
+        activity.forEach(row -> byMonth.put(row.monthStart(), row));
+        List<MonthlyMetric> persistedMonths = new ArrayList<>();
+        List<MonthlyMetric> productMonths = new ArrayList<>();
+        BigDecimal openingQty = card.openingQuantityAtHorizon();
+        BigDecimal openingValue = card.openingValueAtHorizon();
+        LocalDate lastReceipt = null;
+        LocalDate lastSale = null;
+        LocalDate lastRegularSale = null;
+        LocalDate firstMonth = horizonStart.withDayOfMonth(1);
+        LocalDate lastMonth = asOfDate.withDayOfMonth(1);
+        for (LocalDate month = firstMonth; !month.isAfter(lastMonth);
+             month = month.plusMonths(1)) {
+            MonthlyActivity row = byMonth.get(month);
+            BigDecimal netQty = row == null ? zero() : row.netQuantity();
+            BigDecimal netValue = row == null ? zero() : row.netValue();
+            BigDecimal closingQty = openingQty.add(netQty);
+            BigDecimal closingValue = openingValue.add(netValue);
+            BigDecimal averageValue = openingValue.add(closingValue)
+                    .divide(TWO, 4, RoundingMode.HALF_UP);
+            BigDecimal receiptQty = value(row, MonthlyActivity::receiptQuantity);
+            BigDecimal receiptCost = value(row, MonthlyActivity::receiptCost);
+            BigDecimal salesQty = value(row, MonthlyActivity::salesQuantity);
+            BigDecimal revenue = value(row, MonthlyActivity::salesRevenue);
+            BigDecimal cogs = value(row, MonthlyActivity::salesCogs);
+            BigDecimal grossProfit = revenue.subtract(cogs);
+            BigDecimal regularSalesQty = value(row, MonthlyActivity::regularSalesQuantity);
+            BigDecimal regularRevenue = value(row, MonthlyActivity::regularSalesRevenue);
+            BigDecimal regularCogs = value(row, MonthlyActivity::regularSalesCogs);
+            BigDecimal oneOffSalesQty = value(row, MonthlyActivity::oneOffSalesQuantity);
+            BigDecimal oneOffRevenue = value(row, MonthlyActivity::oneOffSalesRevenue);
+            BigDecimal oneOffCogs = value(row, MonthlyActivity::oneOffSalesCogs);
+            if (row != null && row.lastReceiptDate() != null) {
+                lastReceipt = max(lastReceipt, row.lastReceiptDate());
+            }
+            if (row != null && row.lastSaleDate() != null) {
+                lastSale = max(lastSale, row.lastSaleDate());
+            }
+            if (row != null && row.lastRegularSaleDate() != null) {
+                lastRegularSale = max(lastRegularSale, row.lastRegularSaleDate());
+            }
+            MonthlyMetric metric = new MonthlyMetric(
+                    card.sku(), month, openingQty, closingQty,
+                    openingValue, closingValue, receiptQty, receiptCost,
+                    salesQty, revenue, cogs, grossProfit,
+                    regularSalesQty, regularRevenue, regularCogs,
+                    regularRevenue.subtract(regularCogs),
+                    oneOffSalesQty, oneOffRevenue, oneOffCogs,
+                    oneOffRevenue.subtract(oneOffCogs),
+                    value(row, MonthlyActivity::returnQuantity),
+                    value(row, MonthlyActivity::returnRevenue),
+                    averageValue,
+                    ratio(cogs, averageValue),
+                    ratio(grossProfit, averageValue),
+                    percent(salesQty, openingQty.add(receiptQty))
+            );
+            productMonths.add(metric);
+            if (hasEconomicState(metric)) persistedMonths.add(metric);
+            openingQty = closingQty;
+            openingValue = closingValue;
+        }
+
+        CurrentMetric current = current(card, productMonths, lastReceipt,
+                lastSale, lastRegularSale, asOfDate);
+        return new ProductResult(List.copyOf(persistedMonths), current,
+                List.copyOf(alerts(current, card, asOfDate)));
     }
 
     private CurrentMetric current(ProductCard card, List<MonthlyMetric> months,
@@ -322,6 +336,10 @@ public class FolioProductEconomicsCalculator {
     public record Result(List<MonthlyMetric> monthly,
                          List<CurrentMetric> current,
                          List<Alert> alerts) { }
+
+    public record ProductResult(List<MonthlyMetric> monthly,
+                                CurrentMetric current,
+                                List<Alert> alerts) { }
 
     public record MonthlyMetric(
             String sku, LocalDate monthStart,

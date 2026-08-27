@@ -96,6 +96,8 @@ public class FolioAccountingPriceService {
             new AtomicReference<>(idleStatus());
     private final AtomicReference<FolioAccountingPriceNativeFullStatusResponse> nativeFullStatus =
             new AtomicReference<>(idleNativeStatus());
+    private volatile FolioAccountingPriceRuntimeMonitor runtimeMonitor =
+            FolioAccountingPriceRuntimeMonitor.noop();
 
     @Autowired
     public FolioAccountingPriceService(
@@ -239,6 +241,11 @@ public class FolioAccountingPriceService {
         this.nativeWriteTransaction.setTimeout(this.nativeFullTimeoutSeconds);
     }
 
+    @Autowired
+    void setRuntimeMonitor(FolioAccountingPriceRuntimeMonitor runtimeMonitor) {
+        this.runtimeMonitor = Objects.requireNonNull(runtimeMonitor);
+    }
+
     public FolioAccountingPriceRecalculationResponse recalculate(
             FolioAccountingPriceRecalculationRequest request) {
         requireApiEnabled();
@@ -372,6 +379,9 @@ public class FolioAccountingPriceService {
                 jobId, request, database, LocalDateTime.now(clock));
         progress.status = "QUEUED";
         progress.phase = "QUEUED";
+        runtimeMonitor.start(jobId, database, request.warehouseId(),
+                selection ? "native-range" : "native-full",
+                request.previewOnly());
         publishNative(progress, true, true, null);
         try {
             executor.execute(() -> {
@@ -386,6 +396,7 @@ public class FolioAccountingPriceService {
             progress.status = "FAILED";
             progress.phase = "FAILED";
             publishNative(progress, false, false, safeMessage(e));
+            runtimeMonitor.finish(progress.jobId, progress.status, safeMessage(e));
             throw e;
         }
         return withNativeAccepted(nativeFullStatus.get(), true);
@@ -778,6 +789,7 @@ public class FolioAccountingPriceService {
 
     private void runNativeFull(NativeProgress progress) {
         try {
+            nativeCheckpoint(progress, "JOB_STARTED", null);
             WarehouseScope scope = requireScope(progress.request.warehouseId());
             AccountingMethod method = method(scope.requested().rawAccountingCode());
             progress.accountingMethod = method;
@@ -796,6 +808,7 @@ public class FolioAccountingPriceService {
 
             progress.phase = "PRECHECK_RUNNING";
             progress.status = "RUNNING";
+            nativeCheckpoint(progress, "PRECHECK_STARTED", null);
             publishNative(progress, true, true, null);
             NativePassResult preflight = runNativePass(
                     progress, method, true, 0, null,
@@ -820,6 +833,7 @@ public class FolioAccountingPriceService {
             // exact guarded Folio algorithm one SKU at a time and rolled every
             // transaction back. During apply, clean SKUs commit individually;
             // diagnosed SKUs roll back individually and do not stop the rest.
+            nativeCheckpoint(progress, "PROTECTED_BASELINE_CAPTURE", null);
             NativeProtectedSnapshot protectedBaseline = captureNativeBaseline(
                     progress.database, progress.request.warehouseId(), method);
             progress.phase = "APPLY_RUNNING";
@@ -828,9 +842,11 @@ public class FolioAccountingPriceService {
             progress.currentArt = null;
             progress.nextArt = null;
             progress.checkpointArt = null;
+            nativeCheckpoint(progress, "APPLY_STARTED", null);
             publishNative(progress, true, true, null);
             runNativePass(progress, method, false, preflight.totalUnits(),
                     protectedBaseline, skippedSkus, quarantineMarker);
+            nativeCheckpoint(progress, "PROTECTED_BASELINE_VERIFY", null);
             verifyNativeBaseline(progress.database, progress.request.warehouseId(),
                     method, protectedBaseline);
 
@@ -866,11 +882,13 @@ public class FolioAccountingPriceService {
             publishNative(progress, false, false, safeMessage(e));
         } finally {
             operationRunning.set(false);
+            finishNativeRuntime(progress);
         }
     }
 
     private void runNativeSelection(NativeProgress progress) {
         try {
+            nativeCheckpoint(progress, "JOB_STARTED", null);
             WarehouseScope scope = requireScope(progress.request.warehouseId());
             AccountingMethod method = method(scope.requested().rawAccountingCode());
             progress.accountingMethod = method;
@@ -887,10 +905,12 @@ public class FolioAccountingPriceService {
             }
             progress.totalUnits = selectedSkus.size();
             progress.processedSku = 0;
+            nativeCheckpoint(progress, "SELECTION_RESOLVED", null);
             logNativeArithmeticSessionOptions(progress);
 
             progress.phase = "PRECHECK_RUNNING";
             progress.status = "RUNNING";
+            nativeCheckpoint(progress, "PRECHECK_STARTED", null);
             publishNative(progress, true, true, null);
             runNativeSelectionPass(progress, method, selectedSkus, true, null);
 
@@ -903,6 +923,7 @@ public class FolioAccountingPriceService {
                 return;
             }
 
+            nativeCheckpoint(progress, "PROTECTED_BASELINE_CAPTURE", null);
             NativeProtectedSnapshot protectedBaseline = captureNativeBaseline(
                     progress.database, progress.request.warehouseId(), method);
             progress.phase = "APPLY_RUNNING";
@@ -910,9 +931,11 @@ public class FolioAccountingPriceService {
             progress.progressUnits = 0;
             progress.processedSku = 0;
             clearNativeCursor(progress);
+            nativeCheckpoint(progress, "APPLY_STARTED", null);
             publishNative(progress, true, true, null);
             runNativeSelectionPass(
                     progress, method, selectedSkus, false, protectedBaseline);
+            nativeCheckpoint(progress, "PROTECTED_BASELINE_VERIFY", null);
             verifyNativeBaseline(progress.database, progress.request.warehouseId(),
                     method, protectedBaseline);
 
@@ -935,6 +958,7 @@ public class FolioAccountingPriceService {
             publishNative(progress, false, false, safeMessage(error));
         } finally {
             operationRunning.set(false);
+            finishNativeRuntime(progress);
         }
     }
 
@@ -945,15 +969,18 @@ public class FolioAccountingPriceService {
                                         NativeProtectedSnapshot protectedBaseline) {
         int processed = 0;
         for (String sku : selectedSkus) {
+            long skuStartedNanos = System.nanoTime();
             progress.currentArt = sku;
             progress.checkpointArt = sku;
             progress.nextArt = null;
+            nativeCheckpoint(progress, "SKU_TRANSACTION_START", sku);
             Set<String> seen = new HashSet<>();
             seen.add(sku);
             NativeExecutedChunk executed = executeNativeChunk(
                     progress, progress.database, progress.request.warehouseId(), method,
                     sku, 0, 0, seen, rollbackOnly, selectedSkus.size(),
                     protectedBaseline, Set.of(), null, true);
+            nativeCheckpoint(progress, "SKU_TRANSACTION_FINISHED", sku);
             NativeFullChunkOutput output = executed.output();
             progress.returnCode = output.returnCode();
             progress.currentArt = output.art();
@@ -990,6 +1017,14 @@ public class FolioAccountingPriceService {
                 recordNativeAppliedVerification(progress, executed.fingerprint());
             }
             publishNative(progress, true, true, null);
+            long durationMs = (System.nanoTime() - skuStartedNanos) / 1_000_000L;
+            if (processed % 25 == 0 || durationMs >= 30_000L) {
+                log.info("[folio.accounting-price] native_selection_progress job={} warehouse={} pass={} processed={}/{} sku={} durationMs={} calls={} committed={}",
+                        progress.jobId, progress.request.warehouseId(),
+                        rollbackOnly ? "PRECHECK" : "APPLY", processed,
+                        selectedSkus.size(), sku, durationMs,
+                        progress.procedureCalls, progress.committedChunks);
+            }
         }
     }
 
@@ -1081,6 +1116,7 @@ public class FolioAccountingPriceService {
 
             progress.currentArt = cursor;
             progress.checkpointArt = cursor;
+            nativeCheckpoint(progress, "SKU_TRANSACTION_START", cursor);
             if (!skippedSkus.isEmpty()) {
                 progress.phase = "QUARANTINE_PREPARATION";
                 publishNative(progress, true, true, null);
@@ -1100,6 +1136,7 @@ public class FolioAccountingPriceService {
                 // branch and must remain fail-stop.
                 throw error;
             }
+            nativeCheckpoint(progress, "SKU_TRANSACTION_FINISHED", cursor);
             NativeFullChunkOutput output = executed.output();
             passChunks++;
             progress.returnCode = output.returnCode();
@@ -1292,11 +1329,15 @@ public class FolioAccountingPriceService {
                     }
                     progress.procedureCalls++;
                     progress.preflightChunks++;
+                    nativeCheckpoint(progress, "DIVIDE_PROBE_PROCEDURE_CALL",
+                            firstArt + ".." + lastArt);
                     NativeFullChunkOutput output = dao.callNativeFullChunk(
                             null, progress.request.warehouseId(),
                             method.calculationMode(), method.periodMode(),
                             method.includeTax(), cursor, 0, totalUnits,
                             nativeFullTimeoutSeconds);
+                    nativeCheckpoint(progress, "DIVIDE_PROBE_PROCEDURE_RETURNED",
+                            firstArt + ".." + lastArt);
                     if (output.transactionCountBefore()
                             != output.transactionCountAfter()) {
                         throw new NativeOutcomeUnknownException(
@@ -1440,8 +1481,12 @@ public class FolioAccountingPriceService {
                                                     String quarantineMarker,
                                                     boolean partialSelection) {
         try {
-            return Objects.requireNonNull(nativeWriteTransaction.execute(status -> {
+            nativeCheckpoint(progress, "MSSQL_TRANSACTION_ACQUIRE", cursor);
+            NativeExecutedChunk executed = Objects.requireNonNull(
+                    nativeWriteTransaction.execute(status -> {
+                nativeCheckpoint(progress, "MUTEX_ACQUIRE", cursor);
                 dao.acquireRecalculationMutex(lockTimeoutMs);
+                nativeCheckpoint(progress, "SCOPE_VALIDATE", cursor);
                 String transactionDatabase = dao.currentDatabaseName();
                 if (!databaseAllowed(transactionDatabase)
                         || expectedDatabase == null
@@ -1463,6 +1508,7 @@ public class FolioAccountingPriceService {
                 NativeFullChunkOutput output;
                 try {
                     if (!skippedSkus.isEmpty()) {
+                        nativeCheckpoint(progress, "QUARANTINE_PREPARE", cursor);
                         dao.createNativeQuarantineType(quarantineMarker);
                         quarantineTypeCreated = true;
                         quarantined = dao.quarantineNativeSkus(
@@ -1474,11 +1520,13 @@ public class FolioAccountingPriceService {
                     if (rollbackOnly) {
                         progress.preflightChunks++;
                     }
+                    nativeCheckpoint(progress, "FOLIO_PROCEDURE_CALL", cursor);
                     output = dao.callNativeFullChunk(
                             null, warehouseId,
                             method.calculationMode(), method.periodMode(), method.includeTax(),
                             cursor, 0, totalUnits, nativeFullTimeoutSeconds);
                     procedureCompleted = true;
+                    nativeCheckpoint(progress, "FOLIO_PROCEDURE_RETURNED", cursor);
                 } finally {
                     // A SQL arithmetic error can leave the legacy connection
                     // unable to execute reliable compensating statements.
@@ -1493,8 +1541,10 @@ public class FolioAccountingPriceService {
                         if (quarantineTypeCreated) {
                             dao.deleteNativeQuarantineType(quarantineMarker);
                         }
+                        nativeCheckpoint(progress, "QUARANTINE_RESTORED", cursor);
                     }
                 }
+                nativeCheckpoint(progress, "WAREHOUSE_POSTCHECK", cursor);
                 WarehouseRow after = dao.findWarehouseForUpdate(warehouseId);
 
                 if (output.transactionCountBefore() != output.transactionCountAfter()) {
@@ -1509,6 +1559,7 @@ public class FolioAccountingPriceService {
                 // invalid legacy OUT contract to the caller would otherwise
                 // commit the chunk before Java notices the failure.
                 try {
+                    nativeCheckpoint(progress, "OUTPUT_VALIDATE", cursor);
                     validateNativeOutput(
                             warehouseId, output, cursor, totalUnits, requiredTotalUnits,
                             cumulativeUnits, seenCursors, partialSelection,
@@ -1538,8 +1589,18 @@ public class FolioAccountingPriceService {
                 String processedEndArt = null;
                 Optional<ProductFingerprint> fingerprint = Optional.empty();
                 if (!output.hasProblem() && !rollbackOnly) {
-                    processedEndArt = dao.findProcessedRangeEnd(
-                            warehouseId, output.newArt());
+                    // native-range calls the safe procedure with an explicit
+                    // SKU cursor.  That procedure is deliberately guarded to
+                    // process exactly that SKU, while newArt is only the
+                    // continuation cursor in the legacy article order.  Do
+                    // not infer the protected end from the global predecessor
+                    // of newArt: CP1251/collation/trailing-space differences
+                    // can make that query return a different article and
+                    // falsely report that the selected SKU escaped its range.
+                    processedEndArt = partialSelection
+                            ? (cursor == null ? null : cursor.trim())
+                            : dao.findProcessedRangeEnd(
+                                    warehouseId, output.newArt());
                     if (processedEndArt == null
                             || (cursor != null && !dao.isArtAtOrAfter(
                             warehouseId, cursor, processedEndArt))) {
@@ -1550,6 +1611,7 @@ public class FolioAccountingPriceService {
                         throw new IllegalStateException(
                                 "LAVKA_I_UCHET_TOVAR_SAFE changed more than the selected SKU");
                     }
+                    nativeCheckpoint(progress, "PROTECTED_POSTCHECK", cursor);
                     NativeProtectedSnapshot protectedAfter =
                             dao.captureNativeProtectedSnapshot(
                                     warehouseId, cursor, processedEndArt);
@@ -1559,14 +1621,18 @@ public class FolioAccountingPriceService {
                         throw new IllegalStateException(
                                 "I_UCHET_TOVAR changed a protected stock or movement invariant");
                     }
+                    nativeCheckpoint(progress, "FINGERPRINT_CAPTURE", cursor);
                     fingerprint = verificationRecorder.capture(
                             warehouseId, processedEndArt, nativeFullTimeoutSeconds);
                 }
                 if (output.hasProblem() || rollbackOnly) {
                     status.setRollbackOnly();
                 }
+                nativeCheckpoint(progress, "TRANSACTION_COMPLETION", cursor);
                 return new NativeExecutedChunk(output, processedEndArt, fingerprint);
             }));
+            nativeCheckpoint(progress, "TRANSACTION_FINISHED", cursor);
+            return executed;
         } catch (CannotAcquireLockException e) {
             throw new FolioAccountingPriceBusyException(e);
         }
@@ -2464,6 +2530,29 @@ public class FolioAccountingPriceService {
                 List.copyOf(progress.warnings), progress.failedChunk,
                 progress.errorCode, progress.recommendation, error
         ));
+    }
+
+    private void nativeCheckpoint(NativeProgress progress,
+                                  String stage,
+                                  String sku) {
+        int processed = progress.processedSku == null
+                ? progress.progressUnits : progress.processedSku;
+        runtimeMonitor.checkpoint(
+                progress.jobId,
+                progress.phase == null ? "UNKNOWN" : progress.phase,
+                stage,
+                sku,
+                processed,
+                progress.totalUnits,
+                progress.procedureCalls,
+                progress.committedChunks);
+    }
+
+    private void finishNativeRuntime(NativeProgress progress) {
+        FolioAccountingPriceNativeFullStatusResponse current = nativeFullStatus.get();
+        String error = current != null && Objects.equals(current.jobId(), progress.jobId)
+                ? current.error() : null;
+        runtimeMonitor.finish(progress.jobId, progress.status, error);
     }
 
     private static FolioAccountingPriceNativeFullStatusResponse withNativeAccepted(

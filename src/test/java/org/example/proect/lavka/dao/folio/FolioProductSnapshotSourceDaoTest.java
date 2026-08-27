@@ -5,7 +5,10 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -60,6 +63,38 @@ class FolioProductSnapshotSourceDaoTest {
         assertThat(FolioProductSnapshotSourceDao.partnerOrganizationType(null)).isEmpty();
     }
 
+    @Test
+    void movementStreamingKeepsBatchesBoundedAndEmitsEmptyProducts() {
+        Map<String, FolioProductSnapshotSourceDao.ProductCard> products = new LinkedHashMap<>();
+        products.put("SKU-1", product("SKU-1"));
+        products.put("SKU-2", product("SKU-2"));
+        List<Integer> movementBatchSizes = new ArrayList<>();
+        Map<String, Integer> activityRows = new LinkedHashMap<>();
+        var accumulator = new FolioProductSnapshotSourceDao.MovementStreamAccumulator(
+                products, new FolioProductSnapshotSourceDao.CaptureConsumer() {
+            @Override
+            public void acceptMovementBatch(
+                    List<FolioProductSnapshotSourceDao.MovementFact> rows) {
+                movementBatchSizes.add(rows.size());
+            }
+
+            @Override
+            public void acceptProductActivity(
+                    FolioProductSnapshotSourceDao.ProductCard product,
+                    List<FolioProductSnapshotSourceDao.MonthlyActivity> rows) {
+                activityRows.put(product.sku(), rows.size());
+            }
+        });
+
+        for (int i = 1; i <= 1_001; i++) accumulator.add(movement(i,
+                "*\u041f\u0420\u0415\u0414\u041e\u041f\u041b\u0410\u0422\u0410", "REGULAR", "SALE", "1", "2", "1"));
+        accumulator.finish();
+
+        assertThat(accumulator.movementCount()).isEqualTo(1_001);
+        assertThat(movementBatchSizes).containsExactly(300, 300, 300, 101);
+        assertThat(activityRows).containsEntry("SKU-1", 1).containsEntry("SKU-2", 0);
+    }
+
     private static FolioProductSnapshotSourceDao.MovementFact movement(
             long recno, String operation, String demandMode, String movementClass,
             String quantity, String revenue, String cost) {
@@ -80,5 +115,14 @@ class FolioProductSnapshotSourceDaoTest {
     private static FolioProductSnapshotSourceDao.Warehouse warehouse(String rawCode) {
         return new FolioProductSnapshotSourceDao.Warehouse(
                 "Paint_Rus", 22, "Деливери Ялта", new BigDecimal(rawCode), null);
+    }
+
+    private static FolioProductSnapshotSourceDao.ProductCard product(String sku) {
+        return new FolioProductSnapshotSourceDao.ProductCard(
+                sku, sku, "digest", null, "MISSING",
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, 0, null, null, null, null, 0, false);
     }
 }

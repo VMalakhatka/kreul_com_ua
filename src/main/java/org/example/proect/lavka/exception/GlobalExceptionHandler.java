@@ -23,6 +23,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
@@ -197,6 +199,21 @@ public class GlobalExceptionHandler {
         return problem(r, HttpStatus.NOT_FOUND, "Folio accounting-price target not found", Map.of(
                 "code", e.getCode(),
                 "message", truncate(e.getMessage(), 1000)
+        ));
+    }
+
+    // Internet scanners regularly probe WordPress/PHP paths on the API host.
+    // A missing route is not an application failure and must not allocate a
+    // full ERROR stack trace while a long Folio job is running.
+    @ExceptionHandler({NoHandlerFoundException.class, NoResourceFoundException.class})
+    public ResponseEntity<Map<String, Object>> handleRouteNotFound(
+            Exception e,
+            HttpServletRequest r) {
+        log.debug("[http.not-found] method={} uri={}",
+                r.getMethod(), r.getRequestURI());
+        return problem(r, HttpStatus.NOT_FOUND, "Route not found", Map.of(
+                "code", "ROUTE_NOT_FOUND",
+                "message", "The requested API route does not exist"
         ));
     }
 

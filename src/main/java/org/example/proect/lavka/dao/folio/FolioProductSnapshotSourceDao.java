@@ -18,10 +18,12 @@ import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Read-only, SQL Server 2000 compatible source capture for product snapshots. */
 @Repository
@@ -29,6 +31,7 @@ public class FolioProductSnapshotSourceDao {
 
     private static final String RECEIPT = "\u041f";
     private static final String EXPENSE = "\u0420";
+    private static final int STREAM_BATCH_SIZE = 300;
 
     private final JdbcTemplate jdbc;
 
@@ -42,7 +45,7 @@ public class FolioProductSnapshotSourceDao {
     }
 
     public Capture capture(int warehouseId, LocalDate horizonStart, LocalDate asOfDate,
-                           int queryTimeoutSeconds) {
+                           int queryTimeoutSeconds, CaptureConsumer consumer) {
         Warehouse warehouse = readWarehouse(warehouseId, queryTimeoutSeconds);
         validateAccountingMode(warehouse);
         if (warehouse.accountingGroup() != null) {
@@ -55,13 +58,15 @@ public class FolioProductSnapshotSourceDao {
                 warehouseId, cards, queryTimeoutSeconds);
         readPriceRuleFingerprints(warehouseId, cards, queryTimeoutSeconds);
         readOpeningDeltas(warehouseId, horizonStart, cards, queryTimeoutSeconds);
-        List<MovementFact> movements = readMovementFacts(
-                warehouseId, horizonStart, asOfDate.plusDays(1), queryTimeoutSeconds);
-        List<MonthlyActivity> monthly = aggregateMonthlyActivity(movements);
-
         List<ProductCard> products = cards.values().stream()
                 .map(MutableCard::finish)
                 .toList();
+        cards.clear();
+        Map<String, ProductCard> productsBySku = new LinkedHashMap<>();
+        products.forEach(product -> productsBySku.put(product.sku(), product));
+        long movementFactRows = streamMovementFacts(
+                warehouseId, horizonStart, asOfDate.plusDays(1), queryTimeoutSeconds,
+                productsBySku, consumer);
         MessageDigest warehouseDigest = digest();
         add(warehouseDigest, "folio-product-source/v1");
         add(warehouseDigest, warehouse.databaseName());
@@ -74,8 +79,7 @@ public class FolioProductSnapshotSourceDao {
                 warehouse,
                 HexFormat.of().formatHex(warehouseDigest.digest()),
                 products,
-                movements,
-                monthly,
+                movementFactRows,
                 movementRows
         );
     }
@@ -342,11 +346,15 @@ public class FolioProductSnapshotSourceDao {
         });
     }
 
-    private List<MovementFact> readMovementFacts(int warehouseId,
-                                                  LocalDate start,
-                                                  LocalDate endExclusive,
-                                                  int timeout) {
-        return jdbc.query(con -> {
+    private long streamMovementFacts(int warehouseId,
+                                     LocalDate start,
+                                     LocalDate endExclusive,
+                                     int timeout,
+                                     Map<String, ProductCard> productsBySku,
+                                     CaptureConsumer consumer) {
+        MovementStreamAccumulator accumulator = new MovementStreamAccumulator(
+                productsBySku, consumer);
+        jdbc.query(con -> {
             var ps = con.prepareStatement("""
                     SELECT m.RECNO, m.UNICUM_NUM, m.NUMDOCM_PR, m.DATE_PREDM,
                            m.NAME_PREDM, m.KOLC_PREDM, m.SUM_PREDM, m.SUM_UCHET,
@@ -369,9 +377,10 @@ public class FolioProductSnapshotSourceDao {
                         ON a.ID_SCLAD=m.ID_SCLAD AND a.COD_ARTIC=m.NAME_PREDM
                      WHERE m.ID_SCLAD=? AND m.TYPDOCM_PR IN (?,?,?)
                        AND m.DATE_PREDM>=? AND m.DATE_PREDM<?
-                     ORDER BY m.RECNO
+                     ORDER BY m.NAME_PREDM, m.DATE_PREDM, m.RECNO
                     """);
             ps.setQueryTimeout(timeout);
+            ps.setFetchSize(STREAM_BATCH_SIZE);
             ps.setInt(1, warehouseId);
             ps.setString(2, RECEIPT);
             ps.setString(3, EXPENSE);
@@ -379,7 +388,10 @@ public class FolioProductSnapshotSourceDao {
             ps.setTimestamp(5, Timestamp.valueOf(start.atStartOfDay()));
             ps.setTimestamp(6, Timestamp.valueOf(endExclusive.atStartOfDay()));
             return ps;
-        }, (rs, n) -> movementFact(rs));
+        }, (org.springframework.jdbc.core.RowCallbackHandler)
+                rs -> accumulator.add(movementFact(rs)));
+        accumulator.finish();
+        return accumulator.movementCount;
     }
 
     private static MovementFact movementFact(ResultSet rs) throws SQLException {
@@ -512,9 +524,18 @@ public class FolioProductSnapshotSourceDao {
 
     public record Capture(Warehouse warehouse, String warehouseDigest,
                           List<ProductCard> products,
-                          List<MovementFact> movements,
-                          List<MonthlyActivity> monthlyActivity,
+                          long movementFactRows,
                           long movementRows) {
+    }
+
+    /**
+     * Synchronous bounded-memory sink. Implementations must consume each list
+     * before returning and must not retain it.
+     */
+    public interface CaptureConsumer {
+        void acceptMovementBatch(List<MovementFact> rows);
+
+        void acceptProductActivity(ProductCard product, List<MonthlyActivity> rows);
     }
 
     public record Warehouse(String databaseName, int warehouseId, String warehouseName,
@@ -745,6 +766,86 @@ public class FolioProductSnapshotSourceDao {
                     oneOffSalesQuantity, oneOffSalesRevenue, oneOffSalesCogs,
                     returnQuantity, returnRevenue, lastReceiptDate, lastSaleDate,
                     lastRegularSaleDate, netQuantity, netValue);
+        }
+    }
+
+    static final class MovementStreamAccumulator {
+        private final Map<String, ProductCard> productsBySku;
+        private final CaptureConsumer consumer;
+        private final Set<String> productsWithMovements = new HashSet<>();
+        private final List<MovementFact> movementBatch = new ArrayList<>(STREAM_BATCH_SIZE);
+        private final List<MonthlyActivity> productActivity = new ArrayList<>(36);
+        private String currentSku;
+        private LocalDate currentMonth;
+        private MutableMonthlyActivity currentActivity;
+        private long movementCount;
+
+        MovementStreamAccumulator(Map<String, ProductCard> productsBySku,
+                                  CaptureConsumer consumer) {
+            this.productsBySku = productsBySku;
+            this.consumer = consumer;
+        }
+
+        void add(MovementFact movement) {
+            movementCount++;
+            movementBatch.add(movement);
+            if (movementBatch.size() >= STREAM_BATCH_SIZE) flushMovementBatch();
+
+            if (movement.sku() == null || movement.sku().isBlank()
+                    || movement.documentDate() == null) return;
+            String sku = movement.sku();
+            LocalDate month = movement.documentDate().withDayOfMonth(1);
+            if (currentSku != null && !currentSku.equals(sku)) {
+                flushMonth();
+                flushProduct();
+            } else if (currentMonth != null && !currentMonth.equals(month)) {
+                flushMonth();
+            }
+            if (currentSku == null) currentSku = sku;
+            if (currentActivity == null) {
+                currentMonth = month;
+                currentActivity = new MutableMonthlyActivity(new MonthlyKey(sku, month));
+            }
+            currentActivity.add(movement);
+        }
+
+        void finish() {
+            flushMovementBatch();
+            flushMonth();
+            flushProduct();
+            for (ProductCard product : productsBySku.values()) {
+                if (!productsWithMovements.contains(product.sku())) {
+                    consumer.acceptProductActivity(product, List.of());
+                }
+            }
+        }
+
+        long movementCount() {
+            return movementCount;
+        }
+
+        private void flushMovementBatch() {
+            if (movementBatch.isEmpty()) return;
+            consumer.acceptMovementBatch(List.copyOf(movementBatch));
+            movementBatch.clear();
+        }
+
+        private void flushMonth() {
+            if (currentActivity == null) return;
+            productActivity.add(currentActivity.finish());
+            currentActivity = null;
+            currentMonth = null;
+        }
+
+        private void flushProduct() {
+            if (currentSku == null) return;
+            ProductCard product = productsBySku.get(currentSku);
+            if (product != null) {
+                consumer.acceptProductActivity(product, List.copyOf(productActivity));
+                productsWithMovements.add(product.sku());
+            }
+            productActivity.clear();
+            currentSku = null;
         }
     }
 }

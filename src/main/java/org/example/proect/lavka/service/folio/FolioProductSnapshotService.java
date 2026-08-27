@@ -4,12 +4,18 @@ import lombok.extern.slf4j.Slf4j;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao;
 import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao;
 import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.Capture;
+import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.CaptureConsumer;
+import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.MonthlyActivity;
+import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.MovementFact;
 import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.ProductCard;
 import org.example.proect.lavka.dao.wp.FolioProductSnapshotDao;
 import org.example.proect.lavka.dao.wp.FolioProductSnapshotDao.Change;
 import org.example.proect.lavka.dao.wp.FolioProductSnapshotDao.ExistingItem;
 import org.example.proect.lavka.dao.wp.FolioProductSnapshotDao.Item;
 import org.example.proect.lavka.dao.wp.FolioProductSnapshotDao.Publish;
+import org.example.proect.lavka.service.folio.FolioProductEconomicsCalculator.Alert;
+import org.example.proect.lavka.service.folio.FolioProductEconomicsCalculator.CurrentMetric;
+import org.example.proect.lavka.service.folio.FolioProductEconomicsCalculator.MonthlyMetric;
 import org.example.proect.lavka.dto.folio.FolioProductSnapshotRefreshRequest;
 import org.example.proect.lavka.dto.folio.FolioProductSnapshotStatusResponse;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -36,6 +42,8 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 @Service
 public class FolioProductSnapshotService {
+
+    private static final int STAGING_BATCH_SIZE = 300;
 
     private final FolioProductSnapshotSourceDao sourceDao;
     private final FolioProductSnapshotDao snapshotDao;
@@ -138,6 +146,13 @@ public class FolioProductSnapshotService {
             if (!snapshotDao.tryAcquireLease(scope, owner, leaseSeconds)) {
                 throw new IllegalStateException("Another product snapshot owns this warehouse lease");
             }
+            int abandoned = snapshotDao.failAbandonedGenerations(
+                    sourceDatabase, warehouseId, startedAt);
+            snapshotDao.discardStagingForScope(sourceDatabase, warehouseId);
+            if (abandoned > 0) {
+                log.warn("[folio.product.snapshot] recovered abandoned generations db={} warehouse={} count={}",
+                        sourceDatabase, warehouseId, abandoned);
+            }
             generationId = snapshotDao.createGeneration(
                     sourceDatabase, warehouseId, horizonMonths, "MANUAL", startedAt);
             setRunning(generationId, "SOURCE_CAPTURE", sourceDatabase,
@@ -146,19 +161,24 @@ public class FolioProductSnapshotService {
             LocalDate asOfDate = LocalDate.now(clock);
             LocalDate horizonStart = asOfDate.minusMonths(horizonMonths - 1L)
                     .withDayOfMonth(1);
+            LocalDateTime stagedAt = LocalDateTime.now(clock);
+            StagingSink staging = new StagingSink(
+                    generationId, sourceDatabase, warehouseId, stagedAt,
+                    horizonStart, asOfDate, scope, owner);
             Capture capture = sourceTransaction.execute(status -> {
                 accountingPriceDao.acquireRecalculationMutex(lockTimeoutMs);
                 return sourceDao.capture(warehouseId, horizonStart, asOfDate,
-                        queryTimeoutSeconds);
+                        queryTimeoutSeconds, staging);
             });
+            staging.finish();
             if (capture == null) throw new IllegalStateException("Folio source capture returned no data");
             if (!sourceDatabase.equals(capture.warehouse().databaseName())) {
                 throw new IllegalStateException("Folio database changed during snapshot capture");
             }
+            if (capture.movementFactRows() != staging.movementFactRows) {
+                throw new IllegalStateException("Product movement staging row count mismatch");
+            }
 
-            setRunning(generationId, "ECONOMIC_CALCULATION", sourceDatabase,
-                    warehouseId, horizonMonths, startedAt);
-            var economics = economicsCalculator.calculate(capture, horizonStart, asOfDate);
             Map<String, ExistingItem> existing = snapshotDao.findExisting(
                     sourceDatabase, warehouseId);
             LocalDateTime calculatedAt = LocalDateTime.now(clock);
@@ -172,8 +192,7 @@ public class FolioProductSnapshotService {
                     generationId, sourceDatabase, warehouseId,
                     capture.warehouseDigest(), capture.movementRows(),
                     classification.items(), classification.changes(),
-                    economics.monthly(), capture.movements(),
-                    economics.current(), economics.alerts(),
+                    staging.movementFactRows, staging.monthlyMetricRows,
                     classification.unverified(), classification.dirty(),
                     classification.created(), classification.removed(), calculatedAt));
 
@@ -181,7 +200,7 @@ public class FolioProductSnapshotService {
                     true, false, false, generationId, "ACTIVE", "COMPLETED",
                     sourceDatabase, warehouseId, horizonMonths, 2, startedAt, calculatedAt,
                     capture.products().size(), capture.movementRows(),
-                    capture.movements().size(), economics.monthly().size(),
+                    staging.movementFactRows, staging.monthlyMetricRows,
                     classification.unverified(), classification.dirty(),
                     classification.created(), classification.removed(),
                     capture.warehouseDigest(), null,
@@ -191,7 +210,7 @@ public class FolioProductSnapshotService {
                     null, null));
             log.info("[folio.product.snapshot] generation={} db={} warehouse={} products={} movements={} monthly={} unverified={} dirty={} new={} removed={}",
                     generationId, sourceDatabase, warehouseId, capture.products().size(),
-                    capture.movementRows(), economics.monthly().size(),
+                    capture.movementRows(), staging.monthlyMetricRows,
                     classification.unverified(), classification.dirty(),
                     classification.created(), classification.removed());
         } catch (Exception e) {
@@ -199,6 +218,8 @@ public class FolioProductSnapshotService {
             ModeFailure modeFailure = modeFailure(e);
             if (generationId != null) {
                 try { snapshotDao.failGeneration(generationId, rootMessage(e), failedAt); }
+                catch (Exception failure) { e.addSuppressed(failure); }
+                try { snapshotDao.discardStaging(generationId); }
                 catch (Exception failure) { e.addSuppressed(failure); }
             }
             live.set(new FolioProductSnapshotStatusResponse(
@@ -335,4 +356,107 @@ public class FolioProductSnapshotService {
 
     private record ModeFailure(String errorCode, Integer rawCode,
                                String modeName, String recommendation) { }
+
+    private final class StagingSink implements CaptureConsumer {
+        private final long generationId;
+        private final String sourceDatabase;
+        private final int warehouseId;
+        private final LocalDateTime capturedAt;
+        private final LocalDate horizonStart;
+        private final LocalDate asOfDate;
+        private final String leaseScope;
+        private final String leaseOwner;
+        private final List<MonthlyMetric> monthly = new ArrayList<>(STAGING_BATCH_SIZE);
+        private final List<CurrentMetric> current = new ArrayList<>(STAGING_BATCH_SIZE);
+        private final List<Alert> alerts = new ArrayList<>(STAGING_BATCH_SIZE);
+        private long movementFactRows;
+        private int monthlyMetricRows;
+        private int movementRowsSinceHeartbeat;
+        private int productsSinceHeartbeat;
+
+        private StagingSink(long generationId, String sourceDatabase, int warehouseId,
+                            LocalDateTime capturedAt, LocalDate horizonStart,
+                            LocalDate asOfDate, String leaseScope, String leaseOwner) {
+            this.generationId = generationId;
+            this.sourceDatabase = sourceDatabase;
+            this.warehouseId = warehouseId;
+            this.capturedAt = capturedAt;
+            this.horizonStart = horizonStart;
+            this.asOfDate = asOfDate;
+            this.leaseScope = leaseScope;
+            this.leaseOwner = leaseOwner;
+        }
+
+        @Override
+        public void acceptMovementBatch(List<MovementFact> rows) {
+            snapshotDao.stageMovements(generationId, sourceDatabase, warehouseId,
+                    capturedAt, rows);
+            movementFactRows += rows.size();
+            movementRowsSinceHeartbeat += rows.size();
+            if (movementRowsSinceHeartbeat >= 30_000) heartbeat();
+        }
+
+        @Override
+        public void acceptProductActivity(ProductCard product,
+                                          List<MonthlyActivity> rows) {
+            var result = economicsCalculator.calculateProduct(
+                    product, rows, horizonStart, asOfDate);
+            monthly.addAll(result.monthly());
+            current.add(result.current());
+            alerts.addAll(result.alerts());
+            productsSinceHeartbeat++;
+            if (productsSinceHeartbeat >= 1_000) heartbeat();
+            flushIfNeeded();
+        }
+
+        private void flushIfNeeded() {
+            if (monthly.size() >= STAGING_BATCH_SIZE) flushMonthly();
+            if (current.size() >= STAGING_BATCH_SIZE) flushCurrent();
+            if (alerts.size() >= STAGING_BATCH_SIZE) flushAlerts();
+        }
+
+        private void finish() {
+            flushMonthly();
+            flushCurrent();
+            flushAlerts();
+            heartbeat();
+        }
+
+        private void heartbeat() {
+            if (!snapshotDao.renewLease(leaseScope, leaseOwner, leaseSeconds)) {
+                throw new IllegalStateException("Product snapshot lease was lost during capture");
+            }
+            snapshotDao.heartbeatGeneration(generationId, LocalDateTime.now(clock));
+            Runtime runtime = Runtime.getRuntime();
+            long usedMiB = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024);
+            long maxMiB = runtime.maxMemory() / (1024 * 1024);
+            log.info("[folio.product.snapshot] streaming generation={} warehouse={} movementFacts={} monthly={} heapMiB={}/{}",
+                    generationId, warehouseId, movementFactRows,
+                    monthlyMetricRows + monthly.size(), usedMiB, maxMiB);
+            movementRowsSinceHeartbeat = 0;
+            productsSinceHeartbeat = 0;
+        }
+
+        private void flushMonthly() {
+            if (monthly.isEmpty()) return;
+            snapshotDao.stageMonthly(generationId, sourceDatabase, warehouseId,
+                    capturedAt, List.copyOf(monthly));
+            monthlyMetricRows += monthly.size();
+            monthly.clear();
+        }
+
+        private void flushCurrent() {
+            if (current.isEmpty()) return;
+            snapshotDao.stageCurrent(generationId, sourceDatabase, warehouseId,
+                    capturedAt, List.copyOf(current));
+            current.clear();
+        }
+
+        private void flushAlerts() {
+            if (alerts.isEmpty()) return;
+            snapshotDao.stageAlerts(generationId, sourceDatabase, warehouseId,
+                    capturedAt, List.copyOf(alerts));
+            alerts.clear();
+        }
+    }
 }

@@ -37,8 +37,18 @@ Content-Type: application/json
 GET /admin/folio/accounting-prices/snapshot/status
 ```
 
-Фазы: `QUEUED`, `SOURCE_CAPTURE`, `ECONOMIC_CALCULATION`, `PUBLISHING`,
-`COMPLETED`, `FAILED`.
+Фазы: `QUEUED`, `SOURCE_CAPTURE`, `PUBLISHING`, `COMPLETED`, `FAILED`.
+
+Начиная с миграции V10 чтение движений выполняется потоком с пакетом не более
+300 строк. Movement facts и рассчитанные метрики сначала записываются в
+служебные таблицы `*_stage` по `generation_id`. Java не держит полный список
+движений и все месячные метрики склада в heap. После успешного чтения активные
+таблицы заменяются из staging одной транзакцией MariaDB. При ошибке staging
+удаляется, а прежний активный снимок остаётся доступным.
+Во время чтения журнал периодически пишет `movementFacts`, `monthly` и
+`heapMiB=used/max`; одновременно продлеваются MariaDB lease и heartbeat
+поколения. После неожиданного завершения следующий запуск помечает оставшееся
+`BUILDING` поколение ошибочным и очищает его staging.
 
 `analyticsSchemaVersion=2` означает, что поколение содержит movement fact и
 разделение `regular/one_off`. После применения миграции V9 старое активное
