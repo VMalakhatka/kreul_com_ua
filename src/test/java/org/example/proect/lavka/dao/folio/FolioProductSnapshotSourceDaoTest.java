@@ -95,6 +95,58 @@ class FolioProductSnapshotSourceDaoTest {
         assertThat(activityRows).containsEntry("SKU-1", 1).containsEntry("SKU-2", 0);
     }
 
+    @Test
+    void movementQueryUsesCanonicalCardSkuForGroupingAndOrdering() {
+        assertThat(FolioProductSnapshotSourceDao.MOVEMENT_FACT_SQL)
+                .contains("ISNULL(a.COD_ARTIC,m.NAME_PREDM) AS NAME_PREDM")
+                .contains("ORDER BY ISNULL(a.COD_ARTIC,m.NAME_PREDM)");
+    }
+
+    @Test
+    void movementStreamingRejectsARepeatedCanonicalSkuBeforeStagingDuplicates() {
+        Map<String, FolioProductSnapshotSourceDao.ProductCard> products = new LinkedHashMap<>();
+        products.put("SKU-1", product("SKU-1"));
+        products.put("SKU-2", product("SKU-2"));
+        var accumulator = new FolioProductSnapshotSourceDao.MovementStreamAccumulator(
+                products, new FolioProductSnapshotSourceDao.CaptureConsumer() {
+            @Override
+            public void acceptMovementBatch(
+                    List<FolioProductSnapshotSourceDao.MovementFact> rows) {
+            }
+
+            @Override
+            public void acceptProductActivity(
+                    FolioProductSnapshotSourceDao.ProductCard product,
+                    List<FolioProductSnapshotSourceDao.MonthlyActivity> rows) {
+            }
+        });
+
+        accumulator.add(movement(1, "SKU-1"));
+        accumulator.add(movement(2, "SKU-2"));
+        accumulator.add(movement(3, "SKU-1"));
+
+        assertThatThrownBy(accumulator::finish)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("non-contiguous rows")
+                .hasMessageContaining("SKU-1");
+    }
+
+    private static FolioProductSnapshotSourceDao.MovementFact movement(long recno, String sku) {
+        var base = movement(recno, "*ПРЕДОПЛАТА", "REGULAR", "SALE",
+                "1", "2", "1");
+        return new FolioProductSnapshotSourceDao.MovementFact(
+                base.movementRecno(), base.documentId(), base.documentNumber(),
+                base.documentDate(), sku, base.quantity(), base.signedQuantity(),
+                base.saleAmount(), base.accountingValue(), base.signedAccountingValue(),
+                base.movementType(), base.documentType(), base.operationKind(),
+                base.accounted(), base.returnFlag(), base.movementClass(),
+                base.stockDirection(), base.demandMode(), base.paymentTerms(),
+                base.customerSegment(), base.counterpartyShortName(),
+                base.counterpartyName(), base.organizationType(), base.currentSupplier(),
+                base.supplierState(), base.affectsStock(), base.affectsFinancialSales(),
+                base.affectsPlanningDemand());
+    }
+
     private static FolioProductSnapshotSourceDao.MovementFact movement(
             long recno, String operation, String demandMode, String movementClass,
             String quantity, String revenue, String cost) {

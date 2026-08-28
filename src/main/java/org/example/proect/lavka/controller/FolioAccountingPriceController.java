@@ -80,7 +80,7 @@ public class FolioAccountingPriceController {
     @PostMapping("/recalculate/native-range")
     @Operation(
             summary = "Запустить штатный перерасчёт выбранных SKU или диапазона",
-            description = "Принимает либо fromSku+toSku, либо skus[]. Каждый SKU обрабатывается safe-процедурой в отдельной транзакции. Preview всегда откатывается; apply фиксирует только успешно проверенные SKU и продолжает после диагностируемых проблем."
+            description = "Принимает либо fromSku+toSku, либо skus[]. Каждый SKU обрабатывается safe-процедурой в отдельной транзакции. Preview всегда откатывается. Apply по умолчанию выполняет preflight+apply; applyMode=SAFE_APPLY_ONLY выполняет один проход, фиксирует чистый SKU, откатывает и журналирует диагностируемый SKU, а на неизвестной ошибке останавливается."
     )
     public ResponseEntity<FolioAccountingPriceNativeFullStatusResponse> recalculateNativeRange(
             @Valid @RequestBody FolioAccountingPriceNativeFullRequest request) {

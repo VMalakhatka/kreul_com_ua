@@ -15,6 +15,8 @@ import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -376,11 +378,11 @@ public class FolioProductSnapshotDao {
             ps.setString(p++, db); ps.setInt(p++, warehouseId);
             ps.setLong(p++, row.movementRecno()); ps.setLong(p++, generationId);
             nullableLong(ps, p++, row.documentId());
-            nullableDecimal(ps, p++, row.documentNumber());
+            nullableDecimal(ps, p++, row.documentNumber(), 4);
             nullableDate(ps, p++, row.documentDate()); ps.setString(p++, row.sku());
-            ps.setBigDecimal(p++, row.quantity()); ps.setBigDecimal(p++, row.signedQuantity());
-            ps.setBigDecimal(p++, row.saleAmount()); ps.setBigDecimal(p++, row.accountingValue());
-            ps.setBigDecimal(p++, row.signedAccountingValue());
+            decimal(ps, p++, row.quantity(), 4); decimal(ps, p++, row.signedQuantity(), 4);
+            decimal(ps, p++, row.saleAmount(), 4); decimal(ps, p++, row.accountingValue(), 4);
+            decimal(ps, p++, row.signedAccountingValue(), 4);
             ps.setString(p++, row.movementType()); ps.setString(p++, row.documentType());
             ps.setString(p++, row.operationKind()); ps.setBoolean(p++, row.accounted());
             ps.setBoolean(p++, row.returnFlag()); ps.setString(p++, row.movementClass());
@@ -417,24 +419,24 @@ public class FolioProductSnapshotDao {
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """.formatted(table), rows, BATCH, (ps, row) -> {
             int p=1; ps.setString(p++,db); ps.setInt(p++,warehouseId); ps.setString(p++,row.sku());
-            ps.setObject(p++,row.monthStart()); ps.setBigDecimal(p++,row.openingQuantity());
-            ps.setBigDecimal(p++,row.closingQuantity()); ps.setBigDecimal(p++,row.openingInventoryValue());
-            ps.setBigDecimal(p++,row.closingInventoryValue()); ps.setBigDecimal(p++,row.receiptQuantity());
-            ps.setBigDecimal(p++,row.receiptCost()); ps.setBigDecimal(p++,row.salesQuantity());
-            ps.setBigDecimal(p++,row.salesRevenue()); ps.setBigDecimal(p++,row.salesCogs());
-            ps.setBigDecimal(p++,row.grossProfit());
-            ps.setBigDecimal(p++,row.regularSalesQuantity());
-            ps.setBigDecimal(p++,row.regularSalesRevenue());
-            ps.setBigDecimal(p++,row.regularSalesCogs());
-            ps.setBigDecimal(p++,row.regularGrossProfit());
-            ps.setBigDecimal(p++,row.oneOffSalesQuantity());
-            ps.setBigDecimal(p++,row.oneOffSalesRevenue());
-            ps.setBigDecimal(p++,row.oneOffSalesCogs());
-            ps.setBigDecimal(p++,row.oneOffGrossProfit());
-            ps.setBigDecimal(p++,row.returnQuantity());
-            ps.setBigDecimal(p++,row.returnRevenue()); ps.setBigDecimal(p++,row.averageInventoryValue());
-            nullableDecimal(ps,p++,row.inventoryTurns()); nullableDecimal(ps,p++,row.gmroi());
-            nullableDecimal(ps,p++,row.sellThroughPercent()); ps.setLong(p++,generationId);
+            ps.setObject(p++,row.monthStart()); decimal(ps,p++,row.openingQuantity(),4);
+            decimal(ps,p++,row.closingQuantity(),4); decimal(ps,p++,row.openingInventoryValue(),4);
+            decimal(ps,p++,row.closingInventoryValue(),4); decimal(ps,p++,row.receiptQuantity(),4);
+            decimal(ps,p++,row.receiptCost(),4); decimal(ps,p++,row.salesQuantity(),4);
+            decimal(ps,p++,row.salesRevenue(),4); decimal(ps,p++,row.salesCogs(),4);
+            decimal(ps,p++,row.grossProfit(),4);
+            decimal(ps,p++,row.regularSalesQuantity(),4);
+            decimal(ps,p++,row.regularSalesRevenue(),4);
+            decimal(ps,p++,row.regularSalesCogs(),4);
+            decimal(ps,p++,row.regularGrossProfit(),4);
+            decimal(ps,p++,row.oneOffSalesQuantity(),4);
+            decimal(ps,p++,row.oneOffSalesRevenue(),4);
+            decimal(ps,p++,row.oneOffSalesCogs(),4);
+            decimal(ps,p++,row.oneOffGrossProfit(),4);
+            decimal(ps,p++,row.returnQuantity(),4);
+            decimal(ps,p++,row.returnRevenue(),4); decimal(ps,p++,row.averageInventoryValue(),4);
+            nullableDecimal(ps,p++,row.inventoryTurns(),6); nullableDecimal(ps,p++,row.gmroi(),6);
+            nullableDecimal(ps,p++,row.sellThroughPercent(),4); ps.setLong(p++,generationId);
             ps.setTimestamp(p,ts(at));
         });
     }
@@ -501,34 +503,34 @@ public class FolioProductSnapshotDao {
                 """.formatted(table), rows, BATCH, (ps,row)->{
             int p=1; ps.setString(p++,db); ps.setInt(p++,warehouseId); ps.setString(p++,row.sku());
             ps.setString(p++,row.productName()); ps.setString(p++,row.currentSupplier());
-            ps.setString(p++,row.supplierState()); ps.setBigDecimal(p++,row.physicalQuantity());
-            ps.setBigDecimal(p++,row.reservedQuantity()); ps.setBigDecimal(p++,row.availableQuantity());
-            ps.setBigDecimal(p++,row.accountingPrice()); ps.setBigDecimal(p++,row.inventoryValue());
+            ps.setString(p++,row.supplierState()); decimal(ps,p++,row.physicalQuantity(),4);
+            decimal(ps,p++,row.reservedQuantity(),4); decimal(ps,p++,row.availableQuantity(),4);
+            decimal(ps,p++,row.accountingPrice(),6); decimal(ps,p++,row.inventoryValue(),4);
             nullableDate(ps,p++,row.lastReceiptDate()); nullableDate(ps,p++,row.lastSaleDate());
             nullableDate(ps,p++,row.lastRegularSaleDate());
-            ps.setBigDecimal(p++,row.soldUnits30d()); ps.setBigDecimal(p++,row.soldUnits90d());
-            ps.setBigDecimal(p++,row.soldUnits365d()); ps.setBigDecimal(p++,row.soldUnits730d());
-            ps.setBigDecimal(p++,row.regularSoldUnits30d());
-            ps.setBigDecimal(p++,row.regularSoldUnits90d());
-            ps.setBigDecimal(p++,row.regularSoldUnits365d());
-            ps.setBigDecimal(p++,row.regularSoldUnits730d());
-            ps.setBigDecimal(p++,row.oneOffSoldUnits30d());
-            ps.setBigDecimal(p++,row.oneOffSoldUnits90d());
-            ps.setBigDecimal(p++,row.oneOffSoldUnits365d());
-            ps.setBigDecimal(p++,row.oneOffSoldUnits730d());
-            ps.setBigDecimal(p++,row.revenue90d()); ps.setBigDecimal(p++,row.revenue365d());
-            ps.setBigDecimal(p++,row.regularRevenue90d());
-            ps.setBigDecimal(p++,row.regularRevenue365d());
-            ps.setBigDecimal(p++,row.oneOffRevenue90d());
-            ps.setBigDecimal(p++,row.oneOffRevenue365d());
-            ps.setBigDecimal(p++,row.grossProfit90d()); ps.setBigDecimal(p++,row.grossProfit365d());
-            ps.setBigDecimal(p++,row.regularGrossProfit90d());
-            ps.setBigDecimal(p++,row.regularGrossProfit365d());
-            ps.setBigDecimal(p++,row.oneOffGrossProfit90d());
-            ps.setBigDecimal(p++,row.oneOffGrossProfit365d());
-            ps.setBigDecimal(p++,row.averageInventory90d()); ps.setBigDecimal(p++,row.averageInventory365d());
-            nullableDecimal(ps,p++,row.inventoryTurns365d()); nullableDecimal(ps,p++,row.gmroi365d());
-            nullableDecimal(ps,p++,row.coverageDays()); ps.setString(p++,row.healthStatus());
+            decimal(ps,p++,row.soldUnits30d(),4); decimal(ps,p++,row.soldUnits90d(),4);
+            decimal(ps,p++,row.soldUnits365d(),4); decimal(ps,p++,row.soldUnits730d(),4);
+            decimal(ps,p++,row.regularSoldUnits30d(),4);
+            decimal(ps,p++,row.regularSoldUnits90d(),4);
+            decimal(ps,p++,row.regularSoldUnits365d(),4);
+            decimal(ps,p++,row.regularSoldUnits730d(),4);
+            decimal(ps,p++,row.oneOffSoldUnits30d(),4);
+            decimal(ps,p++,row.oneOffSoldUnits90d(),4);
+            decimal(ps,p++,row.oneOffSoldUnits365d(),4);
+            decimal(ps,p++,row.oneOffSoldUnits730d(),4);
+            decimal(ps,p++,row.revenue90d(),4); decimal(ps,p++,row.revenue365d(),4);
+            decimal(ps,p++,row.regularRevenue90d(),4);
+            decimal(ps,p++,row.regularRevenue365d(),4);
+            decimal(ps,p++,row.oneOffRevenue90d(),4);
+            decimal(ps,p++,row.oneOffRevenue365d(),4);
+            decimal(ps,p++,row.grossProfit90d(),4); decimal(ps,p++,row.grossProfit365d(),4);
+            decimal(ps,p++,row.regularGrossProfit90d(),4);
+            decimal(ps,p++,row.regularGrossProfit365d(),4);
+            decimal(ps,p++,row.oneOffGrossProfit90d(),4);
+            decimal(ps,p++,row.oneOffGrossProfit365d(),4);
+            decimal(ps,p++,row.averageInventory90d(),4); decimal(ps,p++,row.averageInventory365d(),4);
+            nullableDecimal(ps,p++,row.inventoryTurns365d(),6); nullableDecimal(ps,p++,row.gmroi365d(),6);
+            nullableDecimal(ps,p++,row.coverageDays(),2); ps.setString(p++,row.healthStatus());
             ps.setLong(p++,generationId); ps.setTimestamp(p,ts(at));
         });
     }
@@ -600,8 +602,16 @@ public class FolioProductSnapshotDao {
     private static void nullableTimestamp(PreparedStatement ps,int p,LocalDateTime v)throws java.sql.SQLException{
         if(v==null)ps.setNull(p,Types.TIMESTAMP);else ps.setTimestamp(p,ts(v));
     }
-    private static void nullableDecimal(PreparedStatement ps,int p,java.math.BigDecimal v)throws java.sql.SQLException{
-        if(v==null)ps.setNull(p,Types.DECIMAL);else ps.setBigDecimal(p,v);
+    private static void decimal(PreparedStatement ps,int p,BigDecimal v,int scale)
+            throws java.sql.SQLException {
+        ps.setBigDecimal(p, scaled(v, scale));
+    }
+    private static void nullableDecimal(PreparedStatement ps,int p,BigDecimal v,int scale)
+            throws java.sql.SQLException {
+        if(v==null)ps.setNull(p,Types.DECIMAL);else ps.setBigDecimal(p,scaled(v,scale));
+    }
+    static BigDecimal scaled(BigDecimal value,int scale){
+        return value.setScale(scale, RoundingMode.HALF_UP);
     }
     private static String truncate(String value,int max){
         if(value==null)return null; return value.length()<=max?value:value.substring(0,max);

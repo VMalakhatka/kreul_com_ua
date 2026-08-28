@@ -123,15 +123,31 @@ public class FolioProductSnapshotService {
     public FolioProductSnapshotStatusResponse status() {
         FolioProductSnapshotStatusResponse current = live.get();
         if (current != null) return withAccepted(current, false);
-        return snapshotDao.latest().map(g -> new FolioProductSnapshotStatusResponse(
-                "ACTIVE".equals(g.status()), false, false, g.id(), g.status(), g.status(),
-                g.sourceDatabase(), g.warehouseId(), g.horizonMonths(),
-                g.analyticsSchemaVersion(), g.startedAt(),
-                g.completedAt(), g.totalProducts(), g.movementRows(),
-                g.movementFactRows(), g.monthlyMetricRows(),
-                g.unverified(), g.dirty(), g.created(), g.removed(),
-                g.warehouseDigest(), null, null, null, null, g.error()
-        )).orElseGet(() -> new FolioProductSnapshotStatusResponse(
+        return snapshotDao.latest().map(g -> {
+            if ("BUILDING".equalsIgnoreCase(g.status())) {
+                return new FolioProductSnapshotStatusResponse(
+                        false, false, false, g.id(), "INTERRUPTED",
+                        "RECOVERY_REQUIRED", g.sourceDatabase(), g.warehouseId(),
+                        g.horizonMonths(), g.analyticsSchemaVersion(), g.startedAt(),
+                        g.completedAt(), g.totalProducts(), g.movementRows(),
+                        g.movementFactRows(), g.monthlyMetricRows(),
+                        g.unverified(), g.dirty(), g.created(), g.removed(),
+                        g.warehouseDigest(), "PRODUCT_SNAPSHOT_INTERRUPTED_BY_RESTART",
+                        null, null,
+                        "No snapshot process is active. Start snapshot refresh again; "
+                                + "the previous active snapshot remains available.",
+                        "The product snapshot was interrupted by a Java restart"
+                );
+            }
+            return new FolioProductSnapshotStatusResponse(
+                    "ACTIVE".equals(g.status()), false, false, g.id(), g.status(),
+                    g.status(), g.sourceDatabase(), g.warehouseId(), g.horizonMonths(),
+                    g.analyticsSchemaVersion(), g.startedAt(), g.completedAt(),
+                    g.totalProducts(), g.movementRows(), g.movementFactRows(),
+                    g.monthlyMetricRows(), g.unverified(), g.dirty(), g.created(),
+                    g.removed(), g.warehouseDigest(), null, null, null, null, g.error()
+            );
+        }).orElseGet(() -> new FolioProductSnapshotStatusResponse(
                 true, false, false, null, "NOT_READY", "IDLE", null, null,
                 null, null, null, null, 0, 0, 0, 0, 0, 0, 0, 0, null,
                 null, null, null, null, null));

@@ -700,6 +700,44 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 
 ### Контракт счётчиков native-range
 
+`native-range` поддерживает два режима apply:
+
+| `applyMode` | Поведение |
+|---|---|
+| отсутствует или `PREFLIGHT_AND_APPLY` | совместимый двухпроходный режим: rollback-preflight всего набора, затем apply |
+| `SAFE_APPLY_ONLY` | однопроходный apply только для `native-range`: каждый SKU сразу выполняется safe-процедурой в собственной транзакции |
+
+Рекомендуемый запрос WordPress-кампании после установки и golden-master
+`LAVKA_I_UCHET_TOVAR_SAFE`:
+
+```json
+{
+  "warehouseId": 5,
+  "skus": ["KR-84127", "СТИ-741449R", "ТП-0001"],
+  "previewOnly": false,
+  "confirmApply": true,
+  "applyMode": "SAFE_APPLY_ONLY"
+}
+```
+
+`SAFE_APPLY_ONLY` нельзя передавать в `native-full` и нельзя сочетать с
+`previewOnly=true`. В этом режиме:
+
+1. чистый SKU проходит OUT/cursor/transaction/protected-state postcheck и
+   фиксируется отдельным commit;
+2. известная проблема с `returnCode=20` полностью откатывает только текущий
+   SKU, добавляется в `warnings`, получает состояние `FAILED`, а обработка
+   следующего SKU продолжается;
+3. неизвестный return code, SQL/contract/postcheck error откатывает текущий SKU
+   и останавливает job как `FAILED` или `FAILED_PARTIAL`;
+4. при потере соединения или недоказуемом результате транзакции возвращается
+   `OUTCOME_UNKNOWN`, автоматический повтор запрещён;
+5. уже подтверждённые commit предыдущих SKU не отменяются.
+
+В однопроходном режиме `preflightChunks=0`, а `procedureCalls` обычно равно
+числу уже проверенных SKU. Полный `native-full` сохраняет прежний
+rollback-preflight и не поддерживает этот режим.
+
 Для `POST /admin/folio/accounting-prices/recalculate/native-range` Java сначала
 получает точный список выбранных SKU. Поэтому общий размер кампании не берётся
 из `n_tot` однотоварной `LAVKA_I_UCHET_TOVAR_SAFE`:

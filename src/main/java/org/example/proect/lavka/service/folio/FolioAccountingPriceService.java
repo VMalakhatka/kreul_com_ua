@@ -332,6 +332,11 @@ public class FolioAccountingPriceService {
     public FolioAccountingPriceNativeFullStatusResponse requestNativeFull(
             FolioAccountingPriceNativeFullRequest request) {
         validateNativeFullRequest(request);
+        if (request.isSafeApplyOnly()) {
+            throw new FolioAccountValidationException(
+                    "NATIVE_FULL_SAFE_APPLY_ONLY_NOT_ALLOWED",
+                    "SAFE_APPLY_ONLY is supported only by /recalculate/native-range");
+        }
         if (request.hasSelection()) {
             throw new FolioAccountValidationException(
                     "NATIVE_FULL_SELECTION_NOT_ALLOWED",
@@ -908,11 +913,18 @@ public class FolioAccountingPriceService {
             nativeCheckpoint(progress, "SELECTION_RESOLVED", null);
             logNativeArithmeticSessionOptions(progress);
 
-            progress.phase = "PRECHECK_RUNNING";
-            progress.status = "RUNNING";
-            nativeCheckpoint(progress, "PRECHECK_STARTED", null);
-            publishNative(progress, true, true, null);
-            runNativeSelectionPass(progress, method, selectedSkus, true, null);
+            boolean safeApplyOnly = !progress.request.previewOnly()
+                    && progress.request.isSafeApplyOnly();
+            if (!safeApplyOnly) {
+                progress.phase = "PRECHECK_RUNNING";
+                progress.status = "RUNNING";
+                nativeCheckpoint(progress, "PRECHECK_STARTED", null);
+                publishNative(progress, true, true, null);
+                runNativeSelectionPass(progress, method, selectedSkus, true, null);
+            } else {
+                log.info("[folio.accounting-price] native_selection_safe_apply_only job={} warehouse={} skuCount={}",
+                        progress.jobId, progress.request.warehouseId(), selectedSkus.size());
+            }
 
             if (progress.request.previewOnly()) {
                 progress.status = progress.warningCount == 0
@@ -2403,6 +2415,18 @@ public class FolioAccountingPriceService {
                     "NATIVE_FULL_CONFIRMATION_REQUIRED",
                     "confirmApply=true is required for a native full recalculation"
             );
+        }
+        String applyMode = request.effectiveApplyMode();
+        if (!FolioAccountingPriceNativeFullRequest.PREFLIGHT_AND_APPLY.equals(applyMode)
+                && !FolioAccountingPriceNativeFullRequest.SAFE_APPLY_ONLY.equals(applyMode)) {
+            throw new FolioAccountValidationException(
+                    "NATIVE_APPLY_MODE_INVALID",
+                    "applyMode must be PREFLIGHT_AND_APPLY or SAFE_APPLY_ONLY");
+        }
+        if (request.previewOnly() && request.isSafeApplyOnly()) {
+            throw new FolioAccountValidationException(
+                    "NATIVE_SAFE_APPLY_ONLY_PREVIEW_INVALID",
+                    "SAFE_APPLY_ONLY requires previewOnly=false and confirmApply=true");
         }
     }
 

@@ -32,6 +32,38 @@ public class FolioProductSnapshotSourceDao {
     private static final String RECEIPT = "\u041f";
     private static final String EXPENSE = "\u0420";
     private static final int STREAM_BATCH_SIZE = 300;
+    /*
+     * NAME_PREDM is a historical copy of the SKU and may differ from the
+     * current card code only by case, spaces or another collation-equivalent
+     * spelling. Always stream the canonical SCL_ARTC value. Otherwise Java
+     * can calculate the same SKU/month twice while MariaDB (unicode_ci)
+     * correctly treats both spellings as one primary key.
+     */
+    static final String MOVEMENT_FACT_SQL = """
+            SELECT m.RECNO, m.UNICUM_NUM, m.NUMDOCM_PR, m.DATE_PREDM,
+                   ISNULL(a.COD_ARTIC,m.NAME_PREDM) AS NAME_PREDM,
+                   m.KOLC_PREDM, m.SUM_PREDM, m.SUM_UCHET,
+                   m.TYPDOCM_PR, n.TYPE_DOC,
+                   CASE WHEN ISNULL(n.VID_DOC,'')<>'' THEN n.VID_DOC
+                        ELSE m.VID_DOC END AS OPERATION_KIND,
+                   m.STND_UCHET, m.VOZVRAT_PR,
+                   CASE WHEN ISNULL(m.ORG_PREDM,'')<>'' THEN m.ORG_PREDM
+                        ELSE n.BRIEFORG END AS COUNTERPARTY_ID,
+                   o.NAME_USER AS COUNTERPARTY_NAME,
+                   o.MY_ORGANIZ AS ORGANIZATION_TYPE,
+                   a.DOP2_ARTIC AS CURRENT_SUPPLIER
+              FROM dbo.SCL_MOVE m WITH (HOLDLOCK)
+              LEFT JOIN dbo.SCL_NAKL n WITH (HOLDLOCK)
+                ON n.UNICUM_NUM=m.UNICUM_NUM
+              LEFT JOIN dbo._PARTNER o WITH (HOLDLOCK)
+                ON o.N_USER=CASE WHEN ISNULL(m.ORG_PREDM,'')<>''
+                               THEN m.ORG_PREDM ELSE n.BRIEFORG END
+              LEFT JOIN dbo.SCL_ARTC a WITH (HOLDLOCK)
+                ON a.ID_SCLAD=m.ID_SCLAD AND a.COD_ARTIC=m.NAME_PREDM
+             WHERE m.ID_SCLAD=? AND m.TYPDOCM_PR IN (?,?,?)
+               AND m.DATE_PREDM>=? AND m.DATE_PREDM<?
+             ORDER BY ISNULL(a.COD_ARTIC,m.NAME_PREDM), m.DATE_PREDM, m.RECNO
+            """;
 
     private final JdbcTemplate jdbc;
 
@@ -355,30 +387,7 @@ public class FolioProductSnapshotSourceDao {
         MovementStreamAccumulator accumulator = new MovementStreamAccumulator(
                 productsBySku, consumer);
         jdbc.query(con -> {
-            var ps = con.prepareStatement("""
-                    SELECT m.RECNO, m.UNICUM_NUM, m.NUMDOCM_PR, m.DATE_PREDM,
-                           m.NAME_PREDM, m.KOLC_PREDM, m.SUM_PREDM, m.SUM_UCHET,
-                           m.TYPDOCM_PR, n.TYPE_DOC,
-                           CASE WHEN ISNULL(n.VID_DOC,'')<>'' THEN n.VID_DOC
-                                ELSE m.VID_DOC END AS OPERATION_KIND,
-                           m.STND_UCHET, m.VOZVRAT_PR,
-                           CASE WHEN ISNULL(m.ORG_PREDM,'')<>'' THEN m.ORG_PREDM
-                                ELSE n.BRIEFORG END AS COUNTERPARTY_ID,
-                           o.NAME_USER AS COUNTERPARTY_NAME,
-                           o.MY_ORGANIZ AS ORGANIZATION_TYPE,
-                           a.DOP2_ARTIC AS CURRENT_SUPPLIER
-                      FROM dbo.SCL_MOVE m WITH (HOLDLOCK)
-                      LEFT JOIN dbo.SCL_NAKL n WITH (HOLDLOCK)
-                        ON n.UNICUM_NUM=m.UNICUM_NUM
-                      LEFT JOIN dbo._PARTNER o WITH (HOLDLOCK)
-                        ON o.N_USER=CASE WHEN ISNULL(m.ORG_PREDM,'')<>''
-                                       THEN m.ORG_PREDM ELSE n.BRIEFORG END
-                      LEFT JOIN dbo.SCL_ARTC a WITH (HOLDLOCK)
-                        ON a.ID_SCLAD=m.ID_SCLAD AND a.COD_ARTIC=m.NAME_PREDM
-                     WHERE m.ID_SCLAD=? AND m.TYPDOCM_PR IN (?,?,?)
-                       AND m.DATE_PREDM>=? AND m.DATE_PREDM<?
-                     ORDER BY m.NAME_PREDM, m.DATE_PREDM, m.RECNO
-                    """);
+            var ps = con.prepareStatement(MOVEMENT_FACT_SQL);
             ps.setQueryTimeout(timeout);
             ps.setFetchSize(STREAM_BATCH_SIZE);
             ps.setInt(1, warehouseId);
@@ -841,8 +850,12 @@ public class FolioProductSnapshotSourceDao {
             if (currentSku == null) return;
             ProductCard product = productsBySku.get(currentSku);
             if (product != null) {
+                if (!productsWithMovements.add(product.sku())) {
+                    throw new IllegalStateException(
+                            "Folio movement stream returned non-contiguous rows for canonical SKU: "
+                                    + product.sku());
+                }
                 consumer.acceptProductActivity(product, List.copyOf(productActivity));
-                productsWithMovements.add(product.sku());
             }
             productActivity.clear();
             currentSku = null;

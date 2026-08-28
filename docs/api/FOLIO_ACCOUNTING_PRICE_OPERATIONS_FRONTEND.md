@@ -96,6 +96,14 @@ status = ACTIVE
 phase = COMPLETED
 ```
 
+`running=false` является главным признаком отсутствия фоновой Java-задачи.
+После рестарта незавершённый снимок возвращается как
+`INTERRUPTED/RECOVERY_REQUIRED` с кодом
+`PRODUCT_SNAPSHOT_INTERRUPTED_BY_RESTART`. Кампания должна освободить общий
+lock, остановить автоматическое расписание и показать оператору предложение
+запустить кампанию заново. Нельзя продолжать показывать такой снимок как
+`BUILDING` и нельзя автоматически начинать apply.
+
 Склады строятся последовательно.
 
 ### 5.2. Обычная проверка одного SKU
@@ -154,7 +162,8 @@ POST /admin/folio/accounting-prices/recalculate/native-range
   "warehouseId": 5,
   "skus": ["KR-84127", "СТИ-741449R", "ТП-0001"],
   "previewOnly": false,
-  "confirmApply": true
+  "confirmApply": true,
+  "applyMode": "SAFE_APPLY_ONLY"
 }
 ```
 
@@ -178,9 +187,16 @@ Preview:
 GET /admin/folio/accounting-prices/recalculate/native-range/status
 ```
 
-Apply сначала выполняет rollback-preflight всего набора, затем второй проход с
-отдельным `COMMIT` каждого чистого SKU. Проблемный SKU откатывается, получает
-warning и `FAILED`; остальные продолжаются.
+WordPress-кампания использует `SAFE_APPLY_ONLY`: предварительного прохода нет,
+каждый SKU сразу выполняется safe-процедурой в отдельной транзакции. Чистый SKU
+проходит postcheck и фиксируется. Известная проблема (`returnCode=20` с полной
+диагностикой) откатывает только этот SKU, записывает warning и `FAILED`, после
+чего кампания продолжает следующие товары. Неизвестная ошибка откатывает
+текущий SKU и останавливает кампанию; предыдущие commit остаются `VERIFIED`.
+
+Если `applyMode` отсутствует, Java сохраняет совместимый режим
+`PREFLIGHT_AND_APPLY` с rollback-preflight и вторым apply-проходом. Preview
+всегда выполняется отдельно с `previewOnly=true` и без `SAFE_APPLY_ONLY`.
 
 ### 5.4. Полный склад
 

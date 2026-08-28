@@ -9,6 +9,7 @@ import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.Movement
 import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.ProductCard;
 import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.Warehouse;
 import org.example.proect.lavka.dao.wp.FolioProductSnapshotDao;
+import org.example.proect.lavka.dao.wp.FolioProductSnapshotDao.Generation;
 import org.example.proect.lavka.dao.wp.FolioProductSnapshotDao.Publish;
 import org.example.proect.lavka.dto.folio.FolioProductSnapshotRefreshRequest;
 import org.junit.jupiter.api.Test;
@@ -23,9 +24,11 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -40,6 +43,30 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class FolioProductSnapshotServiceTest {
+
+    @Test
+    void persistedBuildingGenerationIsReportedAsInterruptedAfterRestart() {
+        FolioProductSnapshotSourceDao source = mock(FolioProductSnapshotSourceDao.class);
+        FolioProductSnapshotDao snapshot = mock(FolioProductSnapshotDao.class);
+        FolioAccountingPriceDao accounting = mock(FolioAccountingPriceDao.class);
+        when(snapshot.latest()).thenReturn(Optional.of(new Generation(
+                35L, "Paint_Ua", 9, 36, 2, "BUILDING", "MANUAL",
+                LocalDateTime.of(2026, 8, 27, 9, 15), null,
+                0, 0, 0, 0, 0, 0, 0, 0, null, null)));
+        FolioProductSnapshotService service = new FolioProductSnapshotService(
+                source, snapshot, accounting, new FolioProductEconomicsCalculator(),
+                directExecutor(), Clock.fixed(Instant.parse("2026-08-27T10:00:00Z"),
+                ZoneOffset.UTC), transactionManager(), true, 24, 600, 5_000, 3_600);
+
+        var response = service.status();
+
+        assertThat(response.running()).isFalse();
+        assertThat(response.status()).isEqualTo("INTERRUPTED");
+        assertThat(response.phase()).isEqualTo("RECOVERY_REQUIRED");
+        assertThat(response.errorCode())
+                .isEqualTo("PRODUCT_SNAPSHOT_INTERRUPTED_BY_RESTART");
+        assertThat(response.recommendation()).contains("Start snapshot refresh again");
+    }
 
     @Test
     void stagesBoundedSourceOutputBeforePublishingGeneration() {

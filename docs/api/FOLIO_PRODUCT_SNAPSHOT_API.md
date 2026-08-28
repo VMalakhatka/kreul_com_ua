@@ -39,6 +39,21 @@ GET /admin/folio/accounting-prices/snapshot/status
 
 Фазы: `QUEUED`, `SOURCE_CAPTURE`, `PUBLISHING`, `COMPLETED`, `FAILED`.
 
+После перезапуска Java незавершённое поколение больше не выдаётся как реально
+работающее. Пока нового запуска ещё нет, status endpoint возвращает:
+
+```text
+running = false
+status = INTERRUPTED
+phase = RECOVERY_REQUIRED
+errorCode = PRODUCT_SNAPSHOT_INTERRUPTED_BY_RESTART
+```
+
+Это означает, что активного процесса и MSSQL-сессии снимка уже нет. Оператор
+должен повторить `POST .../snapshot/refresh`. Новый запуск помечает старое
+`BUILDING` поколение ошибочным, очищает его staging и сохраняет прежний
+опубликованный снимок до успешного завершения нового.
+
 Начиная с миграции V10 чтение движений выполняется потоком с пакетом не более
 300 строк. Movement facts и рассчитанные метрики сначала записываются в
 служебные таблицы `*_stage` по `generation_id`. Java не держит полный список
