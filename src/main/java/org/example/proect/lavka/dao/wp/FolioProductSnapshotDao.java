@@ -1,6 +1,7 @@
 package org.example.proect.lavka.dao.wp;
 
 import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.MovementFact;
+import org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.ProductFingerprint;
 import org.example.proect.lavka.service.folio.FolioProductEconomicsCalculator.Alert;
 import org.example.proect.lavka.service.folio.FolioProductEconomicsCalculator.CurrentMetric;
 import org.example.proect.lavka.service.folio.FolioProductEconomicsCalculator.MonthlyMetric;
@@ -179,6 +180,32 @@ public class FolioProductSnapshotDao {
                    AND present_in_folio=1
                 """, appliedDigest, ts(appliedAt), appliedDigest,
                 sourceDatabase, warehouseId, sku);
+    }
+
+    @Transactional(transactionManager = "wpTransactionManager")
+    public int[] confirmAppliedBatch(List<ProductFingerprint> fingerprints,
+                                     LocalDateTime appliedAt) {
+        if (fingerprints.isEmpty()) return new int[0];
+        int[][] batches = jdbc.batchUpdate("""
+                UPDATE folio_product_snapshot_item
+                   SET applied_digest=?, applied_at=?, last_error=NULL,
+                       verification_state=CASE
+                           WHEN observed_digest=? THEN 'VERIFIED'
+                           ELSE verification_state
+                       END
+                 WHERE source_database=? AND warehouse_id=? AND sku=?
+                   AND present_in_folio=1
+                """, fingerprints, BATCH, (ps, fingerprint) -> {
+            ps.setString(1, fingerprint.sourceDigest());
+            ps.setTimestamp(2, ts(appliedAt));
+            ps.setString(3, fingerprint.sourceDigest());
+            ps.setString(4, fingerprint.sourceDatabase());
+            ps.setInt(5, fingerprint.warehouseId());
+            ps.setString(6, fingerprint.sku());
+        });
+        return java.util.Arrays.stream(batches)
+                .flatMapToInt(java.util.Arrays::stream)
+                .toArray();
     }
 
     public int markRecalculationFailed(String sourceDatabase, int warehouseId,

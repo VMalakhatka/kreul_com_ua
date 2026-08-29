@@ -892,6 +892,7 @@ public class FolioAccountingPriceService {
     }
 
     private void runNativeSelection(NativeProgress progress) {
+        List<String> committedForBatchVerification = new ArrayList<>();
         try {
             nativeCheckpoint(progress, "JOB_STARTED", null);
             WarehouseScope scope = requireScope(progress.request.warehouseId());
@@ -936,7 +937,11 @@ public class FolioAccountingPriceService {
             }
 
             nativeCheckpoint(progress, "PROTECTED_BASELINE_CAPTURE", null);
-            NativeProtectedSnapshot protectedBaseline = captureNativeBaseline(
+            NativeProtectedSnapshot protectedBaseline = safeApplyOnly
+                    ? captureNativeSelectionBaseline(
+                    progress.database, progress.request.warehouseId(), method,
+                    selectedSkus)
+                    : captureNativeBaseline(
                     progress.database, progress.request.warehouseId(), method);
             progress.phase = "APPLY_RUNNING";
             progress.status = "RUNNING";
@@ -945,11 +950,35 @@ public class FolioAccountingPriceService {
             clearNativeCursor(progress);
             nativeCheckpoint(progress, "APPLY_STARTED", null);
             publishNative(progress, true, true, null);
-            runNativeSelectionPass(
-                    progress, method, selectedSkus, false, protectedBaseline);
+            try {
+                runNativeSelectionPass(
+                        progress, method, selectedSkus, false, protectedBaseline,
+                        committedForBatchVerification);
+            } catch (RuntimeException applyError) {
+                if (safeApplyOnly && !committedForBatchVerification.isEmpty()) {
+                    try {
+                        finalizeNativeSelectionVerification(
+                                progress, method, selectedSkus, protectedBaseline,
+                                committedForBatchVerification);
+                    } catch (RuntimeException verificationError) {
+                        applyError.addSuppressed(verificationError);
+                        log.error("[folio.accounting-price] native_selection_partial_verification_failed job={} warehouse={} committed={}: {}",
+                                progress.jobId, progress.request.warehouseId(),
+                                committedForBatchVerification.size(),
+                                safeMessage(verificationError), verificationError);
+                    }
+                }
+                throw applyError;
+            }
             nativeCheckpoint(progress, "PROTECTED_BASELINE_VERIFY", null);
-            verifyNativeBaseline(progress.database, progress.request.warehouseId(),
-                    method, protectedBaseline);
+            if (safeApplyOnly) {
+                finalizeNativeSelectionVerification(
+                        progress, method, selectedSkus, protectedBaseline,
+                        committedForBatchVerification);
+            } else {
+                verifyNativeBaseline(progress.database, progress.request.warehouseId(),
+                        method, protectedBaseline);
+            }
 
             progress.status = progress.warningCount == 0
                     ? "COMPLETED" : "COMPLETED_WITH_WARNINGS";
@@ -979,6 +1008,16 @@ public class FolioAccountingPriceService {
                                         List<String> selectedSkus,
                                         boolean rollbackOnly,
                                         NativeProtectedSnapshot protectedBaseline) {
+        runNativeSelectionPass(progress, method, selectedSkus, rollbackOnly,
+                protectedBaseline, null);
+    }
+
+    private void runNativeSelectionPass(NativeProgress progress,
+                                        AccountingMethod method,
+                                        List<String> selectedSkus,
+                                        boolean rollbackOnly,
+                                        NativeProtectedSnapshot protectedBaseline,
+                                        List<String> committedForBatchVerification) {
         int processed = 0;
         for (String sku : selectedSkus) {
             long skuStartedNanos = System.nanoTime();
@@ -1026,7 +1065,11 @@ public class FolioAccountingPriceService {
             } else if (!rollbackOnly) {
                 progress.committedChunks++;
                 progress.lastCommittedArt = sku;
-                recordNativeAppliedVerification(progress, executed.fingerprint());
+                if (committedForBatchVerification == null) {
+                    recordNativeAppliedVerification(progress, executed.fingerprint());
+                } else {
+                    committedForBatchVerification.add(sku);
+                }
             }
             publishNative(progress, true, true, null);
             long durationMs = (System.nanoTime() - skuStartedNanos) / 1_000_000L;
@@ -1634,8 +1677,10 @@ public class FolioAccountingPriceService {
                                 "I_UCHET_TOVAR changed a protected stock or movement invariant");
                     }
                     nativeCheckpoint(progress, "FINGERPRINT_CAPTURE", cursor);
-                    fingerprint = verificationRecorder.capture(
-                            warehouseId, processedEndArt, nativeFullTimeoutSeconds);
+                    if (!(partialSelection && progress.request.isSafeApplyOnly())) {
+                        fingerprint = verificationRecorder.capture(
+                                warehouseId, processedEndArt, nativeFullTimeoutSeconds);
+                    }
                 }
                 if (output.hasProblem() || rollbackOnly) {
                     status.setRollbackOnly();
@@ -1664,6 +1709,71 @@ public class FolioAccountingPriceService {
         } catch (CannotAcquireLockException e) {
             throw new FolioAccountingPriceBusyException(e);
         }
+    }
+
+    private NativeProtectedSnapshot captureNativeSelectionBaseline(
+            String expectedDatabase,
+            int warehouseId,
+            AccountingMethod method,
+            List<String> selectedSkus) {
+        long startedNanos = System.nanoTime();
+        try {
+            NativeProtectedSnapshot snapshot = Objects.requireNonNull(
+                    nativeWriteTransaction.execute(status -> {
+                        validateNativeTransactionScope(
+                                expectedDatabase, warehouseId, method);
+                        NativeProtectedSnapshot selected =
+                                dao.captureNativeProtectedSnapshot(
+                                        warehouseId, selectedSkus);
+                        status.setRollbackOnly();
+                        return selected;
+                    }));
+            log.info("[folio.accounting-price] native_selected_baseline_captured warehouse={} skuCount={} durationMs={}",
+                    warehouseId, selectedSkus.size(),
+                    (System.nanoTime() - startedNanos) / 1_000_000L);
+            return snapshot;
+        } catch (CannotAcquireLockException e) {
+            throw new FolioAccountingPriceBusyException(e);
+        }
+    }
+
+    private void finalizeNativeSelectionVerification(
+            NativeProgress progress,
+            AccountingMethod method,
+            List<String> selectedSkus,
+            NativeProtectedSnapshot expected,
+            List<String> committedSkus) {
+        long startedNanos = System.nanoTime();
+        List<ProductFingerprint> fingerprints;
+        try {
+            fingerprints = Objects.requireNonNullElse(
+                    nativeWriteTransaction.execute(status -> {
+                        validateNativeTransactionScope(
+                                progress.database, progress.request.warehouseId(), method);
+                        NativeProtectedSnapshot actual =
+                                dao.captureNativeProtectedSnapshot(
+                                        progress.request.warehouseId(), selectedSkus);
+                        if (!Objects.equals(expected, actual)) {
+                            throw new IllegalStateException(
+                                    "Folio protected selected-product data changed while the native-range job was running");
+                        }
+                        nativeCheckpoint(progress, "BATCH_FINGERPRINT_CAPTURE", null);
+                        List<ProductFingerprint> captured = committedSkus.isEmpty()
+                                ? List.of()
+                                : verificationRecorder.captureBatch(
+                                progress.request.warehouseId(),
+                                List.copyOf(committedSkus), nativeFullTimeoutSeconds);
+                        status.setRollbackOnly();
+                        return captured;
+                    }), List.of());
+        } catch (CannotAcquireLockException e) {
+            throw new FolioAccountingPriceBusyException(e);
+        }
+        recordNativeAppliedVerificationsBatch(progress, fingerprints);
+        log.info("[folio.accounting-price] native_selected_baseline_verified job={} warehouse={} selectedSkuCount={} committedSkuCount={} fingerprintCount={} durationMs={}",
+                progress.jobId, progress.request.warehouseId(), selectedSkus.size(),
+                committedSkus.size(), fingerprints.size(),
+                (System.nanoTime() - startedNanos) / 1_000_000L);
     }
 
     private void verifyNativeBaseline(String expectedDatabase,
@@ -1916,6 +2026,32 @@ public class FolioAccountingPriceService {
                     value.sku(), error);
             addNativeIssue(progress, snapshotConfirmationIssue(
                     value.sku(), value.warehouseId(), safeMessage(error)));
+        }
+    }
+
+    private void recordNativeAppliedVerificationsBatch(
+            NativeProgress progress,
+            List<ProductFingerprint> fingerprints) {
+        if (fingerprints == null || fingerprints.isEmpty()) return;
+        try {
+            Set<String> confirmed = Objects.requireNonNullElse(
+                    verificationRecorder.confirmAppliedBatch(fingerprints), Set.of());
+            for (ProductFingerprint fingerprint : fingerprints) {
+                if (!confirmed.contains(fingerprint.sku())) {
+                    addNativeIssue(progress, snapshotConfirmationIssue(
+                            fingerprint.sku(), fingerprint.warehouseId(),
+                            "The active product snapshot has no matching SKU row"));
+                }
+            }
+        } catch (RuntimeException error) {
+            ProductFingerprint first = fingerprints.get(0);
+            log.error("[folio.product.snapshot] native_applied_digest_batch_publish_failed job={} db={} warehouse={} skuCount={}",
+                    progress.jobId, first.sourceDatabase(), first.warehouseId(),
+                    fingerprints.size(), error);
+            for (ProductFingerprint fingerprint : fingerprints) {
+                addNativeIssue(progress, snapshotConfirmationIssue(
+                        fingerprint.sku(), fingerprint.warehouseId(), safeMessage(error)));
+            }
         }
     }
 

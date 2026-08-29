@@ -734,6 +734,14 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
    `OUTCOME_UNKNOWN`, автоматический повтор запрещён;
 5. уже подтверждённые commit предыдущих SKU не отменяются.
 
+Защитная область `SAFE_APPLY_ONLY` ограничена каноническим списком выбранных
+118–500 SKU: Java не сканирует весь склад перед и после каждого пакета.
+Внутри отдельной транзакции postcheck по-прежнему относится только к реально
+обрабатываемому SKU. После успешных commit Java одним set-based чтением строит
+fingerprints зафиксированных SKU и одним batch обновляет их состояние в
+MariaDB. JSON-контракт endpoint и правила обработки warnings от этого не
+изменились.
+
 В однопроходном режиме `preflightChunks=0`, а `procedureCalls` обычно равно
 числу уже проверенных SKU. Полный `native-full` сохраняет прежний
 rollback-preflight и не поддерживает этот режим.
@@ -1094,8 +1102,9 @@ Safe production-проход не изменяет `TIP_TOVR` и не созда
 | `FOLIO_PROCEDURE_CALL` | находится внутри `LAVKA_I_UCHET_TOVAR_SAFE`/jTDS |
 | `PROTECTED_POSTCHECK` | читает и сравнивает защищённые строки ФОЛИО |
 | `FINGERPRINT_CAPTURE` | строит контрольный fingerprint SKU |
+| `BATCH_FINGERPRINT_CAPTURE` | одним set-based чтением строит fingerprints успешно зафиксированных SKU `SAFE_APPLY_ONLY` |
 | `TRANSACTION_COMPLETION` | callback завершён, Spring выполняет commit/rollback |
-| `PROTECTED_BASELINE_CAPTURE/VERIFY` | снимает или проверяет baseline склада |
+| `PROTECTED_BASELINE_CAPTURE/VERIFY` | снимает или проверяет baseline всего склада либо только выбранных SKU для `SAFE_APPLY_ONLY` |
 
 Интерпретация:
 
@@ -1125,7 +1134,9 @@ Safe production-проход не изменяет `TIP_TOVR` и не созда
   postconditions. Native-full проверяет OUT-контракт, направление курсора,
   счётчики прогресса, транзакционную границу, неизменность настроек склада,
   защищённый baseline всего склада, каждый обработанный SKU и финальное
-  состояние всего склада.
+  состояние всего склада. `SAFE_APPLY_ONLY` native-range вместо полного
+  складского baseline защищает точный выбранный список SKU и проверяет каждый
+  фактически обрабатываемый SKU в собственной транзакции.
 - Оба full apply частично фиксируемые и фиксируют по одному SKU. Атомарного
   rollback всего склада после первого commit нет.
 - Состояние фоновой задачи хранится в памяти процесса Java. После рестарта

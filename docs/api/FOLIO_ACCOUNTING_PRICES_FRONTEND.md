@@ -244,6 +244,11 @@ Preview использует `previewOnly=true`, `confirmApply=false`. Apply с�
 SKU остаются `VERIFIED`. `OUTCOME_UNKNOWN` запрещает автоматический повтор.
 Для ручного preview поле `applyMode` не передавать.
 
+Оптимизация backend не меняет JSON или UI-алгоритм: для `SAFE_APPLY_ONLY`
+защитный baseline читается только для SKU текущего пакета, а fingerprints
+успешных commit публикуются пакетно. Фронт так же опрашивает status и не должен
+отправлять следующий пакет, пока текущий не завершился.
+
 Статус можно читать по адресу:
 
 ```http

@@ -9,7 +9,10 @@ import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -51,6 +54,37 @@ public class FolioProductSnapshotVerificationService
         log.info("[folio.product.snapshot] applied_digest_recorded db={} warehouse={} sku={}",
                 fingerprint.sourceDatabase(), fingerprint.warehouseId(), fingerprint.sku());
         return true;
+    }
+
+    @Override
+    public List<ProductFingerprint> captureBatch(int warehouseId,
+                                                 List<String> skus,
+                                                 int queryTimeoutSeconds) {
+        return sourceDao.captureProductFingerprints(
+                warehouseId, skus, queryTimeoutSeconds);
+    }
+
+    @Override
+    public Set<String> confirmAppliedBatch(List<ProductFingerprint> fingerprints) {
+        if (fingerprints.isEmpty()) return Set.of();
+        int[] updated = snapshotDao.confirmAppliedBatch(
+                fingerprints, LocalDateTime.now(clock));
+        Set<String> confirmed = new LinkedHashSet<>();
+        for (int index = 0; index < fingerprints.size(); index++) {
+            ProductFingerprint fingerprint = fingerprints.get(index);
+            int count = index < updated.length ? updated[index] : 0;
+            if (count > 0) {
+                confirmed.add(fingerprint.sku());
+            } else {
+                log.warn("[folio.product.snapshot] applied_digest_not_recorded db={} warehouse={} sku={} updated={}",
+                        fingerprint.sourceDatabase(), fingerprint.warehouseId(),
+                        fingerprint.sku(), count);
+            }
+        }
+        log.info("[folio.product.snapshot] applied_digest_batch_recorded db={} warehouse={} requested={} confirmed={}",
+                fingerprints.get(0).sourceDatabase(),
+                fingerprints.get(0).warehouseId(), fingerprints.size(), confirmed.size());
+        return Set.copyOf(confirmed);
     }
 
     @Override

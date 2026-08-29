@@ -9,6 +9,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -63,5 +65,34 @@ class FolioProductSnapshotVerificationServiceTest {
                 sourceDao, snapshotDao, CLOCK);
 
         assertThat(service.confirmApplied(fingerprint)).isFalse();
+    }
+
+    @Test
+    void capturesAndPublishesFingerprintsAsOneBatch() {
+        FolioProductSnapshotSourceDao sourceDao =
+                mock(FolioProductSnapshotSourceDao.class);
+        FolioProductSnapshotDao snapshotDao = mock(FolioProductSnapshotDao.class);
+        ProductFingerprint first = new ProductFingerprint(
+                "Paint_Ua", 5, "A", "digest-a", "A",
+                1, 1L, 1L, null, null, 0);
+        ProductFingerprint second = new ProductFingerprint(
+                "Paint_Ua", 5, "B", "digest-b", "B",
+                1, 2L, 2L, null, null, 0);
+        List<ProductFingerprint> fingerprints = List.of(first, second);
+        LocalDateTime appliedAt = LocalDateTime.ofInstant(
+                CLOCK.instant(), ZoneOffset.UTC);
+        when(sourceDao.captureProductFingerprints(5, List.of("A", "B"), 120))
+                .thenReturn(fingerprints);
+        when(snapshotDao.confirmAppliedBatch(fingerprints, appliedAt))
+                .thenReturn(new int[]{1, 1});
+        var service = new FolioProductSnapshotVerificationService(
+                sourceDao, snapshotDao, CLOCK);
+
+        List<ProductFingerprint> captured = service.captureBatch(
+                5, List.of("A", "B"), 120);
+        Set<String> confirmed = service.confirmAppliedBatch(captured);
+
+        assertThat(confirmed).containsExactlyInAnyOrder("A", "B");
+        verify(snapshotDao).confirmAppliedBatch(fingerprints, appliedAt);
     }
 }

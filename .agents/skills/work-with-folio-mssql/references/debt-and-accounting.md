@@ -313,6 +313,18 @@ commit сохраняются; потеря соединения даёт `OUTCO
 Paint_Ua gate и postcheck описаны в
 `docs/folio-experiments/21_safe_accounting_price_paint_ua_rollout.md`.
 
+Для `SAFE_APPLY_ONLY` не нужен full-warehouse protected baseline: контракт
+safe wrapper уже ограничивает DML одним явно выбранным SKU. Начальный и
+финальный baseline должны читать только канонический список текущего пакета
+(до 500 SKU), а postcheck внутри каждой transaction — только текущий SKU.
+Fingerprints успешно committed SKU снимай после commit одним set-based batch и
+публикуй одним MariaDB batch; не выполняй три MSSQL-запроса и один MariaDB
+UPDATE для каждого SKU. Это не меняет правило «один SKU — одна транзакция».
+Rollback benchmark Paint_Rus 2026-08-29 для exact-list из 25 SKU дал 126 ms на
+protected capture и 46 ms на movement fingerprint; `TMP_MOVE` не изменилась,
+transaction boundary подтверждена. Полный протокол находится в
+`docs/folio-experiments/29_safe_apply_only_orchestration.md`.
+
 Первый Paint_Ua preview от 2026-08-19 выявил дополнительный OUT-инвариант:
 штатное тело при первом входном `art=NULL` обрабатывает минимальный SKU и
 возвращает `new_art/n_cur`, но на чистом пути может оставить `art=NULL`. Это не

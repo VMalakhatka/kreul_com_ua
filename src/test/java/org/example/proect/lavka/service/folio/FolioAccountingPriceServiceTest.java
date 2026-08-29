@@ -809,6 +809,12 @@ class FolioAccountingPriceServiceTest {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
         when(dao.findSkus(WAREHOUSE_ID)).thenReturn(List.of(CLEAN_SKU));
+        NativeProtectedSnapshot scope = protectedSnapshot(
+                List.of(CLEAN_SKU), "scope-sha256");
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, null, null)).thenReturn(scope);
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, CLEAN_SKU, CLEAN_SKU)).thenReturn(scope);
         // The nextArt cursor belongs to the legacy global article order.  A
         // selected-SKU run must protect the requested SKU itself, not infer a
         // predecessor range from that cursor.
@@ -842,6 +848,12 @@ class FolioAccountingPriceServiceTest {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
         when(dao.findSkus(WAREHOUSE_ID)).thenReturn(List.of(CLEAN_SKU));
+        NativeProtectedSnapshot scope = protectedSnapshot(
+                List.of(CLEAN_SKU), "scope-sha256");
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, List.of(CLEAN_SKU))).thenReturn(scope);
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, CLEAN_SKU, CLEAN_SKU)).thenReturn(scope);
         when(dao.callNativeFullChunk(
                 eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
                 eq(CLEAN_SKU), eq(0), eq(0), eq(120)))
@@ -867,6 +879,58 @@ class FolioAccountingPriceServiceTest {
     }
 
     @Test
+    void nativeRangeSafeApplyOnlyUsesSelectedBaselineAndBatchFingerprints() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        FolioProductVerificationRecorder recorder =
+                mock(FolioProductVerificationRecorder.class);
+        stubNativeWarehouse(dao);
+        String nextSku = "SKU-NEXT";
+        List<String> selected = List.of(CLEAN_SKU, nextSku);
+        NativeProtectedSnapshot scope = protectedSnapshot(selected, "scope-sha256");
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(selected);
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, selected))
+                .thenReturn(scope);
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, CLEAN_SKU, CLEAN_SKU))
+                .thenReturn(protectedSnapshot(List.of(CLEAN_SKU), "scope-sha256"));
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, nextSku, nextSku))
+                .thenReturn(protectedSnapshot(List.of(nextSku), "scope-sha256"));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(CLEAN_SKU), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 40, 0, nextSku, null));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(nextSku), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(nextSku, 40, 0, null, null));
+        ProductFingerprint first = new ProductFingerprint(
+                "Paint_Rus", WAREHOUSE_ID, CLEAN_SKU, "digest-1", "Clean",
+                1, 1L, 1L, null, null, 0);
+        ProductFingerprint second = new ProductFingerprint(
+                "Paint_Rus", WAREHOUSE_ID, nextSku, "digest-2", "Next",
+                1, 2L, 2L, null, null, 0);
+        when(recorder.captureBatch(WAREHOUSE_ID, selected, 120))
+                .thenReturn(List.of(first, second));
+        when(recorder.confirmAppliedBatch(List.of(first, second)))
+                .thenReturn(Set.of(CLEAN_SKU, nextSku));
+        FolioAccountingPriceService service = new FolioAccountingPriceService(
+                dao, recorder, DIRECT_EXECUTOR, CLOCK,
+                new TrackingTransactionManager(), true, true, true,
+                true, true, Set.of("Paint_Rus"), 100,
+                5_000, 120, 120, 20);
+
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true, null, null, selected,
+                FolioAccountingPriceNativeFullRequest.SAFE_APPLY_ONLY));
+
+        assertThat(service.nativeFullStatus(false).status()).isEqualTo("COMPLETED");
+        verify(dao, times(2)).captureNativeProtectedSnapshot(WAREHOUSE_ID, selected);
+        verify(dao, never()).captureNativeProtectedSnapshot(WAREHOUSE_ID, null, null);
+        verify(recorder, never()).capture(anyInt(), anyString(), anyInt());
+        verify(recorder).captureBatch(WAREHOUSE_ID, selected, 120);
+        verify(recorder).confirmAppliedBatch(List.of(first, second));
+    }
+
+    @Test
     void nativeRangeSafeApplyOnlyRollsBackKnownProblemAndCommitsNextSku() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
@@ -874,7 +938,7 @@ class FolioAccountingPriceServiceTest {
         List<String> selected = List.of(NEGATIVE_SKU, nextSku);
         when(dao.findSkus(WAREHOUSE_ID)).thenReturn(selected);
         NativeProtectedSnapshot scope = protectedSnapshot(selected, "scope-sha256");
-        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, null, null))
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, selected))
                 .thenReturn(scope);
         when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, nextSku, nextSku))
                 .thenReturn(protectedSnapshot(List.of(nextSku), "scope-sha256"));
@@ -913,7 +977,7 @@ class FolioAccountingPriceServiceTest {
         List<String> selected = List.of(CLEAN_SKU, failedSku);
         when(dao.findSkus(WAREHOUSE_ID)).thenReturn(selected);
         NativeProtectedSnapshot scope = protectedSnapshot(selected, "scope-sha256");
-        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, null, null))
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, selected))
                 .thenReturn(scope);
         when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, CLEAN_SKU, CLEAN_SKU))
                 .thenReturn(protectedSnapshot(List.of(CLEAN_SKU), "scope-sha256"));
@@ -945,6 +1009,9 @@ class FolioAccountingPriceServiceTest {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
         when(dao.findSkus(WAREHOUSE_ID)).thenReturn(List.of(CLEAN_SKU));
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, List.of(CLEAN_SKU)))
+                .thenReturn(protectedSnapshot(List.of(CLEAN_SKU), "scope-sha256"));
         when(dao.callNativeFullChunk(
                 eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
                 eq(CLEAN_SKU), eq(0), eq(0), eq(120)))

@@ -832,6 +832,110 @@ public class FolioAccountingPriceDao {
                 List.copyOf(orderedSkus), Map.copyOf(states));
     }
 
+    /**
+     * Captures protected source state for an explicit native-range selection.
+     *
+     * <p>The SAFE procedure processes exactly one requested SKU per
+     * transaction. Reading the whole warehouse for every 118-500 SKU request
+     * needlessly scans and locks millions of movement rows. Exact IN batches
+     * use the historical NAME_PREDM-leading movement index and keep the same
+     * row-level invariant projection as the range/full snapshot.</p>
+     */
+    public NativeProtectedSnapshot captureNativeProtectedSnapshot(
+            int warehouseId,
+            List<String> selectedSkus) {
+        List<String> orderedSkus = selectedSkus == null
+                ? List.of()
+                : selectedSkus.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .distinct()
+                .toList();
+        if (orderedSkus.isEmpty()) {
+            return new NativeProtectedSnapshot(List.of(), Map.of());
+        }
+
+        Map<String, NativeInvariantDigest> articleDigests = new LinkedHashMap<>();
+        Map<String, NativeInvariantDigest> movementDigests = new LinkedHashMap<>();
+        for (int start = 0; start < orderedSkus.size();
+             start += NATIVE_QUARANTINE_BATCH_SIZE) {
+            List<String> batch = orderedSkus.subList(
+                    start, Math.min(start + NATIVE_QUARANTINE_BATCH_SIZE,
+                            orderedSkus.size()));
+            String in = placeholders(batch.size());
+            streamQuery("""
+                    SELECT COD_ARTIC, ID_SCLAD, NACH_KOLCH, KON_KOLCH,
+                           REZ_KOLCH, UCHET_0_C, UCHET_0_VL, TIP_TOVR
+                      FROM dbo.SCL_ARTC WITH (UPDLOCK, HOLDLOCK)
+                     WHERE ID_SCLAD = ?
+                       AND COD_ARTIC IN (%s)
+                     ORDER BY COD_ARTIC, ID_SCLAD
+                    """.formatted(in), selectedArgs(warehouseId, batch), rs -> {
+                        String sku = trim(rs.getString(1));
+                        MessageDigest digest = sha256();
+                        updateDigestRow(digest, rs, 8);
+                        articleDigests.put(sku, new NativeInvariantDigest(
+                                1, HexFormat.of().formatHex(digest.digest())));
+                    });
+
+            String[] activeSku = {null};
+            MessageDigest[] activeDigest = {null};
+            int[] activeRows = {0};
+            streamQuery("""
+                    SELECT m.RECNO, m.UNICUM_NUM, m.NUMDOCM_PR, m.NUM_PREDMT,
+                           m.NAME_PREDM, m.ID_SCLAD, m.DATE_PREDM, m.TYPDOCM_PR,
+                           m.STND_UCHET, m.VOZVRAT_PR, m.KOLC_PREDM, m.KOLTREB_PR,
+                           m.CENA_PREDM, m.SUM_PREDM, m.VALUT_CENA, m.SUM_VALUT,
+                           m.NALOGMONEY, m.NALOGVALUT, m.ORG_PREDM, m.PARTIA, m.SROK
+                      FROM dbo.SCL_MOVE m WITH (UPDLOCK, HOLDLOCK)
+                      JOIN dbo.SCL_ARTC a WITH (UPDLOCK, HOLDLOCK)
+                        ON a.COD_ARTIC = m.NAME_PREDM
+                       AND a.ID_SCLAD = m.ID_SCLAD
+                     WHERE m.ID_SCLAD = ?
+                       AND m.NAME_PREDM IN (%s)
+                     ORDER BY m.NAME_PREDM, m.DATE_PREDM, m.TYPDOCM_PR,
+                              m.NUMDOCM_PR, m.RECNO
+                    """.formatted(in), selectedArgs(warehouseId, batch), rs -> {
+                        String sku = trim(rs.getString(5));
+                        if (activeSku[0] == null || !activeSku[0].equals(sku)) {
+                            finishDigest(activeSku[0], activeDigest[0], activeRows[0],
+                                    movementDigests);
+                            activeSku[0] = sku;
+                            activeDigest[0] = sha256();
+                            activeRows[0] = 0;
+                        }
+                        updateDigestRow(activeDigest[0], rs, 21);
+                        activeRows[0]++;
+                    });
+            finishDigest(activeSku[0], activeDigest[0], activeRows[0],
+                    movementDigests);
+        }
+
+        Map<String, NativeSkuProtectedState> states = new LinkedHashMap<>();
+        NativeInvariantDigest empty = emptyDigest();
+        for (String sku : orderedSkus) {
+            NativeInvariantDigest article = articleDigests.get(sku);
+            if (article == null) {
+                throw new IllegalStateException(
+                        "Native protected state is missing for selected SKU " + sku);
+            }
+            states.put(sku, new NativeSkuProtectedState(
+                    article, movementDigests.getOrDefault(sku, empty)));
+        }
+        return new NativeProtectedSnapshot(
+                List.copyOf(orderedSkus), Map.copyOf(states));
+    }
+
+    private static Object[] selectedArgs(int warehouseId, List<String> skus) {
+        Object[] args = new Object[skus.size() + 1];
+        args[0] = warehouseId;
+        for (int index = 0; index < skus.size(); index++) {
+            args[index + 1] = skus.get(index);
+        }
+        return args;
+    }
+
     private void streamQuery(String sql,
                              Object[] args,
                              RowCallbackHandler handler) {

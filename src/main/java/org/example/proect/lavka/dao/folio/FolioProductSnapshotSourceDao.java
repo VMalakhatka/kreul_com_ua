@@ -152,23 +152,54 @@ public class FolioProductSnapshotSourceDao {
      */
     public ProductFingerprint captureProductFingerprint(int warehouseId, String sku,
                                                         int queryTimeoutSeconds) {
-        Warehouse warehouse = readWarehouse(warehouseId, queryTimeoutSeconds);
-        Map<String, MutableCard> cards = readCards(
-                warehouse, queryTimeoutSeconds, trim(sku));
-        if (cards.size() != 1) {
+        List<ProductFingerprint> fingerprints = captureProductFingerprints(
+                warehouseId, List.of(trim(sku)), queryTimeoutSeconds);
+        if (fingerprints.size() != 1) {
             throw new IllegalArgumentException(
                     "Folio product does not exist in warehouse " + warehouseId + ": " + sku);
         }
-        String canonicalSku = cards.keySet().iterator().next();
+        return fingerprints.get(0);
+    }
+
+    /** Captures exact post-commit fingerprints with three set-based queries. */
+    public List<ProductFingerprint> captureProductFingerprints(
+            int warehouseId,
+            List<String> skus,
+            int queryTimeoutSeconds) {
+        List<String> requested = skus == null
+                ? List.of()
+                : skus.stream()
+                .filter(java.util.Objects::nonNull)
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .distinct()
+                .toList();
+        if (requested.isEmpty()) return List.of();
+        Warehouse warehouse = readWarehouse(warehouseId, queryTimeoutSeconds);
+        Map<String, MutableCard> cards = readCards(
+                warehouse, queryTimeoutSeconds, requested);
+        if (cards.size() != requested.size()) {
+            throw new IllegalArgumentException(
+                    "Not all Folio products exist in warehouse " + warehouseId
+                            + ": expected=" + requested.size() + ", found=" + cards.size());
+        }
         readMovementFingerprints(
-                warehouseId, cards, queryTimeoutSeconds, canonicalSku);
+                warehouseId, cards, queryTimeoutSeconds, requested);
         readPriceRuleFingerprints(
-                warehouseId, cards, queryTimeoutSeconds, canonicalSku);
-        ProductCard card = cards.values().iterator().next().finish();
-        return new ProductFingerprint(
-                warehouse.databaseName(), warehouseId, card.sku(), card.sourceDigest(),
-                card.productName(), card.movementCount(), card.minRecno(), card.maxRecno(),
-                card.firstMovementDate(), card.lastMovementDate(), card.priceRuleCount());
+                warehouseId, cards, queryTimeoutSeconds, requested);
+        List<ProductFingerprint> result = new ArrayList<>(requested.size());
+        // Return the canonical SCL_ARTC spelling. SQL collation is
+        // case-insensitive and ignores some trailing-space differences, while
+        // a Java Map lookup is not. This also preserves point recalculation
+        // for a collation-equivalent request spelling.
+        for (MutableCard mutable : cards.values()) {
+            ProductCard card = mutable.finish();
+            result.add(new ProductFingerprint(
+                    warehouse.databaseName(), warehouseId, card.sku(), card.sourceDigest(),
+                    card.productName(), card.movementCount(), card.minRecno(), card.maxRecno(),
+                    card.firstMovementDate(), card.lastMovementDate(), card.priceRuleCount()));
+        }
+        return List.copyOf(result);
     }
 
     private Warehouse readWarehouse(int warehouseId, int timeout) {
@@ -199,7 +230,7 @@ public class FolioProductSnapshotSourceDao {
     }
 
     private Map<String, MutableCard> readCards(Warehouse warehouse, int timeout,
-                                               String skuFilter) {
+                                               List<String> skuFilter) {
         Map<String, MutableCard> result = new LinkedHashMap<>();
         jdbc.query(con -> {
             String sql = """
@@ -216,13 +247,13 @@ public class FolioProductSnapshotSourceDao {
                            ) THEN 1 ELSE 0 END AS HIDDEN_FOR_ACCOUNTING
                       FROM dbo.SCL_ARTC a WITH (HOLDLOCK)
                      WHERE a.ID_SCLAD = ?
-                    """ + (skuFilter == null ? "" : " AND a.COD_ARTIC = ?\n") + """
+                    """ + skuPredicate("a.COD_ARTIC", skuFilter) + """
                      ORDER BY a.COD_ARTIC
                     """;
             var ps = con.prepareStatement(sql);
             ps.setQueryTimeout(timeout);
             ps.setInt(1, warehouse.warehouseId());
-            if (skuFilter != null) ps.setString(2, skuFilter);
+            bindSkus(ps, 2, skuFilter);
             return ps;
         }, rs -> {
             String sku = trim(rs.getString("COD_ARTIC"));
@@ -251,11 +282,12 @@ public class FolioProductSnapshotSourceDao {
 
     private long readMovementFingerprints(int warehouseId, Map<String, MutableCard> cards,
                                           int timeout) {
-        return readMovementFingerprints(warehouseId, cards, timeout, null);
+        return readMovementFingerprints(
+                warehouseId, cards, timeout, (List<String>) null);
     }
 
     private long readMovementFingerprints(int warehouseId, Map<String, MutableCard> cards,
-                                          int timeout, String skuFilter) {
+                                          int timeout, List<String> skuFilter) {
         final long[] total = {0};
         jdbc.query(con -> {
             String sql = """
@@ -277,14 +309,14 @@ public class FolioProductSnapshotSourceDao {
                       JOIN dbo.SCL_ARTC a WITH (HOLDLOCK)
                         ON a.ID_SCLAD=m.ID_SCLAD AND a.COD_ARTIC=m.NAME_PREDM
                      WHERE m.ID_SCLAD=? AND m.STND_UCHET=1 AND m.TYPDOCM_PR<>?
-                    """ + (skuFilter == null ? "" : " AND a.COD_ARTIC = ?\n") + """
+                    """ + skuPredicate("a.COD_ARTIC", skuFilter) + """
                      GROUP BY a.COD_ARTIC
                     """;
             var ps = con.prepareStatement(sql);
             ps.setQueryTimeout(timeout);
             ps.setInt(1, warehouseId);
             ps.setString(2, "\u0421");
-            if (skuFilter != null) ps.setString(3, skuFilter);
+            bindSkus(ps, 3, skuFilter);
             return ps;
         }, rs -> {
             MutableCard card = cards.get(trim(rs.getString("COD_ARTIC")));
@@ -307,12 +339,13 @@ public class FolioProductSnapshotSourceDao {
     private void readPriceRuleFingerprints(int warehouseId,
                                            Map<String, MutableCard> cards,
                                            int timeout) {
-        readPriceRuleFingerprints(warehouseId, cards, timeout, null);
+        readPriceRuleFingerprints(
+                warehouseId, cards, timeout, (List<String>) null);
     }
 
     private void readPriceRuleFingerprints(int warehouseId,
                                            Map<String, MutableCard> cards,
-                                           int timeout, String skuFilter) {
+                                           int timeout, List<String> skuFilter) {
         jdbc.query(con -> {
             String sql = """
                     SELECT a.COD_ARTIC, COUNT(*) AS RULE_COUNT,
@@ -322,13 +355,13 @@ public class FolioProductSnapshotSourceDao {
                       JOIN dbo.SCL_ARTC a WITH (HOLDLOCK)
                         ON a.ID_SCLAD=p.ID_SCLAD AND a.COD_ARTIC=p.COD_ARTIC
                      WHERE p.ID_SCLAD=?
-                    """ + (skuFilter == null ? "" : " AND a.COD_ARTIC = ?\n") + """
+                    """ + skuPredicate("a.COD_ARTIC", skuFilter) + """
                      GROUP BY a.COD_ARTIC
                     """;
             var ps = con.prepareStatement(sql);
             ps.setQueryTimeout(timeout);
             ps.setInt(1, warehouseId);
-            if (skuFilter != null) ps.setString(2, skuFilter);
+            bindSkus(ps, 2, skuFilter);
             return ps;
         }, rs -> {
             MutableCard card = cards.get(trim(rs.getString("COD_ARTIC")));
@@ -339,6 +372,24 @@ public class FolioProductSnapshotSourceDao {
                 card.priceRuleChecksum = nullableLong(rs, "RULE_CHECKSUM");
             }
         });
+    }
+
+    private static String skuPredicate(String column, List<String> skuFilter) {
+        if (skuFilter == null) return "";
+        if (skuFilter.isEmpty()) return " AND 1=0\n";
+        return " AND " + column + " IN ("
+                + String.join(", ", java.util.Collections.nCopies(skuFilter.size(), "?"))
+                + ")\n";
+    }
+
+    private static void bindSkus(java.sql.PreparedStatement statement,
+                                 int firstParameter,
+                                 List<String> skuFilter) throws SQLException {
+        if (skuFilter == null) return;
+        int parameter = firstParameter;
+        for (String sku : skuFilter) {
+            statement.setString(parameter++, sku);
+        }
     }
 
     private void readOpeningDeltas(int warehouseId, LocalDate horizonStart,
