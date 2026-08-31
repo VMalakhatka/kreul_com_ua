@@ -218,7 +218,8 @@ Content-Type: application/json
 
 Передаётся либо `skus[]`, либо одновременно `fromSku` и `toSku`; смешивать
 режимы нельзя. Максимум — 500 SKU. Артикулы проверяются и упорядочиваются самой
-ФОЛІО, отсутствующий SKU блокирует запуск до каких-либо commit.
+ФОЛІО. Если SKU из явного `skus[]` уже исчез из `SCL_ARTC`, Java безопасно
+пропускает его без вызова процедуры и продолжает остальные товары.
 
 Preview использует `previewOnly=true`, `confirmApply=false`. Apply сначала
 проверяет все выбранные SKU с rollback, затем повторяет только этот же набор и
@@ -241,13 +242,50 @@ Preview использует `previewOnly=true`, `confirmApply=false`. Apply с�
 транзакции. Код `20` с обязательной диагностикой откатывает текущий SKU,
 записывает warning/`FAILED` и позволяет перейти к следующему. Неизвестная
 ошибка откатывает текущий SKU и останавливает кампанию; ранее зафиксированные
-SKU остаются `VERIFIED`. `OUTCOME_UNKNOWN` запрещает автоматический повтор.
+SKU остаются `VERIFIED`. Во время планового рестарта MSSQL Java может временно
+вернуть `status=RUNNING`, `phase=WAITING_FOR_FOLIO_RESTART`; это ожидание, а не
+финальная ошибка. `OUTCOME_UNKNOWN` после исчерпания безопасного восстановления
+по-прежнему запрещает автоматический повтор.
 Для ручного preview поле `applyMode` не передавать.
 
 Оптимизация backend не меняет JSON или UI-алгоритм: для `SAFE_APPLY_ONLY`
 защитный baseline читается только для SKU текущего пакета, а fingerprints
 успешных commit публикуются пакетно. Фронт так же опрашивает status и не должен
 отправлять следующий пакет, пока текущий не завершился.
+
+Нужно добавить одно отображение существующего `warnings[]`:
+
+- `code=SELECTED_PRODUCT_NO_LONGER_EXISTS` — показать «Товар видалено або
+  перейменовано у ФОЛІО; перерахунок для нього не виконувався»;
+- использовать `details.sku`, `warehouseId` и `stage` в техническом блоке;
+- явно показать `procedureExecuted=false` и `committed=false`;
+- рекомендация оператору: обновить snapshot, после чего товар должен перейти
+  в `REMOVED`;
+- не относить это предупреждение к отрицательному остатку, не требовать
+  исправления документа и не останавливать следующий пакет.
+
+Пример элемента `warnings[]`:
+
+```json
+{
+  "code": "SELECTED_PRODUCT_NO_LONGER_EXISTS",
+  "message": "The selected product no longer exists in the Folio warehouse; it was skipped and remaining products will continue",
+  "details": {
+    "sku": "ЯЯАМВУ-MFМ-263/1",
+    "warehouseId": 9,
+    "stage": "PROTECTED_BASELINE_CAPTURE",
+    "source": "NATIVE_RANGE_SELECTION",
+    "skipped": true,
+    "procedureExecuted": false,
+    "committed": false,
+    "recommendation": "Refresh the product snapshot; the missing product should become REMOVED before the next campaign"
+  }
+}
+```
+
+Запросы, polling и терминальные статусы менять не нужно. Если это единственная
+проблема, job завершается `COMPLETED_WITH_WARNINGS`, а отсутствующий SKU уже
+включён в `processedSku/progressUnits`.
 
 Статус можно читать по адресу:
 
@@ -419,12 +457,12 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 | Поле | Как отображать |
 |---|---|
 | `status` | итоговое состояние job |
-| `phase` | текущая стадия: `QUEUED`, `PRECHECK_RUNNING`, `PRECHECK_COMPLETED`, `APPLY_RUNNING`, `APPLY_COMPLETED` или `FAILED` |
+| `phase` | текущая стадия: `QUEUED`, `PRECHECK_RUNNING`, `PRECHECK_COMPLETED`, `APPLY_RUNNING`, `WAITING_FOR_FOLIO_RESTART`, `APPLY_RECOVERY`, `APPLY_COMPLETED` или `FAILED` |
 | `procedureCalls` | число вызовов `LAVKA_I_UCHET_TOVAR_SAFE` в обоих проходах |
 | `preflightChunks` | число гарантированно откатившихся SKU проверки |
 | `committedChunks` | число чистых SKU, подтверждённо зафиксированных apply |
 | `progressUnits` / `totalUnits` | для native-full — legacy work units; для native-range — обработанные/выбранные SKU |
-| `processedSku` | число завершённых SKU native-range; для native-full отсутствует |
+| `processedSku` | число завершённых SKU native-range, включая безопасно пропущенные отсутствующие карточки; для native-full отсутствует |
 | `currentUnits` / `procedureCurrentUnits` | сырой `n_cur` последнего вызова safe-процедуры |
 | `procedureTotalUnits` | сырой `n_tot`; для native-range может корректно быть `0` и не является знаменателем прогресса кампании |
 | `progressPercent` | приблизительный процент; может отсутствовать до получения `n_tot` |
@@ -500,6 +538,25 @@ SKU до деления на ноль. Показывайте `sku`, `recno`, `o
 | `FAILED` | ошибка до первого commit |
 | `FAILED_PARTIAL` | предыдущие SKU уже могли быть зафиксированы; только ручная сверка |
 | `OUTCOME_UNKNOWN` | исход текущей транзакции не доказан; запретить автоматический retry и эскалировать оператору |
+
+При `phase=WAITING_FOR_FOLIO_RESTART` фронт должен показывать: «Сервер ФОЛІО
+перезавантажується. Java очікує відновлення; не запускайте інший перерахунок».
+Продолжать polling того же status; не завершать кампанию, не отправлять следующий
+пакет и не вызывать retry. `APPLY_RECOVERY` означает, что связь уже вернулась и
+Java доказывает исход последнего commit.
+
+После успешного восстановления возможен итог `COMPLETED_WITH_WARNINGS`:
+
+- `MSSQL_RESTART_COMMIT_CONFIRMED` — commit доказан, повторного apply не было;
+- `MSSQL_RESTART_COMMIT_ROLLED_BACK_AND_RETRIED` — commit доказанно не
+  сохранился, SKU безопасно применён один раз повторно;
+- `MSSQL_RESTART_TRANSACTION_ROLLED_BACK_AND_RETRIED` — соединение оборвалось
+  до стадии commit, транзакция откатилась и SKU повторён один раз.
+
+Эти warnings показывать как техническое событие восстановления, а не как
+ошибку товара и не переводить SKU в `FAILED`. Если Java-процесс или контейнер
+сам был перезапущен, это правило не действует: кампания должна использовать
+обычный recovery по snapshot/checkpoint.
 
 `FAILED_PARTIAL` нельзя показывать как обычную ошибку с кнопкой «Повторить».
 Сначала оператор должен сверить ФОЛИО и резервную копию. Для

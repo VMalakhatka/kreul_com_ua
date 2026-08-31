@@ -96,6 +96,8 @@ public class FolioAccountingPriceService {
             new AtomicReference<>(idleStatus());
     private final AtomicReference<FolioAccountingPriceNativeFullStatusResponse> nativeFullStatus =
             new AtomicReference<>(idleNativeStatus());
+    private volatile int nativeRestartWaitSeconds;
+    private volatile int nativeRestartProbeIntervalSeconds = 15;
     private volatile FolioAccountingPriceRuntimeMonitor runtimeMonitor =
             FolioAccountingPriceRuntimeMonitor.noop();
 
@@ -244,6 +246,17 @@ public class FolioAccountingPriceService {
     @Autowired
     void setRuntimeMonitor(FolioAccountingPriceRuntimeMonitor runtimeMonitor) {
         this.runtimeMonitor = Objects.requireNonNull(runtimeMonitor);
+    }
+
+    @Autowired
+    void configureNativeRestartRecovery(
+            @Value("${lavka.folio.accounting-prices.native-restart-wait-seconds:600}")
+            int waitSeconds,
+            @Value("${lavka.folio.accounting-prices.native-restart-probe-interval-seconds:15}")
+            int probeIntervalSeconds) {
+        this.nativeRestartWaitSeconds = Math.max(0, waitSeconds);
+        this.nativeRestartProbeIntervalSeconds = this.nativeRestartWaitSeconds == 0
+                ? 0 : Math.max(1, probeIntervalSeconds);
     }
 
     public FolioAccountingPriceRecalculationResponse recalculate(
@@ -903,14 +916,20 @@ public class FolioAccountingPriceService {
                 throw new IllegalStateException(
                         "Required dbo.LAVKA_I_UCHET_*_SAFE procedures are not installed");
             }
-            List<String> selectedSkus = resolveNativeSelection(progress.request);
-            if (selectedSkus.isEmpty()) {
+            NativeSelectionResolution selection = resolveNativeSelection(progress.request);
+            List<String> selectedSkus = selection.existingSkus();
+            if (selection.requestedCount() == 0) {
                 throw new FolioAccountValidationException(
                         "NATIVE_RANGE_TOTAL_UNKNOWN",
                         "Java could not determine the selected batch size before apply");
             }
-            progress.totalUnits = selectedSkus.size();
-            progress.processedSku = 0;
+            Set<String> missingSelectedSkus = new LinkedHashSet<>(
+                    selection.missingSkus());
+            progress.totalUnits = selection.requestedCount();
+            progress.processedSku = missingSelectedSkus.size();
+            progress.progressUnits = missingSelectedSkus.size();
+            addMissingSelectedIssues(
+                    progress, selection.missingSkus(), "SELECTION_RESOLVED");
             nativeCheckpoint(progress, "SELECTION_RESOLVED", null);
             logNativeArithmeticSessionOptions(progress);
 
@@ -943,17 +962,30 @@ public class FolioAccountingPriceService {
                     selectedSkus)
                     : captureNativeBaseline(
                     progress.database, progress.request.warehouseId(), method);
+            List<String> missingAtBaseline = selectedSkus.stream()
+                    .filter(sku -> !protectedBaseline.states().containsKey(sku))
+                    .toList();
+            missingSelectedSkus.addAll(missingAtBaseline);
+            addMissingSelectedIssues(
+                    progress, missingAtBaseline, "PROTECTED_BASELINE_CAPTURE");
+            selectedSkus = selectedSkus.stream()
+                    .filter(protectedBaseline.states()::containsKey)
+                    .toList();
+            Map<String, ProductFingerprint> recoveryBaseline = safeApplyOnly
+                    ? captureNativeRecoveryBaseline(
+                    progress, method, selectedSkus)
+                    : Map.of();
             progress.phase = "APPLY_RUNNING";
             progress.status = "RUNNING";
-            progress.progressUnits = 0;
-            progress.processedSku = 0;
+            progress.progressUnits = missingSelectedSkus.size();
+            progress.processedSku = missingSelectedSkus.size();
             clearNativeCursor(progress);
             nativeCheckpoint(progress, "APPLY_STARTED", null);
             publishNative(progress, true, true, null);
             try {
                 runNativeSelectionPass(
                         progress, method, selectedSkus, false, protectedBaseline,
-                        committedForBatchVerification);
+                        committedForBatchVerification, recoveryBaseline);
             } catch (RuntimeException applyError) {
                 if (safeApplyOnly && !committedForBatchVerification.isEmpty()) {
                     try {
@@ -1009,7 +1041,7 @@ public class FolioAccountingPriceService {
                                         boolean rollbackOnly,
                                         NativeProtectedSnapshot protectedBaseline) {
         runNativeSelectionPass(progress, method, selectedSkus, rollbackOnly,
-                protectedBaseline, null);
+                protectedBaseline, null, Map.of());
     }
 
     private void runNativeSelectionPass(NativeProgress progress,
@@ -1017,8 +1049,11 @@ public class FolioAccountingPriceService {
                                         List<String> selectedSkus,
                                         boolean rollbackOnly,
                                         NativeProtectedSnapshot protectedBaseline,
-                                        List<String> committedForBatchVerification) {
-        int processed = 0;
+                                        List<String> committedForBatchVerification,
+                                        Map<String, ProductFingerprint> recoveryBaseline) {
+        int processed = progress.processedSku == null
+                ? 0 : progress.processedSku;
+        int canonicalTotal = progress.totalUnits;
         for (String sku : selectedSkus) {
             long skuStartedNanos = System.nanoTime();
             progress.currentArt = sku;
@@ -1029,8 +1064,9 @@ public class FolioAccountingPriceService {
             seen.add(sku);
             NativeExecutedChunk executed = executeNativeChunk(
                     progress, progress.database, progress.request.warehouseId(), method,
-                    sku, 0, 0, seen, rollbackOnly, selectedSkus.size(),
-                    protectedBaseline, Set.of(), null, true);
+                    sku, 0, 0, seen, rollbackOnly, canonicalTotal,
+                    protectedBaseline, Set.of(), null, true,
+                    recoveryBaseline.get(sku), !rollbackOnly, false);
             nativeCheckpoint(progress, "SKU_TRANSACTION_FINISHED", sku);
             NativeFullChunkOutput output = executed.output();
             progress.returnCode = output.returnCode();
@@ -1042,7 +1078,7 @@ public class FolioAccountingPriceService {
             processed++;
             progress.progressUnits = processed;
             progress.processedSku = processed;
-            progress.totalUnits = selectedSkus.size();
+            progress.totalUnits = canonicalTotal;
 
             if (output.hasProblem()) {
                 String problemSku = output.problemArt() == null
@@ -1077,15 +1113,17 @@ public class FolioAccountingPriceService {
                 log.info("[folio.accounting-price] native_selection_progress job={} warehouse={} pass={} processed={}/{} sku={} durationMs={} calls={} committed={}",
                         progress.jobId, progress.request.warehouseId(),
                         rollbackOnly ? "PRECHECK" : "APPLY", processed,
-                        selectedSkus.size(), sku, durationMs,
+                        canonicalTotal, sku, durationMs,
                         progress.procedureCalls, progress.committedChunks);
             }
         }
     }
 
-    private List<String> resolveNativeSelection(
+    private NativeSelectionResolution resolveNativeSelection(
             FolioAccountingPriceNativeFullRequest request) {
         List<String> selected;
+        List<String> missing = List.of();
+        int requestedCount;
         if (request.skus() != null && !request.skus().isEmpty()) {
             Set<String> requested = request.skus().stream()
                     .map(String::trim)
@@ -1093,13 +1131,10 @@ public class FolioAccountingPriceService {
             selected = dao.findSkus(request.warehouseId()).stream()
                     .filter(requested::contains)
                     .toList();
-            if (selected.size() != requested.size()) {
-                Set<String> missing = new LinkedHashSet<>(requested);
-                missing.removeAll(selected);
-                throw new FolioAccountingPriceNotFoundException(
-                        "ACCOUNTING_PRICE_SELECTED_PRODUCTS_NOT_FOUND",
-                        "Selected Folio products were not found: " + missing);
-            }
+            Set<String> absent = new LinkedHashSet<>(requested);
+            absent.removeAll(selected);
+            missing = List.copyOf(absent);
+            requestedCount = requested.size();
         } else {
             String fromSku = request.fromSku().trim();
             String toSku = request.toSku().trim();
@@ -1115,8 +1150,35 @@ public class FolioAccountingPriceService {
                         "NATIVE_SELECTION_TOO_LARGE",
                         "native-range is limited to 500 SKU per request");
             }
+            requestedCount = selected.size();
         }
-        return List.copyOf(selected);
+        return new NativeSelectionResolution(
+                requestedCount, List.copyOf(selected), missing);
+    }
+
+    private void addMissingSelectedIssues(NativeProgress progress,
+                                          List<String> missingSkus,
+                                          String stage) {
+        for (String sku : missingSkus) {
+            String key = "SELECTED_PRODUCT_NO_LONGER_EXISTS\u0000" + sku;
+            if (!progress.reportedProblemKeys.add(key)) continue;
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("sku", sku);
+            details.put("warehouseId", progress.request.warehouseId());
+            details.put("stage", stage);
+            details.put("source", "NATIVE_RANGE_SELECTION");
+            details.put("skipped", true);
+            details.put("procedureExecuted", false);
+            details.put("committed", false);
+            details.put("recommendation",
+                    "Refresh the product snapshot; the missing product should become REMOVED before the next campaign");
+            addNativeIssue(progress, new Issue(
+                    "SELECTED_PRODUCT_NO_LONGER_EXISTS",
+                    "The selected product no longer exists in the Folio warehouse; it was skipped and remaining products will continue",
+                    Map.copyOf(details)));
+            log.warn("[folio.accounting-price] native_selected_product_missing job={} warehouse={} sku={} stage={} committed=false",
+                    progress.jobId, progress.request.warehouseId(), sku, stage);
+        }
     }
 
     private static void clearNativeCursor(NativeProgress progress) {
@@ -1535,6 +1597,31 @@ public class FolioAccountingPriceService {
                                                     Set<String> skippedSkus,
                                                     String quarantineMarker,
                                                     boolean partialSelection) {
+        return executeNativeChunk(
+                progress, expectedDatabase, warehouseId, method, cursor,
+                totalUnits, cumulativeUnits, seenCursors, rollbackOnly,
+                requiredTotalUnits, protectedBaseline, skippedSkus,
+                quarantineMarker, partialSelection, null, false, false);
+    }
+
+    private NativeExecutedChunk executeNativeChunk(NativeProgress progress,
+                                                    String expectedDatabase,
+                                                    int warehouseId,
+                                                    AccountingMethod method,
+                                                    String cursor,
+                                                    int totalUnits,
+                                                    int cumulativeUnits,
+                                                    Set<String> seenCursors,
+                                                    boolean rollbackOnly,
+                                                    int requiredTotalUnits,
+                                                    NativeProtectedSnapshot protectedBaseline,
+                                                    Set<String> skippedSkus,
+                                                    String quarantineMarker,
+                                                    boolean partialSelection,
+                                                    ProductFingerprint recoveryBaseline,
+                                                    boolean allowRestartRecovery,
+                                                    boolean captureRollbackFingerprint) {
+        AtomicReference<NativeExecutedChunk> preparedChunk = new AtomicReference<>();
         try {
             nativeCheckpoint(progress, "MSSQL_TRANSACTION_ACQUIRE", cursor);
             NativeExecutedChunk executed = Objects.requireNonNull(
@@ -1643,7 +1730,8 @@ public class FolioAccountingPriceService {
                 }
                 String processedEndArt = null;
                 Optional<ProductFingerprint> fingerprint = Optional.empty();
-                if (!output.hasProblem() && !rollbackOnly) {
+                if (!output.hasProblem()
+                        && (!rollbackOnly || captureRollbackFingerprint)) {
                     // native-range calls the safe procedure with an explicit
                     // SKU cursor.  That procedure is deliberately guarded to
                     // process exactly that SKU, while newArt is only the
@@ -1677,7 +1765,9 @@ public class FolioAccountingPriceService {
                                 "I_UCHET_TOVAR changed a protected stock or movement invariant");
                     }
                     nativeCheckpoint(progress, "FINGERPRINT_CAPTURE", cursor);
-                    if (!(partialSelection && progress.request.isSafeApplyOnly())) {
+                    if (captureRollbackFingerprint
+                            || !(partialSelection
+                            && progress.request.isSafeApplyOnly())) {
                         fingerprint = verificationRecorder.capture(
                                 warehouseId, processedEndArt, nativeFullTimeoutSeconds);
                     }
@@ -1686,13 +1776,247 @@ public class FolioAccountingPriceService {
                     status.setRollbackOnly();
                 }
                 nativeCheckpoint(progress, "TRANSACTION_COMPLETION", cursor);
-                return new NativeExecutedChunk(output, processedEndArt, fingerprint);
+                NativeExecutedChunk prepared =
+                        new NativeExecutedChunk(output, processedEndArt, fingerprint);
+                preparedChunk.set(prepared);
+                return prepared;
             }));
             nativeCheckpoint(progress, "TRANSACTION_FINISHED", cursor);
             return executed;
         } catch (CannotAcquireLockException e) {
             throw new FolioAccountingPriceBusyException(e);
+        } catch (RuntimeException error) {
+            if (allowRestartRecovery && partialSelection && !rollbackOnly
+                    && isNativeOutcomeUnknown(error)) {
+                return recoverNativeSelectionAfterRestart(
+                        progress, expectedDatabase, warehouseId, method, cursor,
+                        totalUnits, cumulativeUnits, seenCursors,
+                        requiredTotalUnits, protectedBaseline, skippedSkus,
+                        quarantineMarker, recoveryBaseline, preparedChunk.get(), error);
+            }
+            throw error;
         }
+    }
+
+    private NativeExecutedChunk recoverNativeSelectionAfterRestart(
+            NativeProgress progress,
+            String expectedDatabase,
+            int warehouseId,
+            AccountingMethod method,
+            String sku,
+            int totalUnits,
+            int cumulativeUnits,
+            Set<String> seenCursors,
+            int requiredTotalUnits,
+            NativeProtectedSnapshot protectedBaseline,
+            Set<String> skippedSkus,
+            String quarantineMarker,
+            ProductFingerprint recoveryBaseline,
+            NativeExecutedChunk preparedChunk,
+            RuntimeException originalError) {
+        if (nativeRestartWaitSeconds <= 0) {
+            throw originalError;
+        }
+
+        int waitedSeconds = awaitNativeDatabaseRestart(
+                progress, expectedDatabase, sku, originalError);
+        progress.phase = "APPLY_RECOVERY";
+        progress.recommendation = null;
+        publishNative(progress, true, true, null);
+
+        // The transaction callback did not return, therefore Spring never
+        // started COMMIT. SQL Server recovery rolls that open transaction
+        // back, so replaying this exact SKU once is safe.
+        if (preparedChunk == null) {
+            NativeExecutedChunk retried = executeNativeChunk(
+                    progress, expectedDatabase, warehouseId, method, sku,
+                    totalUnits, cumulativeUnits, freshSeenCursors(sku), false,
+                    requiredTotalUnits, protectedBaseline, skippedSkus,
+                    quarantineMarker, true, recoveryBaseline, false, false);
+            addNativeRestartIssue(
+                    progress, "MSSQL_RESTART_TRANSACTION_ROLLED_BACK_AND_RETRIED",
+                    sku, waitedSeconds, false, true, originalError);
+            return retried;
+        }
+
+        ProductFingerprint current = verificationRecorder.capture(
+                        warehouseId, sku, nativeFullTimeoutSeconds)
+                .orElseThrow(() -> nativeRecoveryUnknown(
+                        progress, sku,
+                        "The current SKU fingerprint is unavailable after the MSSQL restart",
+                        originalError));
+
+        // Exact equality with the batch baseline proves that the interrupted
+        // transaction did not publish an observable accounting result. A
+        // single replay is idempotent and remains isolated to this SKU.
+        if (sameFingerprintState(recoveryBaseline, current)) {
+            NativeExecutedChunk retried = executeNativeChunk(
+                    progress, expectedDatabase, warehouseId, method, sku,
+                    totalUnits, cumulativeUnits, freshSeenCursors(sku), false,
+                    requiredTotalUnits, protectedBaseline, skippedSkus,
+                    quarantineMarker, true, recoveryBaseline, false, false);
+            addNativeRestartIssue(
+                    progress, "MSSQL_RESTART_COMMIT_ROLLED_BACK_AND_RETRIED",
+                    sku, waitedSeconds, false, true, originalError);
+            return retried;
+        }
+
+        // A different fingerprint may mean that COMMIT succeeded but its ACK
+        // was lost. Re-run the deterministic safe procedure under ROLLBACK
+        // and compare its expected fingerprint with the independently read
+        // current state. Only an exact match proves the committed result.
+        NativeExecutedChunk rollbackProbe = executeNativeChunk(
+                progress, expectedDatabase, warehouseId, method, sku,
+                totalUnits, cumulativeUnits, freshSeenCursors(sku), true,
+                requiredTotalUnits, protectedBaseline, skippedSkus,
+                quarantineMarker, true, recoveryBaseline, false, true);
+        progress.phase = "APPLY_RECOVERY";
+        publishNative(progress, true, true, null);
+        if (rollbackProbe.output().hasProblem()) {
+            throw nativeRecoveryUnknown(
+                    progress, sku,
+                    "The rollback recovery probe returned a Folio problem after the MSSQL restart",
+                    originalError);
+        }
+        ProductFingerprint expected = rollbackProbe.fingerprint()
+                .orElseThrow(() -> nativeRecoveryUnknown(
+                        progress, sku,
+                        "The rollback recovery probe did not return an expected SKU fingerprint",
+                        originalError));
+        if (!sameFingerprintState(current, expected)) {
+            throw nativeRecoveryUnknown(
+                    progress, sku,
+                    "The SKU state after restart matches neither the pre-commit baseline nor the deterministic recalculated result",
+                    originalError);
+        }
+
+        addNativeRestartIssue(
+                progress, "MSSQL_RESTART_COMMIT_CONFIRMED",
+                sku, waitedSeconds, true, false, originalError);
+        return new NativeExecutedChunk(
+                preparedChunk.output(), preparedChunk.processedEndArt(),
+                Optional.of(current));
+    }
+
+    private int awaitNativeDatabaseRestart(NativeProgress progress,
+                                           String expectedDatabase,
+                                           String sku,
+                                           RuntimeException originalError) {
+        long startedNanos = System.nanoTime();
+        long maxWaitNanos = nativeRestartWaitSeconds * 1_000_000_000L;
+        long deadline = startedNanos + maxWaitNanos;
+        int probe = 0;
+        RuntimeException lastProbeError = originalError;
+        progress.phase = "WAITING_FOR_FOLIO_RESTART";
+        progress.recommendation = "Java is waiting for the planned Folio MSSQL restart to finish; do not start another recalculation";
+        publishNative(progress, true, true, null);
+        nativeCheckpoint(progress, "MSSQL_RESTART_WAIT_STARTED", sku);
+        log.warn("[folio.accounting-price] native_mssql_restart_wait job={} warehouse={} sku={} maxWaitSeconds={} originalError={}",
+                progress.jobId, progress.request.warehouseId(), sku,
+                nativeRestartWaitSeconds, safeMessage(originalError));
+
+        while (true) {
+            probe++;
+            nativeCheckpoint(progress, "MSSQL_RESTART_WAIT_PROBE", sku);
+            try {
+                String actualDatabase = dao.currentDatabaseName();
+                if (actualDatabase != null
+                        && expectedDatabase.equalsIgnoreCase(actualDatabase)) {
+                    int waitedSeconds = (int) Math.max(0L,
+                            (System.nanoTime() - startedNanos) / 1_000_000_000L);
+                    nativeCheckpoint(progress, "MSSQL_RESTART_RECOVERED", sku);
+                    log.info("[folio.accounting-price] native_mssql_restart_recovered job={} warehouse={} sku={} waitedSeconds={} probes={}",
+                            progress.jobId, progress.request.warehouseId(), sku,
+                            waitedSeconds, probe);
+                    return waitedSeconds;
+                }
+                if (actualDatabase != null) {
+                    throw nativeRecoveryUnknown(
+                            progress, sku,
+                            "MSSQL reconnected to unexpected database " + actualDatabase,
+                            originalError);
+                }
+            } catch (NativeOutcomeUnknownException error) {
+                throw error;
+            } catch (RuntimeException probeError) {
+                lastProbeError = probeError;
+            }
+
+            long remainingNanos = deadline - System.nanoTime();
+            if (remainingNanos <= 0L) {
+                progress.errorCode = "FOLIO_MSSQL_RESTART_TIMEOUT";
+                progress.recommendation = "Check Folio MSSQL availability, then inspect the current SKU before any manual retry";
+                throw new NativeOutcomeUnknownException(
+                        "Folio MSSQL did not recover within "
+                                + nativeRestartWaitSeconds + " seconds; last probe: "
+                                + safeMessage(lastProbeError), lastProbeError);
+            }
+            long intervalNanos = nativeRestartProbeIntervalSeconds <= 0
+                    ? 0L
+                    : nativeRestartProbeIntervalSeconds * 1_000_000_000L;
+            long sleepNanos = Math.min(remainingNanos, intervalNanos);
+            if (sleepNanos <= 0L) {
+                continue;
+            }
+            try {
+                Thread.sleep(
+                        sleepNanos / 1_000_000L,
+                        (int) (sleepNanos % 1_000_000L));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                progress.errorCode = "FOLIO_MSSQL_RESTART_WAIT_INTERRUPTED";
+                progress.recommendation = "The recovery wait was interrupted; inspect the current SKU before retrying";
+                throw new NativeOutcomeUnknownException(
+                        "Interrupted while waiting for Folio MSSQL restart",
+                        interrupted);
+            }
+        }
+    }
+
+    private NativeOutcomeUnknownException nativeRecoveryUnknown(
+            NativeProgress progress,
+            String sku,
+            String message,
+            Throwable cause) {
+        progress.errorCode = "NATIVE_COMMIT_OUTCOME_UNPROVEN";
+        progress.recommendation = "Do not retry SKU " + sku
+                + " automatically; compare its Folio accounting state and refresh the product snapshot";
+        return new NativeOutcomeUnknownException(message, cause);
+    }
+
+    private void addNativeRestartIssue(NativeProgress progress,
+                                       String code,
+                                       String sku,
+                                       int waitedSeconds,
+                                       boolean committed,
+                                       boolean retried,
+                                       Throwable originalError) {
+        addNativeIssue(progress, issue(
+                code,
+                committed
+                        ? "Folio MSSQL restarted; Java independently confirmed that the SKU commit succeeded"
+                        : "Folio MSSQL restarted; Java proved rollback and safely recalculated the SKU once",
+                "sku", sku,
+                "warehouseId", progress.request.warehouseId(),
+                "waitedSeconds", waitedSeconds,
+                "committed", committed,
+                "retried", retried,
+                "originalError", safeMessage(originalError)));
+    }
+
+    private static Set<String> freshSeenCursors(String sku) {
+        Set<String> result = new HashSet<>();
+        result.add(sku);
+        return result;
+    }
+
+    private static boolean sameFingerprintState(ProductFingerprint expected,
+                                                ProductFingerprint actual) {
+        return expected != null && actual != null
+                && expected.warehouseId() == actual.warehouseId()
+                && Objects.equals(expected.sourceDatabase(), actual.sourceDatabase())
+                && Objects.equals(expected.sku(), actual.sku())
+                && Objects.equals(expected.sourceDigest(), actual.sourceDigest());
     }
 
     private NativeProtectedSnapshot captureNativeBaseline(String expectedDatabase,
@@ -1732,6 +2056,40 @@ public class FolioAccountingPriceService {
                     warehouseId, selectedSkus.size(),
                     (System.nanoTime() - startedNanos) / 1_000_000L);
             return snapshot;
+        } catch (CannotAcquireLockException e) {
+            throw new FolioAccountingPriceBusyException(e);
+        }
+    }
+
+    private Map<String, ProductFingerprint> captureNativeRecoveryBaseline(
+            NativeProgress progress,
+            AccountingMethod method,
+            List<String> selectedSkus) {
+        if (nativeRestartWaitSeconds <= 0 || selectedSkus.isEmpty()) {
+            return Map.of();
+        }
+        long startedNanos = System.nanoTime();
+        try {
+            List<ProductFingerprint> captured = Objects.requireNonNullElse(
+                    nativeWriteTransaction.execute(status -> {
+                        validateNativeTransactionScope(
+                                progress.database, progress.request.warehouseId(), method);
+                        List<ProductFingerprint> fingerprints =
+                                verificationRecorder.captureBatch(
+                                        progress.request.warehouseId(), selectedSkus,
+                                        nativeFullTimeoutSeconds);
+                        status.setRollbackOnly();
+                        return fingerprints;
+                    }), List.of());
+            Map<String, ProductFingerprint> bySku = new LinkedHashMap<>();
+            for (ProductFingerprint fingerprint : captured) {
+                bySku.put(fingerprint.sku(), fingerprint);
+            }
+            log.info("[folio.accounting-price] native_restart_recovery_baseline_captured job={} warehouse={} requestedSkuCount={} fingerprintCount={} durationMs={}",
+                    progress.jobId, progress.request.warehouseId(),
+                    selectedSkus.size(), bySku.size(),
+                    (System.nanoTime() - startedNanos) / 1_000_000L);
+            return Map.copyOf(bySku);
         } catch (CannotAcquireLockException e) {
             throw new FolioAccountingPriceBusyException(e);
         }
@@ -2807,7 +3165,7 @@ public class FolioAccountingPriceService {
         );
     }
 
-    private static String safeMessage(Exception error) {
+    private static String safeMessage(Throwable error) {
         String value = error.getMessage();
         if (value == null || value.isBlank()) {
             return error.getClass().getSimpleName();
@@ -2899,6 +3257,13 @@ public class FolioAccountingPriceService {
         }
     }
 
+    private record NativeSelectionResolution(
+            int requestedCount,
+            List<String> existingSkus,
+            List<String> missingSkus
+    ) {
+    }
+
     private record NativePassResult(
             boolean problemDetected,
             int totalUnits
@@ -2955,6 +3320,10 @@ public class FolioAccountingPriceService {
             extends RuntimeException {
         private NativeOutcomeUnknownException(String message) {
             super(message);
+        }
+
+        private NativeOutcomeUnknownException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 }

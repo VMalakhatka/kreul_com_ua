@@ -46,6 +46,13 @@
 - транзакционная граница safe-процедуры не менялась: один SKU — один
   commit/rollback.
 
+После production-гонки snapshot → apply добавлена отдельная обработка исчезшей
+карточки. Exact-list baseline возвращает только реально существующие
+`SCL_ARTC`; отсутствующий SKU не передаётся safe-процедуре, учитывается в
+прогрессе как безопасно пропущенный и публикуется как структурированный warning
+`SELECTED_PRODUCT_NO_LONGER_EXISTS`. Обработка остальных SKU продолжается, а
+финальный snapshot должен перевести исчезнувшую карточку в `REMOVED`.
+
 Unit contract подтверждает отсутствие full-warehouse baseline и отдельных
 fingerprint-вызовов в `SAFE_APPLY_ONLY`. Paint_Rus strict preflight был успешен;
 повторный safe rollback-golden-master завершился `ROLLED_BACK` (run

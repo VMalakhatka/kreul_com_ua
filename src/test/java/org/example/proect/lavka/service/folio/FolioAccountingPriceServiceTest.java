@@ -23,6 +23,7 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.TransactionSystemException;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import java.math.BigDecimal;
@@ -931,6 +932,101 @@ class FolioAccountingPriceServiceTest {
     }
 
     @Test
+    void nativeRangeSafeApplyOnlySkipsSkuMissingBeforeSelectionAndContinues() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        String missingSku = "SKU-REMOVED";
+        List<String> requested = List.of(missingSku, CLEAN_SKU);
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(List.of(CLEAN_SKU));
+        NativeProtectedSnapshot cleanState = protectedSnapshot(
+                List.of(CLEAN_SKU), "scope-sha256");
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, List.of(CLEAN_SKU))).thenReturn(cleanState);
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, CLEAN_SKU, CLEAN_SKU)).thenReturn(cleanState);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(CLEAN_SKU), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 40, 0, null, null));
+        FolioAccountingPriceService service = nativeService(
+                dao, new TrackingTransactionManager(), true);
+
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true, null, null, requested,
+                FolioAccountingPriceNativeFullRequest.SAFE_APPLY_ONLY));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("COMPLETED_WITH_WARNINGS");
+        assertThat(completed.totalUnits()).isEqualTo(2);
+        assertThat(completed.processedSku()).isEqualTo(2);
+        assertThat(completed.procedureCalls()).isEqualTo(1);
+        assertThat(completed.committedChunks()).isEqualTo(1);
+        assertThat(completed.warnings())
+                .filteredOn(issue -> "SELECTED_PRODUCT_NO_LONGER_EXISTS"
+                        .equals(issue.code()))
+                .singleElement()
+                .satisfies(issue -> {
+                    assertThat(issue.details()).containsEntry("sku", missingSku)
+                            .containsEntry("warehouseId", WAREHOUSE_ID)
+                            .containsEntry("stage", "SELECTION_RESOLVED")
+                            .containsEntry("skipped", true)
+                            .containsEntry("procedureExecuted", false)
+                            .containsEntry("committed", false);
+                    assertThat(issue.details().get("recommendation").toString())
+                            .contains("Refresh the product snapshot")
+                            .contains("REMOVED");
+                });
+        verify(dao, never()).callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(missingSku), anyInt(), anyInt(), anyInt());
+    }
+
+    @Test
+    void nativeRangeSafeApplyOnlySkipsSkuDisappearingDuringBaselineAndContinues() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        String missingSku = "SKU-RACE-REMOVED";
+        List<String> requested = List.of(missingSku, CLEAN_SKU);
+        NativeProtectedSnapshot cleanState = protectedSnapshot(
+                List.of(CLEAN_SKU), "scope-sha256");
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(requested);
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, requested))
+                .thenReturn(cleanState);
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, List.of(CLEAN_SKU))).thenReturn(cleanState);
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, CLEAN_SKU, CLEAN_SKU)).thenReturn(cleanState);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(CLEAN_SKU), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 40, 0, null, null));
+        FolioAccountingPriceService service = nativeService(
+                dao, new TrackingTransactionManager(), true);
+
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true, null, null, requested,
+                FolioAccountingPriceNativeFullRequest.SAFE_APPLY_ONLY));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("COMPLETED_WITH_WARNINGS");
+        assertThat(completed.totalUnits()).isEqualTo(2);
+        assertThat(completed.processedSku()).isEqualTo(2);
+        assertThat(completed.procedureCalls()).isEqualTo(1);
+        assertThat(completed.committedChunks()).isEqualTo(1);
+        assertThat(completed.warnings())
+                .filteredOn(issue -> "SELECTED_PRODUCT_NO_LONGER_EXISTS"
+                        .equals(issue.code()))
+                .singleElement()
+                .satisfies(issue -> assertThat(issue.details())
+                        .containsEntry("sku", missingSku)
+                        .containsEntry("stage", "PROTECTED_BASELINE_CAPTURE")
+                        .containsEntry("committed", false));
+        verify(dao, never()).callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(missingSku), anyInt(), anyInt(), anyInt());
+    }
+
+    @Test
     void nativeRangeSafeApplyOnlyRollsBackKnownProblemAndCommitsNextSku() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
@@ -1030,6 +1126,101 @@ class FolioAccountingPriceServiceTest {
         verify(dao, times(1)).callNativeFullChunk(
                 eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
                 eq(CLEAN_SKU), eq(0), eq(0), eq(120));
+    }
+
+    @Test
+    void nativeRangeWaitsForRestartAndRetriesWhenFailedCommitWasRolledBack() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        FolioProductVerificationRecorder recorder =
+                mock(FolioProductVerificationRecorder.class);
+        stubNativeWarehouse(dao);
+        List<String> selected = List.of(CLEAN_SKU);
+        NativeProtectedSnapshot protectedState =
+                protectedSnapshot(selected, "scope-sha256");
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(selected);
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, selected))
+                .thenReturn(protectedState);
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, CLEAN_SKU, CLEAN_SKU))
+                .thenReturn(protectedState);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(CLEAN_SKU), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 40, 0, null, null));
+        ProductFingerprint before = fingerprint(CLEAN_SKU, "before");
+        ProductFingerprint after = fingerprint(CLEAN_SKU, "after");
+        when(recorder.captureBatch(WAREHOUSE_ID, selected, 120))
+                .thenReturn(List.of(before), List.of(after));
+        when(recorder.capture(WAREHOUSE_ID, CLEAN_SKU, 120))
+                .thenReturn(Optional.of(before));
+        when(recorder.confirmAppliedBatch(List.of(after)))
+                .thenReturn(Set.of(CLEAN_SKU));
+        FailFirstCommitTransactionManager transactions =
+                new FailFirstCommitTransactionManager();
+        FolioAccountingPriceService service = nativeService(
+                dao, recorder, transactions);
+        service.configureNativeRestartRecovery(600, 0);
+
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true, null, null, selected,
+                FolioAccountingPriceNativeFullRequest.SAFE_APPLY_ONLY));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("COMPLETED_WITH_WARNINGS");
+        assertThat(completed.committedChunks()).isEqualTo(1);
+        assertThat(completed.procedureCalls()).isEqualTo(2);
+        assertThat(completed.warnings()).extracting(issue -> issue.code())
+                .contains("MSSQL_RESTART_COMMIT_ROLLED_BACK_AND_RETRIED");
+        verify(dao, times(2)).callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(CLEAN_SKU), eq(0), eq(0), eq(120));
+    }
+
+    @Test
+    void nativeRangeConfirmsLostCommitAcknowledgementWithoutApplyingTwice() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        FolioProductVerificationRecorder recorder =
+                mock(FolioProductVerificationRecorder.class);
+        stubNativeWarehouse(dao);
+        List<String> selected = List.of(CLEAN_SKU);
+        NativeProtectedSnapshot protectedState =
+                protectedSnapshot(selected, "scope-sha256");
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(selected);
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, selected))
+                .thenReturn(protectedState);
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, CLEAN_SKU, CLEAN_SKU))
+                .thenReturn(protectedState);
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(CLEAN_SKU), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 40, 0, null, null));
+        ProductFingerprint before = fingerprint(CLEAN_SKU, "before");
+        ProductFingerprint after = fingerprint(CLEAN_SKU, "after");
+        when(recorder.captureBatch(WAREHOUSE_ID, selected, 120))
+                .thenReturn(List.of(before), List.of(after));
+        when(recorder.capture(WAREHOUSE_ID, CLEAN_SKU, 120))
+                .thenReturn(Optional.of(after), Optional.of(after));
+        when(recorder.confirmAppliedBatch(List.of(after)))
+                .thenReturn(Set.of(CLEAN_SKU));
+        FailFirstCommitTransactionManager transactions =
+                new FailFirstCommitTransactionManager();
+        FolioAccountingPriceService service = nativeService(
+                dao, recorder, transactions);
+        service.configureNativeRestartRecovery(600, 0);
+
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true, null, null, selected,
+                FolioAccountingPriceNativeFullRequest.SAFE_APPLY_ONLY));
+        var completed = service.nativeFullStatus(false);
+
+        assertThat(completed.status()).isEqualTo("COMPLETED_WITH_WARNINGS");
+        assertThat(completed.committedChunks()).isEqualTo(1);
+        assertThat(completed.procedureCalls()).isEqualTo(2);
+        assertThat(completed.warnings()).extracting(issue -> issue.code())
+                .contains("MSSQL_RESTART_COMMIT_CONFIRMED");
+        // The second procedure call is a ROLLBACK-only proof, not another apply.
+        assertThat(transactions.successfulCommits).isZero();
     }
 
     @Test
@@ -1480,6 +1671,17 @@ class FolioAccountingPriceServiceTest {
         );
     }
 
+    private static FolioAccountingPriceService nativeService(
+            FolioAccountingPriceDao dao,
+            FolioProductVerificationRecorder recorder,
+            PlatformTransactionManager transactionManager) {
+        return new FolioAccountingPriceService(
+                dao, recorder, DIRECT_EXECUTOR, CLOCK, transactionManager,
+                true, true, true, true, true,
+                Set.of("Paint_Rus"), 100,
+                5_000, 120, 120, 20);
+    }
+
     private static void stubWarehouse(FolioAccountingPriceDao dao) {
         WarehouseRow warehouse = new WarehouseRow(
                 WAREHOUSE_ID, "Test warehouse", 1000, null);
@@ -1583,6 +1785,12 @@ class FolioAccountingPriceServiceTest {
                 List.copyOf(skus), Map.copyOf(states));
     }
 
+    private static ProductFingerprint fingerprint(String sku, String digest) {
+        return new ProductFingerprint(
+                "Paint_Rus", WAREHOUSE_ID, sku, digest, "Test product",
+                1, 1L, 1L, null, null, 0);
+    }
+
     private static void stubProduct(FolioAccountingPriceDao dao,
                                     String sku,
                                     ArticleRow article,
@@ -1663,6 +1871,36 @@ class FolioAccountingPriceServiceTest {
             } else {
                 commits++;
             }
+        }
+
+        @Override
+        public void rollback(TransactionStatus status) {
+            rollbacks++;
+        }
+    }
+
+    private static final class FailFirstCommitTransactionManager
+            implements PlatformTransactionManager {
+        private boolean failed;
+        private int successfulCommits;
+        private int rollbacks;
+
+        @Override
+        public TransactionStatus getTransaction(TransactionDefinition definition) {
+            return new SimpleTransactionStatus();
+        }
+
+        @Override
+        public void commit(TransactionStatus status) {
+            if (status.isRollbackOnly()) {
+                rollbacks++;
+                return;
+            }
+            if (!failed) {
+                failed = true;
+                throw new TransactionSystemException("JDBC commit failed");
+            }
+            successfulCommits++;
         }
 
         @Override

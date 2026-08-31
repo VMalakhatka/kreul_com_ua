@@ -912,19 +912,18 @@ public class FolioAccountingPriceDao {
                     movementDigests);
         }
 
+        List<String> existingSkus = orderedSkus.stream()
+                .filter(articleDigests::containsKey)
+                .toList();
         Map<String, NativeSkuProtectedState> states = new LinkedHashMap<>();
         NativeInvariantDigest empty = emptyDigest();
-        for (String sku : orderedSkus) {
+        for (String sku : existingSkus) {
             NativeInvariantDigest article = articleDigests.get(sku);
-            if (article == null) {
-                throw new IllegalStateException(
-                        "Native protected state is missing for selected SKU " + sku);
-            }
             states.put(sku, new NativeSkuProtectedState(
                     article, movementDigests.getOrDefault(sku, empty)));
         }
         return new NativeProtectedSnapshot(
-                List.copyOf(orderedSkus), Map.copyOf(states));
+                List.copyOf(existingSkus), Map.copyOf(states));
     }
 
     private static Object[] selectedArgs(int warehouseId, List<String> skus) {

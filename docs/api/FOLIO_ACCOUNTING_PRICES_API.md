@@ -730,9 +730,23 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
    следующего SKU продолжается;
 3. неизвестный return code, SQL/contract/postcheck error откатывает текущий SKU
    и останавливает job как `FAILED` или `FAILED_PARTIAL`;
-4. при потере соединения или недоказуемом результате транзакции возвращается
-   `OUTCOME_UNKNOWN`, автоматический повтор запрещён;
-5. уже подтверждённые commit предыдущих SKU не отменяются.
+4. при кратком перезапуске MSSQL Java до 10 минут остаётся в
+   `WAITING_FOR_FOLIO_RESTART`, затем независимо доказывает результат текущего
+   SKU: подтверждённый rollback повторяет его один раз, а подтверждённый commit
+   не выполняет повторный apply;
+5. только если состояние после восстановления не совпадает ни с baseline до
+   commit, ни с детерминированным rollback-probe после перерасчёта, возвращается
+   `OUTCOME_UNKNOWN` и автоматический повтор запрещён;
+6. уже подтверждённые commit предыдущих SKU не отменяются.
+
+Для явного `skus[]` Java также допускает устаревший snapshot: если выбранная
+карточка уже удалена или переименована в `SCL_ARTC` до начала её транзакции,
+процедура для неё не вызывается, commit отсутствует, а job получает warning
+`SELECTED_PRODUCT_NO_LONGER_EXISTS` и продолжает остальные SKU. Это не
+ошибка учётной цены и такой SKU не переводится Java в `FAILED`: обязательный
+финальный refresh snapshot должен классифицировать его как `REMOVED`.
+Warning содержит `sku`, `warehouseId`, `stage`, `skipped=true`,
+`procedureExecuted=false`, `committed=false` и рекомендацию обновить snapshot.
 
 Защитная область `SAFE_APPLY_ONLY` ограничена каноническим списком выбранных
 118–500 SKU: Java не сканирует весь склад перед и после каждого пакета.
@@ -741,6 +755,27 @@ GET /admin/folio/accounting-prices/recalculate/native-full/status
 fingerprints зафиксированных SKU и одним batch обновляет их состояние в
 MariaDB. JSON-контракт endpoint и правила обработки warnings от этого не
 изменились.
+
+Для восстановления после планового перезапуска MSSQL Java дополнительно одним
+set-based чтением сохраняет fingerprints выбранного пакета до apply. Это не
+помесячный economic snapshot и не отдельное чтение на каждый SKU. При ошибке
+`JDBC commit failed` Java:
+
+1. не завершает job и публикует `running=true`, `status=RUNNING`,
+   `phase=WAITING_FOR_FOLIO_RESTART`;
+2. проверяет доступность исходной базы с заданным интервалом;
+3. если transaction callback не дошёл до commit, повторяет точный SKU один раз;
+4. если commit был начат, сравнивает текущее состояние с pre-commit baseline;
+5. для изменившегося состояния выполняет тот же safe-перерасчёт с обязательным
+   `ROLLBACK` и принимает commit только при точном совпадении fingerprint;
+6. возвращает `COMPLETED_WITH_WARNINGS` с кодом
+   `MSSQL_RESTART_COMMIT_CONFIRMED`,
+   `MSSQL_RESTART_COMMIT_ROLLED_BACK_AND_RETRIED` или
+   `MSSQL_RESTART_TRANSACTION_ROLLED_BACK_AND_RETRIED`.
+
+Ожидание действует только пока тот же Java-процесс продолжает работать и только
+для apply `native-range`. Рестарт самого Java-контейнера не может продолжить
+in-memory транзакцию. Недоказуемый результат остаётся `OUTCOME_UNKNOWN`.
 
 В однопроходном режиме `preflightChunks=0`, а `procedureCalls` обычно равно
 числу уже проверенных SKU. Полный `native-full` сохраняет прежний
@@ -752,7 +787,7 @@ rollback-preflight и не поддерживает этот режим.
 
 | Поле | Источник и смысл |
 |---|---|
-| `processedSku` | число завершённых SKU текущего Java-прохода |
+| `processedSku` | число завершённых или безопасно пропущенных отсутствующих SKU текущего Java-прохода |
 | `progressUnits` | то же число для общего механизма прогресса |
 | `totalUnits` | количество SKU, выбранных Java до первого вызова процедуры |
 | `currentUnits` / `procedureCurrentUnits` | сырой `n_cur` последнего вызова процедуры |
@@ -1030,6 +1065,8 @@ lavka.folio.accounting-prices.native-full-max-chunks=${LAVKA_FOLIO_ACCOUNTING_PR
 lavka.folio.accounting-prices.lock-timeout-ms=${LAVKA_FOLIO_ACCOUNTING_PRICE_LOCK_TIMEOUT_MS:5000}
 lavka.folio.accounting-prices.query-timeout-seconds=${LAVKA_FOLIO_ACCOUNTING_PRICE_QUERY_TIMEOUT_SECONDS:120}
 lavka.folio.accounting-prices.native-full-timeout-seconds=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_FULL_TIMEOUT_SECONDS:900}
+lavka.folio.accounting-prices.native-restart-wait-seconds=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_RESTART_WAIT_SECONDS:600}
+lavka.folio.accounting-prices.native-restart-probe-interval-seconds=${LAVKA_FOLIO_ACCOUNTING_PRICE_NATIVE_RESTART_PROBE_INTERVAL_SECONDS:15}
 lavka.folio.accounting-prices.max-reported-warnings=${LAVKA_FOLIO_ACCOUNTING_PRICE_MAX_REPORTED_WARNINGS:200}
 lavka.folio.accounting-prices.zone=${LAVKA_FOLIO_ACCOUNTING_PRICE_ZONE:Europe/Kyiv}
 lavka.folio.accounting-prices.diagnostics-enabled=${LAVKA_FOLIO_ACCOUNTING_PRICE_DIAGNOSTICS_ENABLED:true}
@@ -1064,8 +1101,11 @@ Native-full имеет отдельную лестницу защиты:
 один вызов safe-процедуры для одного SKU, а не весь фоновый проход. Стандартное
 значение native-full — 900 секунд.
 Тайм-аут приводит к rollback текущей транзакции, однако при потере связи исход
-commit нельзя угадывать: status может потребовать ручной разбор как
-`OUTCOME_UNKNOWN`.
+commit нельзя угадывать. Для `native-range` Java ожидает восстановление MSSQL
+до `native-restart-wait-seconds` и использует fingerprints + rollback-probe;
+только доказанный rollback повторяется. Интервал проверки задаётся
+`native-restart-probe-interval-seconds`. Значение wait `0` полностью отключает
+автоматическое ожидание и сохраняет прежнее немедленное `OUTCOME_UNKNOWN`.
 
 Safe production-проход не изменяет `TIP_TOVR` и не создаёт временный тип товара.
 Проблема возвращается OUT-параметрами до опасного деления, после чего Java
