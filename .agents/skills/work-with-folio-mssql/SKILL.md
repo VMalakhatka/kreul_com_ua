@@ -138,3 +138,26 @@ description: "Безопасно анализирует и изменяет ФО
 5. что осталось неизвестным и как безопасно это подтвердить.
 
 Если получено новое воспроизводимое знание о ФОЛИО, предложи дополнить подходящую карточку `docs/00_DATABASE_CATALOG.md` или документ `docs/business`/`docs/api`, указав источник: документация, живая схема, код либо эксперимент.
+
+## Поддержание backend-документации
+
+Изменение Java/Folio считается незавершённым без документационного влияния в том же
+diff. Выбери один точный основной документ, не копируй один контракт в несколько мест:
+
+- controller route, DTO field или terminal status — соответствующий `docs/api/*.md`;
+- новый подтверждённый SQL/Folio invariant — `docs/business`, карточка
+  `docs/00_DATABASE_CATALOG.md` или подходящий reference этого skill;
+- Flyway table/projection lifecycle — owning API contract и `docs/README.md`, если
+  изменилась карта владения;
+- Docker/env/health/deploy — human runbook WordPress-проекта
+  `docs/JAVA_DOCKER_RUNTIME.md` через `$build-java-docker-runtime`;
+- сквозной поток, запуск с нуля или recovery — WordPress
+  `docs/BACKEND_GUIDE.md` либо `docs/BOOTSTRAP_AND_RECOVERY.md` через `$lavka-woo`.
+
+Если соседний WordPress checkout недоступен, явно перечисли обязательное обновление и
+не называй сквозную задачу полностью завершённой. Не переносить в human docs сырые
+SQL definitions, runtime values, credentials или внутренние адреса.
+
+После изменения Java-кода, миграции, документации или этого skill запусти
+`python3 scripts/check-documentation.py --working-tree`. Проверка WordPress и его
+runbooks остаётся отдельным gate соседнего репозитория.

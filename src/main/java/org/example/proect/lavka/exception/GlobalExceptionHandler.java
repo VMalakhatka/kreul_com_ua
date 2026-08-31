@@ -11,6 +11,7 @@ import org.example.proect.lavka.service.folio.FolioAccountingPriceNotFoundExcept
 import org.example.proect.lavka.service.folio.FolioBalanceSnapshotUnavailableException;
 import org.example.proect.lavka.service.folio.FolioCustomerDocumentNotFoundException;
 import org.example.proect.lavka.service.folio.FolioPartnerNotFoundException;
+import org.example.proect.lavka.service.folio.FolioProductAnalyticsException;
 import org.slf4j.MDC;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
@@ -200,6 +201,19 @@ public class GlobalExceptionHandler {
                 "code", e.getCode(),
                 "message", truncate(e.getMessage(), 1000)
         ));
+    }
+
+    @ExceptionHandler(FolioProductAnalyticsException.class)
+    public ResponseEntity<Map<String, Object>> handleProductAnalytics(
+            FolioProductAnalyticsException e,
+            HttpServletRequest r) {
+        log.warn("[folio.product.analytics] rejected uri={} code={} msg={}",
+                r.getRequestURI(), e.code(), e.getMessage());
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("code", e.code());
+        details.put("message", truncate(e.getMessage(), 1000));
+        if (!e.details().isEmpty()) details.put("details", e.details());
+        return problem(r, e.status(), "Folio product analytics request rejected", details);
     }
 
     // Internet scanners regularly probe WordPress/PHP paths on the API host.

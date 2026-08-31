@@ -39,6 +39,8 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.example.proect.lavka.dao.wp.FolioProductSnapshotDao.ANALYTICS_SCHEMA_VERSION;
+
 @Slf4j
 @Service
 public class FolioProductSnapshotService {
@@ -108,7 +110,7 @@ public class FolioProductSnapshotService {
         LocalDateTime started = LocalDateTime.now(clock);
         live.set(new FolioProductSnapshotStatusResponse(
                 true, true, true, null, "QUEUED", "QUEUED",
-                sourceDatabase, warehouseId, horizonMonths, 2, started, null,
+                sourceDatabase, warehouseId, horizonMonths, ANALYTICS_SCHEMA_VERSION, started, null,
                 0, 0, 0, 0, 0, 0, 0, 0, null,
                 null, null, null, null, null));
         try {
@@ -206,15 +208,17 @@ public class FolioProductSnapshotService {
                     warehouseId, horizonMonths, startedAt);
             snapshotDao.publish(new Publish(
                     generationId, sourceDatabase, warehouseId,
+                    capture.warehouse().warehouseName(),
                     capture.warehouseDigest(), capture.movementRows(),
                     classification.items(), classification.changes(),
                     staging.movementFactRows, staging.monthlyMetricRows,
                     classification.unverified(), classification.dirty(),
-                    classification.created(), classification.removed(), calculatedAt));
+                    classification.created(), classification.removed(),
+                    asOfDate, calculatedAt));
 
             live.set(new FolioProductSnapshotStatusResponse(
                     true, false, false, generationId, "ACTIVE", "COMPLETED",
-                    sourceDatabase, warehouseId, horizonMonths, 2, startedAt, calculatedAt,
+                    sourceDatabase, warehouseId, horizonMonths, ANALYTICS_SCHEMA_VERSION, startedAt, calculatedAt,
                     capture.products().size(), capture.movementRows(),
                     staging.movementFactRows, staging.monthlyMetricRows,
                     classification.unverified(), classification.dirty(),
@@ -240,7 +244,7 @@ public class FolioProductSnapshotService {
             }
             live.set(new FolioProductSnapshotStatusResponse(
                     false, false, false, generationId, "FAILED", "FAILED",
-                    sourceDatabase, warehouseId, horizonMonths, 2, startedAt, failedAt,
+                    sourceDatabase, warehouseId, horizonMonths, ANALYTICS_SCHEMA_VERSION, startedAt, failedAt,
                     0, 0, 0, 0, 0, 0, 0, 0, null,
                     modeFailure.errorCode(), modeFailure.rawCode(),
                     modeFailure.modeName(), modeFailure.recommendation(),
@@ -324,7 +328,7 @@ public class FolioProductSnapshotService {
                             int warehouseId, int horizonMonths, LocalDateTime started) {
         live.set(new FolioProductSnapshotStatusResponse(
                 true, false, true, generationId, "BUILDING", phase, db,
-                warehouseId, horizonMonths, 2, started, null,
+                warehouseId, horizonMonths, ANALYTICS_SCHEMA_VERSION, started, null,
                 0, 0, 0, 0, 0, 0, 0, 0, null,
                 null, null, null, null, null));
     }

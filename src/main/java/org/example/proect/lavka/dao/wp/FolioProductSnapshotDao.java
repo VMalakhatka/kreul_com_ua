@@ -28,6 +28,7 @@ import java.util.Optional;
 @Repository
 public class FolioProductSnapshotDao {
 
+    public static final int ANALYTICS_SCHEMA_VERSION = 4;
     private static final int BATCH = 300;
     private final JdbcTemplate jdbc;
 
@@ -113,16 +114,18 @@ public class FolioProductSnapshotDao {
         jdbc.update(connection -> {
             PreparedStatement ps = connection.prepareStatement("""
                     INSERT INTO folio_product_snapshot_generation
-                        (source_database,warehouse_id,horizon_months,status,trigger_source,
+                        (source_database,warehouse_id,horizon_months,analytics_schema_version,
+                         status,trigger_source,
                          started_at,last_heartbeat_at)
-                    VALUES (?,?,?,'BUILDING',?,?,?)
+                    VALUES (?,?,?,?,'BUILDING',?,?,?)
                     """, Statement.RETURN_GENERATED_KEYS);
             ps.setString(1, sourceDatabase);
             ps.setInt(2, warehouseId);
             ps.setInt(3, horizonMonths);
-            ps.setString(4, trigger);
-            ps.setTimestamp(5, Timestamp.valueOf(startedAt));
+            ps.setInt(4, ANALYTICS_SCHEMA_VERSION);
+            ps.setString(5, trigger);
             ps.setTimestamp(6, Timestamp.valueOf(startedAt));
+            ps.setTimestamp(7, Timestamp.valueOf(startedAt));
             return ps;
         }, keys);
         Number key = keys.getKey();
@@ -255,13 +258,16 @@ public class FolioProductSnapshotDao {
 
         int updated = jdbc.update("""
                 UPDATE folio_product_snapshot_generation
-                   SET status='ACTIVE',analytics_schema_version=2,
+                   SET status='ACTIVE',analytics_schema_version=?,as_of_date=?,
+                       warehouse_name=?,
                        completed_at=?,last_heartbeat_at=?,
                        total_products=?,movement_rows=?,movement_fact_rows=?,monthly_metric_rows=?,
                        unverified_products=?,dirty_products=?,new_products=?,
                        removed_products=?,warehouse_digest=?,error_message=NULL
                  WHERE id=? AND status='BUILDING'
-                """, ts(publish.calculatedAt()), ts(publish.calculatedAt()),
+                """, ANALYTICS_SCHEMA_VERSION, publish.asOfDate(), publish.warehouseName(),
+                ts(publish.calculatedAt()),
+                ts(publish.calculatedAt()),
                 publish.items().stream().filter(Item::present).count(),
                 publish.movementRows(), publish.movementFactRows(),
                 publish.monthlyMetricRows(),
@@ -480,7 +486,17 @@ public class FolioProductSnapshotDao {
         jdbc.batchUpdate("""
                 INSERT INTO %s
                     (source_database,warehouse_id,sku,product_name,current_supplier,
-                     supplier_state,physical_quantity,reserved_quantity,available_quantity,
+                     supplier_state,analytics_digest,
+                     group_level_1_code,group_level_1_name,
+                     group_level_2_code,group_level_2_name,
+                     group_level_3_code,group_level_3_name,
+                     group_level_4_code,group_level_4_name,
+                     group_level_5_code,group_level_5_name,
+                     group_level_6_code,group_level_6_name,
+                     department_code,department_name,product_type_code,product_type_name,
+                     unit_code,unit_name,package_quantity,minimum_order_quantity,
+                     minimum_stock,maximum_stock,primary_barcode,brand_code,brand_name,
+                     physical_quantity,reserved_quantity,available_quantity,
                      accounting_price,inventory_value,last_receipt_date,last_sale_date,
                      last_regular_sale_date,sold_units_30d,sold_units_90d,sold_units_365d,
                      sold_units_730d,regular_sold_units_30d,regular_sold_units_90d,
@@ -492,9 +508,32 @@ public class FolioProductSnapshotDao {
                      one_off_gross_profit_90d,one_off_gross_profit_365d,
                      average_inventory_90d,average_inventory_365d,inventory_turns_365d,
                      gmroi_365d,coverage_days,health_status,generation_id,calculated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (%s)
                 ON DUPLICATE KEY UPDATE product_name=VALUES(product_name),
                     current_supplier=VALUES(current_supplier),supplier_state=VALUES(supplier_state),
+                    analytics_digest=VALUES(analytics_digest),
+                    group_level_1_code=VALUES(group_level_1_code),
+                    group_level_1_name=VALUES(group_level_1_name),
+                    group_level_2_code=VALUES(group_level_2_code),
+                    group_level_2_name=VALUES(group_level_2_name),
+                    group_level_3_code=VALUES(group_level_3_code),
+                    group_level_3_name=VALUES(group_level_3_name),
+                    group_level_4_code=VALUES(group_level_4_code),
+                    group_level_4_name=VALUES(group_level_4_name),
+                    group_level_5_code=VALUES(group_level_5_code),
+                    group_level_5_name=VALUES(group_level_5_name),
+                    group_level_6_code=VALUES(group_level_6_code),
+                    group_level_6_name=VALUES(group_level_6_name),
+                    department_code=VALUES(department_code),
+                    department_name=VALUES(department_name),
+                    product_type_code=VALUES(product_type_code),
+                    product_type_name=VALUES(product_type_name),
+                    unit_code=VALUES(unit_code),unit_name=VALUES(unit_name),
+                    package_quantity=VALUES(package_quantity),
+                    minimum_order_quantity=VALUES(minimum_order_quantity),
+                    minimum_stock=VALUES(minimum_stock),maximum_stock=VALUES(maximum_stock),
+                    primary_barcode=VALUES(primary_barcode),
+                    brand_code=VALUES(brand_code),brand_name=VALUES(brand_name),
                     physical_quantity=VALUES(physical_quantity),reserved_quantity=VALUES(reserved_quantity),
                     available_quantity=VALUES(available_quantity),accounting_price=VALUES(accounting_price),
                     inventory_value=VALUES(inventory_value),last_receipt_date=VALUES(last_receipt_date),
@@ -527,10 +566,38 @@ public class FolioProductSnapshotDao {
                     inventory_turns_365d=VALUES(inventory_turns_365d),gmroi_365d=VALUES(gmroi_365d),
                     coverage_days=VALUES(coverage_days),health_status=VALUES(health_status),
                     generation_id=VALUES(generation_id),calculated_at=VALUES(calculated_at)
-                """.formatted(table), rows, BATCH, (ps,row)->{
+                """.formatted(table, placeholders(72)), rows, BATCH, (ps,row)->{
             int p=1; ps.setString(p++,db); ps.setInt(p++,warehouseId); ps.setString(p++,row.sku());
             ps.setString(p++,row.productName()); ps.setString(p++,row.currentSupplier());
-            ps.setString(p++,row.supplierState()); decimal(ps,p++,row.physicalQuantity(),4);
+            ps.setString(p++,row.supplierState());
+            var dimensions = row.dimensions();
+            ps.setString(p++, dimensions.analyticsDigest());
+            ps.setString(p++, dimensions.groupLevel1Code());
+            ps.setString(p++, dimensions.groupLevel1Name());
+            ps.setString(p++, dimensions.groupLevel2Code());
+            ps.setString(p++, dimensions.groupLevel2Name());
+            ps.setString(p++, dimensions.groupLevel3Code());
+            ps.setString(p++, dimensions.groupLevel3Name());
+            ps.setString(p++, dimensions.groupLevel4Code());
+            ps.setString(p++, dimensions.groupLevel4Name());
+            ps.setString(p++, dimensions.groupLevel5Code());
+            ps.setString(p++, dimensions.groupLevel5Name());
+            ps.setString(p++, dimensions.groupLevel6Code());
+            ps.setString(p++, dimensions.groupLevel6Name());
+            ps.setString(p++, dimensions.departmentCode());
+            ps.setString(p++, dimensions.departmentName());
+            ps.setString(p++, dimensions.productTypeCode());
+            ps.setString(p++, dimensions.productTypeName());
+            ps.setString(p++, dimensions.unitCode());
+            ps.setString(p++, dimensions.unitName());
+            nullableDecimal(ps,p++,dimensions.packageQuantity(),4);
+            nullableDecimal(ps,p++,dimensions.minimumOrderQuantity(),4);
+            nullableDecimal(ps,p++,dimensions.minimumStock(),4);
+            nullableDecimal(ps,p++,dimensions.maximumStock(),4);
+            ps.setString(p++, dimensions.primaryBarcode());
+            ps.setString(p++, dimensions.brandCode());
+            ps.setString(p++, dimensions.brandName());
+            decimal(ps,p++,row.physicalQuantity(),4);
             decimal(ps,p++,row.reservedQuantity(),4); decimal(ps,p++,row.availableQuantity(),4);
             decimal(ps,p++,row.accountingPrice(),6); decimal(ps,p++,row.inventoryValue(),4);
             nullableDate(ps,p++,row.lastReceiptDate()); nullableDate(ps,p++,row.lastSaleDate());
@@ -604,8 +671,10 @@ public class FolioProductSnapshotDao {
         List<Generation> rows=jdbc.query("""
                 SELECT * FROM folio_product_snapshot_generation ORDER BY id DESC LIMIT 1
                 """,(rs,n)->new Generation(rs.getLong("id"),rs.getString("source_database"),
-                rs.getInt("warehouse_id"),rs.getInt("horizon_months"),
-                rs.getInt("analytics_schema_version"),rs.getString("status"),
+                rs.getInt("warehouse_id"),rs.getString("warehouse_name"),
+                rs.getInt("horizon_months"),
+                rs.getInt("analytics_schema_version"),
+                rs.getObject("as_of_date", LocalDate.class), rs.getString("status"),
                 rs.getString("trigger_source"),rs.getTimestamp("started_at").toLocalDateTime(),
                 rs.getTimestamp("completed_at")==null?null:rs.getTimestamp("completed_at").toLocalDateTime(),
                 rs.getInt("total_products"),rs.getLong("movement_rows"),
@@ -644,6 +713,10 @@ public class FolioProductSnapshotDao {
         if(value==null)return null; return value.length()<=max?value:value.substring(0,max);
     }
 
+    private static String placeholders(int count) {
+        return String.join(",", java.util.Collections.nCopies(count, "?"));
+    }
+
     public record ExistingItem(String sku,String productName,
                                String currentSupplier,String supplierState,
                                String observedDigest,
@@ -662,16 +735,31 @@ public class FolioProductSnapshotDao {
     public record Change(long generationId,String sourceDatabase,int warehouseId,String sku,
                          String type,String beforeDigest,String afterDigest,LocalDateTime detectedAt){ }
     public record Publish(long generationId,String sourceDatabase,int warehouseId,
+                          String warehouseName,
                           String warehouseDigest,long movementRows,List<Item> items,
                           List<Change> changes,long movementFactRows,
                           int monthlyMetricRows,
                           int unverified,int dirty,int created,int removed,
-                          LocalDateTime calculatedAt){ }
-    public record Generation(long id,String sourceDatabase,int warehouseId,int horizonMonths,
+                          LocalDate asOfDate,LocalDateTime calculatedAt){ }
+    public record Generation(long id,String sourceDatabase,int warehouseId,String warehouseName,
+                             int horizonMonths,
                              int analyticsSchemaVersion,
+                             LocalDate asOfDate,
                              String status,String trigger,LocalDateTime startedAt,
                              LocalDateTime completedAt,int totalProducts,long movementRows,
                              long movementFactRows,int monthlyMetricRows,
                              int unverified,int dirty,int created,int removed,
-                             String warehouseDigest,String error){ }
+                             String warehouseDigest,String error){
+        public Generation(long id,String sourceDatabase,int warehouseId,int horizonMonths,
+                          int analyticsSchemaVersion,String status,String trigger,
+                          LocalDateTime startedAt,LocalDateTime completedAt,int totalProducts,
+                          long movementRows,long movementFactRows,int monthlyMetricRows,
+                          int unverified,int dirty,int created,int removed,
+                          String warehouseDigest,String error) {
+            this(id,sourceDatabase,warehouseId,null,horizonMonths,analyticsSchemaVersion,
+                    null,status,trigger,startedAt,completedAt,totalProducts,movementRows,
+                    movementFactRows,monthlyMetricRows,unverified,dirty,created,removed,
+                    warehouseDigest,error);
+        }
+    }
 }

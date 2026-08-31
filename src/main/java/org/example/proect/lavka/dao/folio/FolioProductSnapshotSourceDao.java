@@ -234,14 +234,24 @@ public class FolioProductSnapshotSourceDao {
         Map<String, MutableCard> result = new LinkedHashMap<>();
         jdbc.query(con -> {
             String sql = """
-                    SELECT a.COD_ARTIC, a.NAME_ARTIC, a.DOP2_ARTIC,
+                    SELECT a.COD_ARTIC, a.NAME_ARTIC, a.DOP2_ARTIC, a.DOP3_ARTIC,
+                           a.NGROUP_TVR, a.NGROUP_TV2, a.NGROUP_TV3,
+                           a.NGROUP_TV4, a.NGROUP_TV5, a.NGROUP_TV6,
+                           a.DEPARTAM, a.TIP_TOVR AS PRODUCT_TYPE_CODE,
+                           (SELECT TOP 1 t.TIP_TOVAR
+                              FROM dbo.TIP_TOVR t WITH (HOLDLOCK)
+                             WHERE t.SIGNIFIC=a.TIP_TOVR
+                             ORDER BY t.TIP_TOVAR) AS PRODUCT_TYPE_NAME,
+                           a.EDIN_IZMER,
+                           a.EDN_V_UPAK, a.MIN_PARTIA,
+                           a.MIN_TVRZAP, a.MAX_TVRZAP,
                            a.NACH_KOLCH, a.KON_KOLCH,
                            a.REZ_KOLCH, a.KOL_SUM, a.UCHET_SUM, a.UCHET_CENA,
-                           a.UCHET_0_C, a.UCHET_0_VL, a.TIP_TOVR, a.PRIZN_VALT,
+                           a.UCHET_0_C, a.UCHET_0_VL, a.PRIZN_VALT,
                            a.FIX_NACEN, a.CENA_ARTIC, a.CENA_VALT, a.CENA_BZNAL,
                            a.CENA_V_BZN, a.NDS_ARTIC, a.COEF_BZNAL,
                            CASE WHEN EXISTS (
-                               SELECT 1 FROM dbo.TIP_TOVR t
+                               SELECT 1 FROM dbo.TIP_TOVR t WITH (HOLDLOCK)
                                 WHERE t.SIGNIFIC = a.TIP_TOVR
                                   AND t.CHECK_SAVE = 0 AND t.SHOW_OSTATOK = 0
                            ) THEN 1 ELSE 0 END AS HIDDEN_FOR_ACCOUNTING
@@ -263,11 +273,13 @@ public class FolioProductSnapshotSourceDao {
             MutableCard card = new MutableCard(
                     warehouse, sku, trim(rs.getString("NAME_ARTIC")),
                     trim(rs.getString("DOP2_ARTIC")),
+                    productDimensions(rs),
                     decimal(rs, "NACH_KOLCH"), decimal(rs, "KON_KOLCH"),
                     decimal(rs, "REZ_KOLCH"), decimal(rs, "KOL_SUM"),
                     decimal(rs, "UCHET_SUM"), decimal(rs, "UCHET_CENA"),
                     decimal(rs, "UCHET_0_C"), decimal(rs, "UCHET_0_VL"),
-                    trim(rs.getString("TIP_TOVR")), booleanOrNull(rs, "PRIZN_VALT"),
+                    trim(rs.getString("PRODUCT_TYPE_CODE")),
+                    booleanOrNull(rs, "PRIZN_VALT"),
                     booleanOrNull(rs, "FIX_NACEN"), decimal(rs, "CENA_ARTIC"),
                     decimal(rs, "CENA_VALT"), decimal(rs, "CENA_BZNAL"),
                     decimal(rs, "CENA_V_BZN"), decimal(rs, "NDS_ARTIC"),
@@ -536,6 +548,31 @@ public class FolioProductSnapshotSourceDao {
         return supplier == null || supplier.isBlank() ? "MISSING" : "CURRENT";
     }
 
+    private static ProductDimensions productDimensions(ResultSet rs) throws SQLException {
+        String group1 = trim(rs.getString("NGROUP_TVR"));
+        String group2 = trim(rs.getString("NGROUP_TV2"));
+        String group3 = trim(rs.getString("NGROUP_TV3"));
+        String group4 = trim(rs.getString("NGROUP_TV4"));
+        String group5 = trim(rs.getString("NGROUP_TV5"));
+        String group6 = trim(rs.getString("NGROUP_TV6"));
+        String department = trim(rs.getString("DEPARTAM"));
+        String productType = trim(rs.getString("PRODUCT_TYPE_CODE"));
+        String productTypeName = trim(rs.getString("PRODUCT_TYPE_NAME"));
+        String unit = trim(rs.getString("EDIN_IZMER"));
+        return new ProductDimensions(
+                group1, group1, group2, group2, group3, group3,
+                group4, group4, group5, group5, group6, group6,
+                department, department,
+                productType, productTypeName == null ? productType : productTypeName,
+                unit, unit,
+                decimalOrNull(rs, "EDN_V_UPAK"),
+                decimalOrNull(rs, "MIN_PARTIA"),
+                decimalOrNull(rs, "MIN_TVRZAP"),
+                decimalOrNull(rs, "MAX_TVRZAP"),
+                trim(rs.getString("DOP3_ARTIC")),
+                null, null, null);
+    }
+
     private static LocalDate max(LocalDate first, LocalDate second) {
         return first == null || second.isAfter(first) ? second : first;
     }
@@ -605,6 +642,7 @@ public class FolioProductSnapshotSourceDao {
     public record ProductCard(
             String sku, String productName, String sourceDigest,
             String currentSupplier, String supplierState,
+            ProductDimensions dimensions,
             BigDecimal initialQuantity, BigDecimal physicalQuantity,
             BigDecimal reservedQuantity, BigDecimal accountingQuantity,
             BigDecimal accountingAmount, BigDecimal accountingPrice,
@@ -613,6 +651,51 @@ public class FolioProductSnapshotSourceDao {
             long movementCount, Long minRecno, Long maxRecno,
             LocalDate firstMovementDate, LocalDate lastMovementDate,
             int priceRuleCount, boolean hiddenForAccounting) {
+        public ProductCard(
+                String sku, String productName, String sourceDigest,
+                String currentSupplier, String supplierState,
+                BigDecimal initialQuantity, BigDecimal physicalQuantity,
+                BigDecimal reservedQuantity, BigDecimal accountingQuantity,
+                BigDecimal accountingAmount, BigDecimal accountingPrice,
+                BigDecimal initialAccountingPrice, BigDecimal initialAccountingCurrencyPrice,
+                BigDecimal openingQuantityAtHorizon, BigDecimal openingValueAtHorizon,
+                long movementCount, Long minRecno, Long maxRecno,
+                LocalDate firstMovementDate, LocalDate lastMovementDate,
+                int priceRuleCount, boolean hiddenForAccounting) {
+            this(sku, productName, sourceDigest, currentSupplier, supplierState,
+                    emptyProductDimensions(), initialQuantity, physicalQuantity,
+                    reservedQuantity, accountingQuantity, accountingAmount,
+                    accountingPrice, initialAccountingPrice,
+                    initialAccountingCurrencyPrice, openingQuantityAtHorizon,
+                    openingValueAtHorizon, movementCount, minRecno, maxRecno,
+                    firstMovementDate, lastMovementDate, priceRuleCount,
+                    hiddenForAccounting);
+        }
+    }
+
+    public record ProductDimensions(
+            String groupLevel1Code, String groupLevel1Name,
+            String groupLevel2Code, String groupLevel2Name,
+            String groupLevel3Code, String groupLevel3Name,
+            String groupLevel4Code, String groupLevel4Name,
+            String groupLevel5Code, String groupLevel5Name,
+            String groupLevel6Code, String groupLevel6Name,
+            String departmentCode, String departmentName,
+            String productTypeCode, String productTypeName,
+            String unitCode, String unitName,
+            BigDecimal packageQuantity, BigDecimal minimumOrderQuantity,
+            BigDecimal minimumStock, BigDecimal maximumStock,
+            String primaryBarcode,
+            String brandCode, String brandName,
+            String analyticsDigest) {
+    }
+
+    public static ProductDimensions emptyProductDimensions() {
+        return new ProductDimensions(
+                null, null, null, null, null, null,
+                null, null, null, null, null, null,
+                null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null);
     }
 
     public record ProductFingerprint(
@@ -673,6 +756,7 @@ public class FolioProductSnapshotSourceDao {
         private final String productName;
         private final String currentSupplier;
         private final String supplierState;
+        private final ProductDimensions dimensions;
         private final BigDecimal initialQuantity;
         private final BigDecimal physicalQuantity;
         private final BigDecimal reservedQuantity;
@@ -699,6 +783,7 @@ public class FolioProductSnapshotSourceDao {
 
         private MutableCard(Warehouse warehouse, String sku, String productName,
                             String currentSupplier,
+                            ProductDimensions dimensions,
                             BigDecimal initialQuantity, BigDecimal physicalQuantity,
                             BigDecimal reservedQuantity, BigDecimal accountingQuantity,
                             BigDecimal accountingAmount, BigDecimal accountingPrice,
@@ -713,6 +798,7 @@ public class FolioProductSnapshotSourceDao {
             this.productName = productName == null ? "" : productName;
             this.currentSupplier = currentSupplier;
             this.supplierState = supplierState(currentSupplier);
+            this.dimensions = dimensions;
             this.initialQuantity = initialQuantity;
             this.physicalQuantity = physicalQuantity;
             this.reservedQuantity = reservedQuantity;
@@ -745,9 +831,11 @@ public class FolioProductSnapshotSourceDao {
                     maxPriceRuleId, priceRuleChecksum);
             MessageDigest md = digest();
             digestValues.forEach(value -> add(md, value));
+            ProductDimensions finishedDimensions = withAnalyticsDigest(
+                    dimensions, productName, currentSupplier, supplierState);
             return new ProductCard(
                     sku, productName, HexFormat.of().formatHex(md.digest()),
-                    currentSupplier, supplierState,
+                    currentSupplier, supplierState, finishedDimensions,
                     initialQuantity, physicalQuantity, reservedQuantity,
                     accountingQuantity, accountingAmount, accountingPrice,
                     initialAccountingPrice, initialAccountingCurrencyPrice,
@@ -756,6 +844,51 @@ public class FolioProductSnapshotSourceDao {
                     movementCount, minRecno, maxRecno, firstMovementDate,
                     lastMovementDate, priceRuleCount, hiddenForAccounting
             );
+        }
+
+        private static ProductDimensions withAnalyticsDigest(
+                ProductDimensions value, String productName,
+                String currentSupplier, String supplierState) {
+            MessageDigest analytics = digest();
+            add(analytics, "folio-product-analytics/v4");
+            add(analytics, productName);
+            add(analytics, currentSupplier);
+            add(analytics, supplierState);
+            add(analytics, value.groupLevel1Code());
+            add(analytics, value.groupLevel2Code());
+            add(analytics, value.groupLevel3Code());
+            add(analytics, value.groupLevel4Code());
+            add(analytics, value.groupLevel5Code());
+            add(analytics, value.groupLevel6Code());
+            add(analytics, value.departmentCode());
+            add(analytics, value.productTypeCode());
+            add(analytics, value.productTypeName());
+            add(analytics, value.unitCode());
+            add(analytics, decimalText(value.packageQuantity()));
+            add(analytics, decimalText(value.minimumOrderQuantity()));
+            add(analytics, decimalText(value.minimumStock()));
+            add(analytics, decimalText(value.maximumStock()));
+            add(analytics, value.primaryBarcode());
+            add(analytics, value.brandCode());
+            return new ProductDimensions(
+                    value.groupLevel1Code(), value.groupLevel1Name(),
+                    value.groupLevel2Code(), value.groupLevel2Name(),
+                    value.groupLevel3Code(), value.groupLevel3Name(),
+                    value.groupLevel4Code(), value.groupLevel4Name(),
+                    value.groupLevel5Code(), value.groupLevel5Name(),
+                    value.groupLevel6Code(), value.groupLevel6Name(),
+                    value.departmentCode(), value.departmentName(),
+                    value.productTypeCode(), value.productTypeName(),
+                    value.unitCode(), value.unitName(),
+                    value.packageQuantity(), value.minimumOrderQuantity(),
+                    value.minimumStock(), value.maximumStock(),
+                    value.primaryBarcode(),
+                    value.brandCode(), value.brandName(),
+                    HexFormat.of().formatHex(analytics.digest()));
+        }
+
+        private static String decimalText(BigDecimal value) {
+            return value == null ? null : value.stripTrailingZeros().toPlainString();
         }
     }
 

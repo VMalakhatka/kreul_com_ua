@@ -183,6 +183,7 @@ public class FolioProductEconomicsCalculator {
                 gross90, coverage, lastRegularSale, asOfDate);
         return new CurrentMetric(
                 card.sku(), card.productName(), card.currentSupplier(), card.supplierState(),
+                card.dimensions(),
                 card.physicalQuantity(),
                 card.reservedQuantity(), available, card.accountingPrice(),
                 inventoryValue, lastReceipt, lastSale, lastRegularSale,
@@ -358,6 +359,7 @@ public class FolioProductEconomicsCalculator {
 
     public record CurrentMetric(
             String sku, String productName, String currentSupplier, String supplierState,
+            org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao.ProductDimensions dimensions,
             BigDecimal physicalQuantity,
             BigDecimal reservedQuantity, BigDecimal availableQuantity,
             BigDecimal accountingPrice, BigDecimal inventoryValue,
