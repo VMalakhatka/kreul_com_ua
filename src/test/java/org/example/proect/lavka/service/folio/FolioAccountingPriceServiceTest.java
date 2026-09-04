@@ -932,6 +932,79 @@ class FolioAccountingPriceServiceTest {
     }
 
     @Test
+    void nativeRangeSafeApplyOnlyDefersConcurrentlyChangedSkuAndContinues() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        FolioProductVerificationRecorder recorder =
+                mock(FolioProductVerificationRecorder.class);
+        stubNativeWarehouse(dao);
+        String changedSku = "SKU-CHANGED-BY-ORDER";
+        List<String> selected = List.of(CLEAN_SKU, changedSku);
+        NativeSkuProtectedState originalState = protectedState(
+                "article-before", 2, "movements-before");
+        NativeSkuProtectedState changedState = protectedState(
+                "article-after", 3, "movements-after");
+        NativeProtectedSnapshot baseline = protectedSnapshot(Map.of(
+                CLEAN_SKU, originalState,
+                changedSku, originalState), selected);
+        NativeProtectedSnapshot finalState = protectedSnapshot(Map.of(
+                CLEAN_SKU, originalState,
+                changedSku, changedState), selected);
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(selected);
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, selected))
+                .thenReturn(baseline, finalState);
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, CLEAN_SKU, CLEAN_SKU))
+                .thenReturn(protectedSnapshot(
+                        Map.of(CLEAN_SKU, originalState), List.of(CLEAN_SKU)));
+        when(dao.captureNativeProtectedSnapshot(
+                WAREHOUSE_ID, changedSku, changedSku))
+                .thenReturn(protectedSnapshot(
+                        Map.of(changedSku, originalState), List.of(changedSku)));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(CLEAN_SKU), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(CLEAN_SKU, 40, 0, changedSku, null));
+        when(dao.callNativeFullChunk(
+                eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(changedSku), eq(0), eq(0), eq(120)))
+                .thenReturn(nativeChunk(changedSku, 40, 0, null, null));
+        ProductFingerprint stableFingerprint = fingerprint(CLEAN_SKU, "digest-stable");
+        when(recorder.captureBatch(WAREHOUSE_ID, List.of(CLEAN_SKU), 120))
+                .thenReturn(List.of(stableFingerprint));
+        when(recorder.confirmAppliedBatch(List.of(stableFingerprint)))
+                .thenReturn(Set.of(CLEAN_SKU));
+        FolioAccountingPriceService service = new FolioAccountingPriceService(
+                dao, recorder, DIRECT_EXECUTOR, CLOCK,
+                new TrackingTransactionManager(), true, true, true,
+                true, true, Set.of("Paint_Rus"), 100,
+                5_000, 120, 120, 20);
+
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(
+                WAREHOUSE_ID, false, true, null, null, selected,
+                FolioAccountingPriceNativeFullRequest.SAFE_APPLY_ONLY));
+
+        var completed = service.nativeFullStatus(false);
+        assertThat(completed.status()).isEqualTo("COMPLETED_WITH_WARNINGS");
+        assertThat(completed.committedChunks()).isEqualTo(2);
+        assertThat(completed.warnings())
+                .filteredOn(issue -> "SELECTED_PRODUCT_CHANGED_DURING_JOB"
+                        .equals(issue.code()))
+                .singleElement()
+                .satisfies(issue -> assertThat(issue.details())
+                        .containsEntry("sku", changedSku)
+                        .containsEntry("warehouseId", WAREHOUSE_ID)
+                        .containsEntry("changeKind", "ARTICLE_AND_MOVEMENTS_CHANGED")
+                        .containsEntry("expectedMovementRows", 2)
+                        .containsEntry("actualMovementRows", 3)
+                        .containsEntry("recalculationCommitted", true)
+                        .containsEntry("verificationRecorded", false)
+                        .containsEntry("retryRequiredAfterSnapshot", true)
+                        .containsEntry("remainingProductsContinue", true));
+        verify(recorder).captureBatch(WAREHOUSE_ID, List.of(CLEAN_SKU), 120);
+        verify(recorder).confirmAppliedBatch(List.of(stableFingerprint));
+    }
+
+    @Test
     void nativeRangeSafeApplyOnlySkipsSkuMissingBeforeSelectionAndContinues() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
@@ -1772,9 +1845,8 @@ class FolioAccountingPriceServiceTest {
 
     private static NativeProtectedSnapshot protectedSnapshot(List<String> skus,
                                                               String articleHash) {
-        NativeSkuProtectedState state = new NativeSkuProtectedState(
-                new NativeInvariantDigest(1, articleHash),
-                new NativeInvariantDigest(1, "movement-sha256"));
+        NativeSkuProtectedState state = protectedState(
+                articleHash, 1, "movement-sha256");
         Map<String, NativeSkuProtectedState> states = skus.stream()
                 .collect(java.util.stream.Collectors.toMap(
                         sku -> sku,
@@ -1783,6 +1855,20 @@ class FolioAccountingPriceServiceTest {
                         java.util.LinkedHashMap::new));
         return new NativeProtectedSnapshot(
                 List.copyOf(skus), Map.copyOf(states));
+    }
+
+    private static NativeProtectedSnapshot protectedSnapshot(
+            Map<String, NativeSkuProtectedState> states,
+            List<String> orderedSkus) {
+        return new NativeProtectedSnapshot(
+                List.copyOf(orderedSkus), Map.copyOf(states));
+    }
+
+    private static NativeSkuProtectedState protectedState(
+            String articleHash, int movementRows, String movementHash) {
+        return new NativeSkuProtectedState(
+                new NativeInvariantDigest(1, articleHash),
+                new NativeInvariantDigest(movementRows, movementHash));
     }
 
     private static ProductFingerprint fingerprint(String sku, String digest) {

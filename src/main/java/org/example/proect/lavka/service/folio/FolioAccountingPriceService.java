@@ -2102,36 +2102,109 @@ public class FolioAccountingPriceService {
             NativeProtectedSnapshot expected,
             List<String> committedSkus) {
         long startedNanos = System.nanoTime();
-        List<ProductFingerprint> fingerprints;
+        NativeSelectionVerification verification;
         try {
-            fingerprints = Objects.requireNonNullElse(
+            verification = Objects.requireNonNull(
                     nativeWriteTransaction.execute(status -> {
                         validateNativeTransactionScope(
                                 progress.database, progress.request.warehouseId(), method);
                         NativeProtectedSnapshot actual =
                                 dao.captureNativeProtectedSnapshot(
                                         progress.request.warehouseId(), selectedSkus);
-                        if (!Objects.equals(expected, actual)) {
-                            throw new IllegalStateException(
-                                    "Folio protected selected-product data changed while the native-range job was running");
-                        }
+                        List<NativeSelectedProductChange> concurrentChanges =
+                                nativeSelectionChanges(expected, actual, committedSkus);
+                        Set<String> changedSkus = concurrentChanges.stream()
+                                .map(NativeSelectedProductChange::sku)
+                                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+                        List<String> verifiableSkus = committedSkus.stream()
+                                .filter(sku -> !changedSkus.contains(sku))
+                                .toList();
                         nativeCheckpoint(progress, "BATCH_FINGERPRINT_CAPTURE", null);
-                        List<ProductFingerprint> captured = committedSkus.isEmpty()
+                        List<ProductFingerprint> captured = verifiableSkus.isEmpty()
                                 ? List.of()
                                 : verificationRecorder.captureBatch(
                                 progress.request.warehouseId(),
-                                List.copyOf(committedSkus), nativeFullTimeoutSeconds);
+                                verifiableSkus, nativeFullTimeoutSeconds);
                         status.setRollbackOnly();
-                        return captured;
-                    }), List.of());
+                        return new NativeSelectionVerification(
+                                List.copyOf(captured), concurrentChanges);
+                    }));
         } catch (CannotAcquireLockException e) {
             throw new FolioAccountingPriceBusyException(e);
         }
-        recordNativeAppliedVerificationsBatch(progress, fingerprints);
-        log.info("[folio.accounting-price] native_selected_baseline_verified job={} warehouse={} selectedSkuCount={} committedSkuCount={} fingerprintCount={} durationMs={}",
+        for (NativeSelectedProductChange change : verification.concurrentChanges()) {
+            addNativeConcurrentChangeIssue(progress, change);
+        }
+        recordNativeAppliedVerificationsBatch(progress, verification.fingerprints());
+        log.info("[folio.accounting-price] native_selected_baseline_verified job={} warehouse={} selectedSkuCount={} committedSkuCount={} fingerprintCount={} concurrentChangeCount={} durationMs={}",
                 progress.jobId, progress.request.warehouseId(), selectedSkus.size(),
-                committedSkus.size(), fingerprints.size(),
+                committedSkus.size(), verification.fingerprints().size(),
+                verification.concurrentChanges().size(),
                 (System.nanoTime() - startedNanos) / 1_000_000L);
+    }
+
+    private static List<NativeSelectedProductChange> nativeSelectionChanges(
+            NativeProtectedSnapshot expected,
+            NativeProtectedSnapshot actual,
+            List<String> committedSkus) {
+        Set<String> committed = Set.copyOf(committedSkus);
+        List<NativeSelectedProductChange> changes = new ArrayList<>();
+        for (String sku : expected.orderedSkus()) {
+            NativeSkuProtectedState before = expected.states().get(sku);
+            NativeSkuProtectedState after = actual.states().get(sku);
+            if (!Objects.equals(before, after)) {
+                changes.add(new NativeSelectedProductChange(
+                        sku, before, after, committed.contains(sku)));
+            }
+        }
+        return List.copyOf(changes);
+    }
+
+    private void addNativeConcurrentChangeIssue(
+            NativeProgress progress,
+            NativeSelectedProductChange change) {
+        String key = "SELECTED_PRODUCT_CHANGED_DURING_JOB\u0000" + change.sku();
+        if (!progress.reportedProblemKeys.add(key)) return;
+        NativeSkuProtectedState before = change.before();
+        NativeSkuProtectedState after = change.after();
+        boolean productRemoved = after == null;
+        boolean articleChanged = !productRemoved
+                && !Objects.equals(before.article(), after.article());
+        boolean movementsChanged = !productRemoved
+                && !Objects.equals(before.movements(), after.movements());
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("sku", change.sku());
+        details.put("warehouseId", progress.request.warehouseId());
+        details.put("stage", "PROTECTED_BASELINE_VERIFY");
+        details.put("source", "CONCURRENT_FOLIO_CHANGE");
+        details.put("changeKind", productRemoved
+                ? "PRODUCT_REMOVED"
+                : articleChanged && movementsChanged
+                ? "ARTICLE_AND_MOVEMENTS_CHANGED"
+                : articleChanged ? "ARTICLE_CHANGED" : "MOVEMENTS_CHANGED");
+        details.put("articleChanged", articleChanged);
+        details.put("movementsChanged", movementsChanged);
+        details.put("productExistsAfter", !productRemoved);
+        details.put("expectedMovementRows",
+                before == null || before.movements() == null
+                        ? 0 : before.movements().rowCount());
+        details.put("actualMovementRows",
+                after == null || after.movements() == null
+                        ? 0 : after.movements().rowCount());
+        details.put("recalculationCommitted", change.committed());
+        details.put("verificationRecorded", false);
+        details.put("retryRequiredAfterSnapshot", change.committed());
+        details.put("remainingProductsContinue", true);
+        details.put("recommendation",
+                "Build the final product snapshot and retry only this SKU if it remains DIRTY; do not repeat already VERIFIED products");
+        addNativeIssue(progress, new Issue(
+                "SELECTED_PRODUCT_CHANGED_DURING_JOB",
+                "The product changed concurrently in Folio while native-range was running; its verification was deferred and remaining products will continue",
+                Map.copyOf(details)));
+        log.warn("[folio.accounting-price] native_selected_product_changed job={} warehouse={} sku={} committed={} kind={} expectedMovementRows={} actualMovementRows={}",
+                progress.jobId, progress.request.warehouseId(), change.sku(),
+                change.committed(), details.get("changeKind"),
+                details.get("expectedMovementRows"), details.get("actualMovementRows"));
     }
 
     private void verifyNativeBaseline(String expectedDatabase,
@@ -3274,6 +3347,20 @@ public class FolioAccountingPriceService {
             NativeFullChunkOutput output,
             String processedEndArt,
             Optional<ProductFingerprint> fingerprint
+    ) {
+    }
+
+    private record NativeSelectionVerification(
+            List<ProductFingerprint> fingerprints,
+            List<NativeSelectedProductChange> concurrentChanges
+    ) {
+    }
+
+    private record NativeSelectedProductChange(
+            String sku,
+            NativeSkuProtectedState before,
+            NativeSkuProtectedState after,
+            boolean committed
     ) {
     }
 
