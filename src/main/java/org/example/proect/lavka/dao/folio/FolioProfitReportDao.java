@@ -70,6 +70,69 @@ public class FolioProfitReportDao {
                 "Р");
     }
 
+    public boolean masterClassArticleExists(String sku) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                  FROM dbo.ALL_ARTC a WITH (NOLOCK)
+                 WHERE a.COD_ARTIC = ?
+                """, Integer.class, sku);
+        return count != null && count > 0;
+    }
+
+    public List<MasterClassMovementRow> findMasterClassMovements(
+            int warehouseId,
+            String sku,
+            LocalDate monthStart,
+            LocalDate nextMonthStart) {
+        return jdbc.query("""
+                SELECT m.RECNO, n.UNICUM_NUM, n.N_PLAT_POR,
+                       ISNULL(n.DOPN_SCHET, '') AS DOPN_SCHET,
+                       m.NUM_PREDMT, n.DATE_P_POR, m.ID_SCLAD, m.NAME_PREDM,
+                       n.TYPE_DOC, m.TYPDOCM_PR,
+                       CASE WHEN ISNULL(n.VID_DOC, '') <> '' THEN n.VID_DOC
+                            ELSE ISNULL(m.VID_DOC, '') END AS OPERATION_KIND,
+                       n.VOZVRAT_PR AS HEADER_RETURN,
+                       m.VOZVRAT_PR AS LINE_RETURN,
+                       n.STND_UCHET AS HEADER_ACCOUNTED,
+                       m.STND_UCHET AS LINE_ACCOUNTED,
+                       m.KOLC_PREDM, m.CENA_PREDM, m.SUM_PREDM, m.SUM_UCHET,
+                       ISNULL(o.MY_ORGANIZ, '') AS ORGANIZATION_TYPE
+                  FROM dbo.SCL_NAKL n WITH (NOLOCK)
+                  JOIN dbo.SCL_MOVE m WITH (NOLOCK) ON m.UNICUM_NUM = n.UNICUM_NUM
+                  LEFT JOIN dbo._PARTNER o WITH (NOLOCK) ON o.N_USER = m.ORG_PREDM
+                 WHERE m.ID_SCLAD = ?
+                   AND n.DATE_P_POR >= ?
+                   AND n.DATE_P_POR < ?
+                   AND m.NAME_PREDM = ?
+                 ORDER BY n.DATE_P_POR, n.N_PLAT_POR, n.UNICUM_NUM, m.RECNO
+                """, (rs, rowNum) -> new MasterClassMovementRow(
+                        rs.getLong("RECNO"),
+                        folioNumber(rs.getBigDecimal("UNICUM_NUM")),
+                        folioNumber(rs.getBigDecimal("N_PLAT_POR")),
+                        trim(rs.getString("DOPN_SCHET")),
+                        rs.getInt("NUM_PREDMT"),
+                        rs.getTimestamp("DATE_P_POR").toLocalDateTime().toLocalDate(),
+                        rs.getInt("ID_SCLAD"),
+                        trim(rs.getString("NAME_PREDM")),
+                        trim(rs.getString("TYPE_DOC")),
+                        trim(rs.getString("TYPDOCM_PR")),
+                        trim(rs.getString("OPERATION_KIND")),
+                        rs.getBoolean("HEADER_RETURN"),
+                        rs.getBoolean("LINE_RETURN"),
+                        rs.getBoolean("HEADER_ACCOUNTED"),
+                        rs.getBoolean("LINE_ACCOUNTED"),
+                        decimal(rs, "KOLC_PREDM"),
+                        decimal(rs, "CENA_PREDM"),
+                        decimal(rs, "SUM_PREDM"),
+                        decimal(rs, "SUM_UCHET"),
+                        trim(rs.getString("ORGANIZATION_TYPE"))
+                ),
+                warehouseId,
+                Timestamp.valueOf(monthStart.atStartOfDay()),
+                Timestamp.valueOf(nextMonthStart.atStartOfDay()),
+                sku);
+    }
+
     public Map<Integer, String> findWarehouseNames(List<Integer> warehouseIds) {
         if (warehouseIds.isEmpty()) {
             return Map.of();
@@ -233,6 +296,30 @@ public class FolioProfitReportDao {
             boolean accounted,
             int lineCount,
             BigDecimal grossMargin
+    ) {
+    }
+
+    public record MasterClassMovementRow(
+            long movementId,
+            String documentId,
+            String documentNumber,
+            String documentNumberSuffix,
+            int lineNumber,
+            LocalDate documentDate,
+            int warehouseId,
+            String sku,
+            String documentType,
+            String movementType,
+            String operationKind,
+            boolean headerReturn,
+            boolean lineReturn,
+            boolean headerAccounted,
+            boolean lineAccounted,
+            BigDecimal quantity,
+            BigDecimal unitPrice,
+            BigDecimal amount,
+            BigDecimal accountingCost,
+            String organizationType
     ) {
     }
 

@@ -4,6 +4,7 @@ import org.example.proect.lavka.dao.folio.FolioProfitReportDao;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.GrossMarginRow;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.InventoryMovementRow;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.InventoryOpeningRow;
+import org.example.proect.lavka.dao.folio.FolioProfitReportDao.MasterClassMovementRow;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.PaymentRow;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse;
 import org.example.proect.lavka.property.FolioProfitReportProperties;
@@ -21,7 +22,11 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -36,6 +41,9 @@ class FolioProfitReportServiceTest {
     void setUp() {
         FolioProfitReportProperties properties = new FolioProfitReportProperties();
         service = new FolioProfitReportService(dao, new FolioProfitClassifier(), properties);
+        lenient().when(dao.masterClassArticleExists(anyString())).thenReturn(true);
+        lenient().when(dao.findMasterClassMovements(anyInt(), anyString(), any(), any()))
+                .thenReturn(List.of());
     }
 
     @Test
@@ -51,8 +59,11 @@ class FolioProfitReportServiceTest {
                 gross(1, "", false, true, "264551.50"),
                 gross(5, "", false, true, "98577.61"),
                 gross(1, "Я", false, true, "99"),
+                gross(5, "Я", false, true, "10740"),
                 gross(5, "", true, true, "88")
         ));
+        when(dao.findMasterClassMovements(eq(5), eq("Мастер-Класс июль"), any(), any()))
+                .thenReturn(julyMasterClassRows());
         when(dao.findWarehouseNames(any())).thenReturn(Map.of(
                 1, "Киев 1", 7, "Киев 7", 12, "Киев 12", 5, "Одесса"));
         when(dao.findInventoryOpenings(any())).thenReturn(List.of(
@@ -67,16 +78,23 @@ class FolioProfitReportServiceTest {
         ));
 
         FolioProfitReportResponse report = service.calculate(new FolioProfitReportService.Request(
-                "2026-07", null, null, new BigDecimal("1000"), new BigDecimal("200"), BigDecimal.ZERO,
+                "2026-07", null, null, null, null, null,
                 null, null), true);
 
         assertThat(city(report, "KYIV").baseGrossProfit()).isEqualByComparingTo("264551.50");
         assertThat(city(report, "KYIV").operatingExpenses()).isEqualByComparingTo("78496.96");
         assertThat(city(report, "KYIV").profit()).isEqualByComparingTo("186054.54");
         assertThat(city(report, "ODESA").baseGrossProfit()).isEqualByComparingTo("98577.61");
-        assertThat(city(report, "ODESA").manualGrossAdjustments()).isEqualByComparingTo("800.00");
-        assertThat(city(report, "ODESA").operatingExpenses()).isEqualByComparingTo("19218.65");
-        assertThat(city(report, "ODESA").profit()).isEqualByComparingTo("80158.96");
+        assertThat(city(report, "ODESA").manualGrossAdjustments()).isEqualByComparingTo("4690.00");
+        assertThat(city(report, "ODESA").operatingExpenses()).isEqualByComparingTo("24218.65");
+        assertThat(city(report, "ODESA").profit()).isEqualByComparingTo("79048.96");
+        assertThat(report.masterClass().income()).isEqualByComparingTo("10740.00");
+        assertThat(report.masterClass().returns()).isEqualByComparingTo("6050.00");
+        assertThat(report.masterClass().netContribution()).isEqualByComparingTo("4690.00");
+        assertThat(report.masterClass().grossProfitAlreadyInBase()).isEqualByComparingTo("0.00");
+        assertThat(report.masterClassDocuments()).hasSize(26);
+        assertThat(report.inputs().odesaAdditionalSalary()).isEqualByComparingTo("5000.00");
+        assertThat(report.inputs().odesaAdditionalSalarySource()).isEqualTo("DEFAULT");
         assertThat(report.controls().capitalizedCostTotal()).isEqualByComparingTo("12130.00");
         assertThat(report.expenses()).anySatisfy(row -> {
             assertThat(row.category()).isEqualTo("IMPORT_TRANSPORT");
@@ -92,6 +110,84 @@ class FolioProfitReportServiceTest {
         assertThat(inventory(report, "ODESA").closingAccountingValue()).isEqualByComparingTo("60.00");
         assertThat(inventory(report, "ODESA").accountingValueChange()).isEqualByComparingTo("-20.00");
         assertThat(report.complete()).isTrue();
+    }
+
+    @Test
+    void ignoresLegacyMasterClassInputsAndHonorsExplicitZeroSalary() {
+        when(dao.findPaymentCandidates(any(), any(), anyString())).thenReturn(List.of());
+        when(dao.findGrossMargins(any(), any())).thenReturn(List.of());
+        stubEmptyInventory();
+
+        FolioProfitReportResponse report = service.calculate(new FolioProfitReportService.Request(
+                "2026-07", null, null, new BigDecimal("999"), new BigDecimal("888"), BigDecimal.ZERO,
+                null, null), false);
+
+        assertThat(report.masterClass().income()).isEqualByComparingTo("0.00");
+        assertThat(report.masterClass().returns()).isEqualByComparingTo("0.00");
+        assertThat(report.inputs().odesaMasterClassIncome()).isNull();
+        assertThat(report.inputs().odesaMasterClassReturn()).isNull();
+        assertThat(report.inputs().odesaAdditionalSalary()).isEqualByComparingTo("0.00");
+        assertThat(report.inputs().odesaAdditionalSalarySource()).isEqualTo("REQUEST_OVERRIDE");
+        assertThat(report.warnings()).extracting(FolioProfitReportResponse.Warning::code)
+                .contains("MASTER_CLASS_LEGACY_PARAMETERS_IGNORED");
+    }
+
+    @Test
+    void missingMonthlyMasterClassArticleIsNotReportedAsConfirmedZero() {
+        when(dao.findPaymentCandidates(any(), any(), anyString())).thenReturn(List.of());
+        when(dao.findGrossMargins(any(), any())).thenReturn(List.of());
+        when(dao.masterClassArticleExists("Мастер-Класс сентябр")).thenReturn(false);
+        stubEmptyInventory();
+
+        FolioProfitReportResponse report = service.calculate(new FolioProfitReportService.Request(
+                "2025-09", null, null, null, null, null, null, null), false);
+
+        assertThat(report.complete()).isFalse();
+        assertThat(report.masterClass().articleFound()).isFalse();
+        assertThat(report.masterClass().sku()).isEqualTo("Мастер-Класс сентябр");
+        assertThat(report.warnings()).extracting(FolioProfitReportResponse.Warning::code)
+                .contains("MASTER_CLASS_ARTICLE_NOT_FOUND");
+        verify(dao).masterClassArticleExists("Мастер-Класс сентябр");
+    }
+
+    @Test
+    void replacesAnyMasterClassGrossAlreadyPresentInBaseWithoutDoubleCounting() {
+        when(dao.findPaymentCandidates(any(), any(), anyString())).thenReturn(List.of());
+        when(dao.findGrossMargins(any(), any())).thenReturn(List.of(
+                gross(5, "К", false, true, "80")));
+        when(dao.findMasterClassMovements(eq(5), eq("Мастер-Класс июль"), any(), any()))
+                .thenReturn(List.of(
+                        masterClassRow(1, "Р", "", false, true, "100", "20", "К"),
+                        masterClassRow(2, "П", "ВОЗВРАТ", true, true, "10", "0", "К"),
+                        masterClassRow(3, "П", "ПОЛУЧЕНИЕ", false, true, "50", "0", "Т"),
+                        masterClassRow(4, "Р", "", false, false, "30", "0", "К")));
+        stubEmptyInventory();
+
+        FolioProfitReportResponse report = service.calculate(new FolioProfitReportService.Request(
+                "2026-07", null, null, null, null, BigDecimal.ZERO, null, null), true);
+
+        assertThat(report.masterClass().income()).isEqualByComparingTo("100.00");
+        assertThat(report.masterClass().returns()).isEqualByComparingTo("10.00");
+        assertThat(report.masterClass().grossProfitAlreadyInBase()).isEqualByComparingTo("80.00");
+        assertThat(report.masterClass().grossAdjustmentApplied()).isEqualByComparingTo("10.00");
+        assertThat(report.masterClass().ignoredLineCount()).isEqualTo(2);
+        assertThat(city(report, "ODESA").grossProfit()).isEqualByComparingTo("90.00");
+        assertThat(report.masterClassDocuments()).extracting(
+                        FolioProfitReportResponse.MasterClassDocumentLine::classification)
+                .containsExactly("INCOME", "RETURN", "IGNORED", "IGNORED");
+    }
+
+    @Test
+    void selectsExactSeptemberArticleAndCalendarYearBoundaries() {
+        when(dao.findPaymentCandidates(any(), any(), anyString())).thenReturn(List.of());
+        when(dao.findGrossMargins(any(), any())).thenReturn(List.of());
+        stubEmptyInventory();
+
+        service.calculate(new FolioProfitReportService.Request(
+                "2025-09", null, null, null, null, BigDecimal.ZERO, null, null), false);
+
+        verify(dao).findMasterClassMovements(
+                5, "Мастер-Класс сентябр", LocalDate.of(2025, 9, 1), LocalDate.of(2025, 10, 1));
     }
 
     @Test
@@ -162,5 +258,51 @@ class FolioProfitReportServiceTest {
             String amount) {
         return new GrossMarginRow(warehouse, organizationType, returnDocument, accounted, 1,
                 new BigDecimal(amount));
+    }
+
+    private static List<MasterClassMovementRow> julyMasterClassRows() {
+        List<MasterClassMovementRow> rows = new java.util.ArrayList<>();
+        String[] income = {"1730", "884", "442", "442", "486", "874", "437", "437", "588",
+                "472", "472", "472", "656", "423", "656", "423", "846"};
+        String[] returns = {"900", "1000", "350", "1000", "350", "750", "350", "1000", "350"};
+        long id = 1;
+        for (String amount : income) {
+            rows.add(masterClassRow(id++, "Р", "", false, amount));
+        }
+        for (String amount : returns) {
+            rows.add(masterClassRow(id++, "П", "ВОЗВРАТ", true, amount));
+        }
+        return List.copyOf(rows);
+    }
+
+    private static MasterClassMovementRow masterClassRow(
+            long id,
+            String type,
+            String operation,
+            boolean returned,
+            String amount) {
+        BigDecimal value = new BigDecimal(amount);
+        return new MasterClassMovementRow(
+                id, Long.toString(100000 + id), Long.toString(200000 + id), null, 1,
+                LocalDate.of(2026, 7, 1), 5, "Мастер-Класс июль", type, type, operation,
+                returned, returned, true, true, value, BigDecimal.ONE, value,
+                BigDecimal.ZERO, "Я");
+    }
+
+    private static MasterClassMovementRow masterClassRow(
+            long id,
+            String type,
+            String operation,
+            boolean returned,
+            boolean accounted,
+            String amount,
+            String accountingCost,
+            String organizationType) {
+        BigDecimal value = new BigDecimal(amount);
+        return new MasterClassMovementRow(
+                id, Long.toString(100000 + id), Long.toString(200000 + id), null, 1,
+                LocalDate.of(2026, 7, 1), 5, "Мастер-Класс июль", type, type, operation,
+                returned, returned, accounted, accounted, value, BigDecimal.ONE, value,
+                new BigDecimal(accountingCost), organizationType);
     }
 }

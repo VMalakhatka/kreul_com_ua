@@ -17,6 +17,7 @@ Verified against the current repository structure: 2026-08-29.
 | Work with product snapshots and analytics | [`api/FOLIO_PRODUCT_SNAPSHOT_API.md`](api/FOLIO_PRODUCT_SNAPSHOT_API.md), [`api/FOLIO_PRODUCT_ANALYTICS_API.md`](api/FOLIO_PRODUCT_ANALYTICS_API.md), [`api/FOLIO_PRODUCT_ANALYTICS_FRONTEND_HANDOFF_V4.md`](api/FOLIO_PRODUCT_ANALYTICS_FRONTEND_HANDOFF_V4.md) and the current Flyway migrations |
 | Work with accounting-price operations | [`api/FOLIO_ACCOUNTING_PRICES_API.md`](api/FOLIO_ACCOUNTING_PRICES_API.md) and [`api/FOLIO_ACCOUNTING_PRICE_OPERATIONS_FRONTEND.md`](api/FOLIO_ACCOUNTING_PRICE_OPERATIONS_FRONTEND.md) |
 | Work with balances, debtors or customer documents | Matching `FOLIO_CUSTOMER_*` documents in [`api/`](api/) |
+| Work with the monthly Kyiv/Odesa profit report | [`api/FOLIO_PROFIT_REPORT_API.md`](api/FOLIO_PROFIT_REPORT_API.md) and [`api/FOLIO_PROFIT_REPORT_FRONTEND_TASK.md`](api/FOLIO_PROFIT_REPORT_FRONTEND_TASK.md) |
 | Work with product media | The matching `FOLIO_*MEDIA*` document in [`api/`](api/) and the current controller/service/DAO |
 | Run an isolated Paint_Rus experiment | [`folio-experiments/00_PAINT_RUS_EXPERIMENTS.md`](folio-experiments/00_PAINT_RUS_EXPERIMENTS.md) and the Folio skill safety rules |
 | Build, run or deploy Java | WordPress `docs/JAVA_DOCKER_RUNTIME.md` and `$build-java-docker-runtime` |
@@ -60,7 +61,10 @@ an idempotency key, an observable terminal state and an explicit recovery path.
 - `/admin/folio/accounting-prices/*` - accounting-price jobs and product snapshots.
 - `/admin/folio/customer-*`, `/admin/folio/partners` - customer data and documents.
 - `/admin/folio/product-media`, `/admin/media/*` - Folio/Woo/S3 media workflows.
-- `/admin/folio/profit-report` - profit report and audit details.
+- `/admin/folio/profit-report` - monthly profit report; Odesa master-class income
+  and returns are resolved from exact Folio invoice lines, while the additional
+  Odesa salary defaults to `5000.00` and can be overridden with
+  `LAVKA_FOLIO_PROFIT_REPORT_ODESA_ADDITIONAL_SALARY`.
 
 The route name is not an authorization boundary. Before exposing or extending
 mutating `/admin` or `/sync` routes, verify incoming authentication, authorization,

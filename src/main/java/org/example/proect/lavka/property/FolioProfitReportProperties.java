@@ -13,6 +13,7 @@ public class FolioProfitReportProperties {
     private int odesaWarehouseId = 5;
     private BigDecimal defaultOdesaTaxShare = new BigDecimal("0.4285714286");
     private BigDecimal defaultRubToUahRate = new BigDecimal("0.41");
+    private BigDecimal defaultOdesaAdditionalSalary = new BigDecimal("5000.00");
     private int maxAuditDocuments = 500;
 
     public boolean isEnabled() {
@@ -57,6 +58,14 @@ public class FolioProfitReportProperties {
 
     public int getMaxAuditDocuments() {
         return maxAuditDocuments;
+    }
+
+    public BigDecimal getDefaultOdesaAdditionalSalary() {
+        return defaultOdesaAdditionalSalary;
+    }
+
+    public void setDefaultOdesaAdditionalSalary(BigDecimal defaultOdesaAdditionalSalary) {
+        this.defaultOdesaAdditionalSalary = defaultOdesaAdditionalSalary;
     }
 
     public void setMaxAuditDocuments(int maxAuditDocuments) {

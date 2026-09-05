@@ -4,6 +4,7 @@ import org.example.proect.lavka.dao.folio.FolioProfitReportDao;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.GrossMarginRow;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.InventoryMovementRow;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.InventoryOpeningRow;
+import org.example.proect.lavka.dao.folio.FolioProfitReportDao.MasterClassMovementRow;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.PaymentRow;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.CityResult;
@@ -12,6 +13,8 @@ import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.DocumentLine
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.ExpenseSummary;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.Inputs;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.InventoryResult;
+import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.MasterClassDocumentLine;
+import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.MasterClassSummary;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.Warning;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.WarehouseInventoryResult;
 import org.example.proect.lavka.property.FolioProfitReportProperties;
@@ -43,8 +46,27 @@ import java.util.regex.Pattern;
 @Service
 public class FolioProfitReportService {
 
-    private static final String RULE_VERSION = "2026-08-18.2";
+    private static final String RULE_VERSION = "2026-09-05.1";
     private static final String REPORT_CURRENCY = "UAH";
+    private static final String MASTER_CLASS_SOURCE = "FOLIO_SCL_NAKL_SCL_MOVE";
+    private static final String AMOUNT_SOURCE = "SCL_MOVE.SUM_PREDM";
+    private static final String EXPENSE_DOCUMENT = "\u0420";
+    private static final String RECEIPT_DOCUMENT = "\u041f";
+    private static final String OWN_ORGANIZATION = "\u042f";
+    private static final String RETURN_OPERATION = "\u0412\u041e\u0417\u0412\u0420\u0410\u0422";
+    private static final List<String> MASTER_CLASS_SKUS = List.of(
+            "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u044f\u043d\u0432\u0430\u0440\u044c",
+            "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u0444\u0435\u0432\u0440\u0430\u043b\u044c",
+            "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u043c\u0430\u0440\u0442",
+            "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u0430\u043f\u0440\u0435\u043b\u044c",
+            "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u043c\u0430\u0439",
+            "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u0438\u044e\u043d\u044c",
+            "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u0438\u044e\u043b\u044c",
+            "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u0430\u0432\u0433\u0443\u0441\u0442",
+            "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u0441\u0435\u043d\u0442\u044f\u0431\u0440",
+            "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u043e\u043a\u0442\u044f\u0431\u0440\u044c",
+            "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u043d\u043e\u044f\u0431\u0440\u044c",
+            "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u0434\u0435\u043a\u0430\u0431\u0440\u044c");
     private static final Pattern EXPLICIT_PERIOD = Pattern.compile("(?<!\\d)(\\d{4})\\s+(0[1-9]|1[0-2])(?!\\d)");
     private static final DateTimeFormatter FOLIO_PERIOD = DateTimeFormatter.ofPattern("yyyy MM");
     private static final ZoneId REPORT_ZONE = ZoneId.of("Europe/Kyiv");
@@ -75,10 +97,13 @@ public class FolioProfitReportService {
                 "ODESA_TAX_SHARE_INVALID", "Доля налогов Одессы должна быть от 0 до 1");
         BigDecimal rubRate = positiveOrDefault(request.rubToUahRate(), properties.getDefaultRubToUahRate(),
                 "RUB_RATE_INVALID", "Курс RUB/UAH должен быть больше нуля");
-        BigDecimal mkIncome = optionalNonNegative(request.odesaMasterClassIncome(), "MASTER_CLASS_INCOME_INVALID");
-        BigDecimal mkReturn = optionalNonNegative(request.odesaMasterClassReturn(), "MASTER_CLASS_RETURN_INVALID");
         BigDecimal additionalSalary = optionalNonNegative(
-                request.odesaAdditionalSalary(), "ODESA_ADDITIONAL_SALARY_INVALID");
+                request.odesaAdditionalSalary() == null
+                        ? properties.getDefaultOdesaAdditionalSalary()
+                        : request.odesaAdditionalSalary(),
+                "ODESA_ADDITIONAL_SALARY_INVALID");
+        String additionalSalarySource = request.odesaAdditionalSalary() == null
+                ? "DEFAULT" : "REQUEST_OVERRIDE";
         List<Integer> kyivStockWarehouseIds = warehouseIdsOrDefault(
                 request.kyivStockWarehouseIds(), properties.getKyivWarehouseIds(), "kyivStockWarehouseIds");
         List<Integer> odesaStockWarehouseIds = warehouseIdsOrDefault(
@@ -89,6 +114,7 @@ public class FolioProfitReportService {
         List<Warning> warnings = new ArrayList<>();
         List<ResolvedPayment> resolved = resolvePayments(month, rubRate, warnings);
         List<GrossMarginRow> grossRows = dao.findGrossMargins(month.atDay(1), month.plusMonths(1).atDay(1));
+        MasterClassComputation masterClass = calculateMasterClass(month, includeDocuments, warnings);
         InventoryComputation inventory = calculateInventory(
                 month, kyivStockWarehouseIds, odesaStockWarehouseIds);
 
@@ -123,26 +149,19 @@ public class FolioProfitReportService {
             }
         }
 
-        if (request.odesaAdditionalSalary() != null) {
-            addSummary(summaries, City.ODESA, Category.SALARY, Treatment.OPERATING_EXPENSE,
-                    additionalSalary, additionalSalary, 0);
-        }
+        addSummary(summaries, City.ODESA, Category.SALARY, Treatment.OPERATING_EXPENSE,
+                additionalSalary, additionalSalary, 0);
 
         if (unclassifiedCount > 0) {
             warnings.add(warning("UNCLASSIFIED_DOCUMENTS",
                     "Есть документы без подтверждённого правила; они не уменьшают прибыль",
                     Map.of("count", unclassifiedCount, "amount", money(unclassifiedTotal))));
         }
-        if (request.odesaMasterClassIncome() == null || request.odesaMasterClassReturn() == null) {
-            warnings.add(warning("MASTER_CLASS_MANUAL_INPUT_REQUIRED",
-                    "МК и возврат МК пока не подтверждены отдельным источником ФОЛИО; передайте оба значения в запросе",
-                    Map.of("incomeProvided", request.odesaMasterClassIncome() != null,
-                            "returnProvided", request.odesaMasterClassReturn() != null)));
-        }
-        if (request.odesaAdditionalSalary() == null) {
-            warnings.add(warning("ODESA_ADDITIONAL_WORKS_UNCONFIRMED",
-                    "5 000 грн дополнительных работ Одессы не добавлены: передайте odesaAdditionalSalary после подтверждения",
-                    Map.of("candidateAmount", new BigDecimal("5000.00"))));
+        if (request.odesaMasterClassIncome() != null || request.odesaMasterClassReturn() != null) {
+            warnings.add(warning("MASTER_CLASS_LEGACY_PARAMETERS_IGNORED",
+                    "Ручные параметры МК больше не участвуют в расчёте; суммы получены автоматически из ФОЛИО",
+                    Map.of("automaticIncome", masterClass.summary().income(),
+                            "automaticReturn", masterClass.summary().returns())));
         }
         warnings.add(warning("IMPORT_TRANSPORT_CAPITALIZED",
                 "Импортный транспорт показан отдельно и не вычтен повторно, поскольку он уже включён в учётную цену товара",
@@ -176,11 +195,11 @@ public class FolioProfitReportService {
         BigDecimal odesaExpenses = cityOperatingExpenses(summaries, City.ODESA);
         BigDecimal kyivBaseGross = grossFor(grossRows, properties.getKyivWarehouseIds());
         BigDecimal odesaBaseGross = grossFor(grossRows, List.of(properties.getOdesaWarehouseId()));
-        BigDecimal odesaManualGross = money(mkIncome.subtract(mkReturn));
+        BigDecimal odesaGrossAdjustment = masterClass.summary().grossAdjustmentApplied();
 
         List<CityResult> cities = List.of(
                 cityResult(City.KYIV, kyivBaseGross, BigDecimal.ZERO, kyivExpenses),
-                cityResult(City.ODESA, odesaBaseGross, odesaManualGross, odesaExpenses)
+                cityResult(City.ODESA, odesaBaseGross, odesaGrossAdjustment, odesaExpenses)
         );
 
         List<DocumentLine> documents = includeDocuments
@@ -189,9 +208,7 @@ public class FolioProfitReportService {
         boolean auditTruncated = includeDocuments && resolved.size() > properties.getMaxAuditDocuments();
         BigDecimal operatingTotal = money(kyivExpenses.add(odesaExpenses));
         boolean complete = unclassifiedCount == 0
-                && request.odesaMasterClassIncome() != null
-                && request.odesaMasterClassReturn() != null
-                && request.odesaAdditionalSalary() != null
+                && masterClass.valid()
                 && inventory.negativeClosingPositionCount() == 0
                 && inventory.zeroValueClosingPositionCount() == 0;
 
@@ -202,19 +219,154 @@ public class FolioProfitReportService {
                 complete,
                 RULE_VERSION,
                 new Inputs(taxShare, "REGISTERED_EMPLOYEE_SHARE", rubRate,
-                        request.odesaMasterClassIncome(), request.odesaMasterClassReturn(),
-                        request.odesaAdditionalSalary(),
+                        null, null, additionalSalary, additionalSalarySource,
                         List.copyOf(properties.getKyivWarehouseIds()), List.of(properties.getOdesaWarehouseId()),
                         kyivStockWarehouseIds, odesaStockWarehouseIds),
                 cities,
                 inventory.results(),
                 expenseRows,
                 documents,
+                masterClass.summary(),
+                masterClass.documents(),
                 new Controls(resolved.size(), money(selectedAmount), operatingTotal, money(capitalizedTotal),
                         money(excludedTotal), money(unclassifiedTotal), unclassifiedCount, auditTruncated,
                         Map.copyOf(taxPools)),
                 List.copyOf(warnings)
         );
+    }
+
+    private MasterClassComputation calculateMasterClass(
+            YearMonth month,
+            boolean includeDocuments,
+            List<Warning> warnings) {
+        int warehouseId = properties.getOdesaWarehouseId();
+        String sku = MASTER_CLASS_SKUS.get(month.getMonthValue() - 1);
+        boolean articleFound = dao.masterClassArticleExists(sku);
+        if (!articleFound) {
+            warnings.add(warning("MASTER_CLASS_ARTICLE_NOT_FOUND",
+                    "Не найден точный артикул МК для отчётного месяца; ноль нельзя считать подтверждённым",
+                    Map.of("warehouseId", warehouseId, "sku", sku, "month", month.toString())));
+            return new MasterClassComputation(new MasterClassSummary(
+                    warehouseId, sku, false, MASTER_CLASS_SOURCE,
+                    money(BigDecimal.ZERO), money(BigDecimal.ZERO), money(BigDecimal.ZERO),
+                    money(BigDecimal.ZERO), money(BigDecimal.ZERO),
+                    0, 0, 0, 0, false), List.of(), false);
+        }
+
+        List<MasterClassMovementRow> sourceRows = dao.findMasterClassMovements(
+                warehouseId, sku, month.atDay(1), month.plusMonths(1).atDay(1));
+        Map<Long, MasterClassMovementRow> uniqueRows = new LinkedHashMap<>();
+        int duplicateLineCount = 0;
+        for (MasterClassMovementRow row : sourceRows) {
+            if (uniqueRows.putIfAbsent(row.movementId(), row) != null) {
+                duplicateLineCount++;
+            }
+        }
+
+        BigDecimal income = BigDecimal.ZERO;
+        BigDecimal returns = BigDecimal.ZERO;
+        BigDecimal grossAlreadyInBase = BigDecimal.ZERO;
+        int incomeLineCount = 0;
+        int returnLineCount = 0;
+        int ignoredLineCount = 0;
+        int negativeAmountCount = 0;
+        List<MasterClassDocumentLine> auditRows = new ArrayList<>();
+
+        for (MasterClassMovementRow row : uniqueRows.values()) {
+            MasterClassLineClassification classification = classifyMasterClassLine(row);
+            if (classification.included() && row.amount().compareTo(BigDecimal.ZERO) < 0) {
+                negativeAmountCount++;
+            }
+            if (classification.type() == MasterClassLineType.INCOME) {
+                income = income.add(row.amount());
+                incomeLineCount++;
+                if (baseGrossIncludes(row)) {
+                    grossAlreadyInBase = grossAlreadyInBase.add(row.amount().subtract(row.accountingCost()));
+                }
+            } else if (classification.type() == MasterClassLineType.RETURN) {
+                returns = returns.add(row.amount());
+                returnLineCount++;
+            } else {
+                ignoredLineCount++;
+            }
+            if (includeDocuments) {
+                auditRows.add(toMasterClassDocumentLine(row, classification));
+            }
+        }
+
+        if (duplicateLineCount > 0) {
+            warnings.add(warning("MASTER_CLASS_DUPLICATE_MOVEMENT_ROWS",
+                    "В источнике МК повторился идентификатор строки движения; дубли исключены из суммы",
+                    Map.of("count", duplicateLineCount, "warehouseId", warehouseId, "sku", sku)));
+        }
+        if (negativeAmountCount > 0) {
+            warnings.add(warning("MASTER_CLASS_NEGATIVE_SOURCE_AMOUNT",
+                    "В исходных строках МК найдены отрицательные суммы; требуется проверка документов",
+                    Map.of("count", negativeAmountCount, "warehouseId", warehouseId, "sku", sku)));
+        }
+        if (ignoredLineCount > 0) {
+            warnings.add(warning("MASTER_CLASS_LINES_IGNORED",
+                    "Часть строк точного артикула МК не соответствует правилу дохода или возврата и не включена",
+                    Map.of("count", ignoredLineCount, "warehouseId", warehouseId, "sku", sku)));
+        }
+
+        income = money(income);
+        returns = money(returns);
+        BigDecimal net = money(income.subtract(returns));
+        grossAlreadyInBase = money(grossAlreadyInBase);
+        BigDecimal adjustment = money(net.subtract(grossAlreadyInBase));
+        boolean auditTruncated = includeDocuments
+                && auditRows.size() > properties.getMaxAuditDocuments();
+        List<MasterClassDocumentLine> returnedAuditRows = includeDocuments
+                ? auditRows.stream().limit(properties.getMaxAuditDocuments()).toList()
+                : List.of();
+        MasterClassSummary summary = new MasterClassSummary(
+                warehouseId, sku, true, MASTER_CLASS_SOURCE,
+                income, returns, net, grossAlreadyInBase, adjustment,
+                incomeLineCount, returnLineCount, ignoredLineCount,
+                duplicateLineCount, auditTruncated);
+        return new MasterClassComputation(summary, returnedAuditRows,
+                duplicateLineCount == 0 && negativeAmountCount == 0);
+    }
+
+    private static MasterClassLineClassification classifyMasterClassLine(MasterClassMovementRow row) {
+        boolean expense = EXPENSE_DOCUMENT.equals(safe(row.documentType()))
+                && EXPENSE_DOCUMENT.equals(safe(row.movementType()));
+        boolean receipt = RECEIPT_DOCUMENT.equals(safe(row.documentType()))
+                && RECEIPT_DOCUMENT.equals(safe(row.movementType()));
+        if (row.lineAccounted() && expense && !row.headerReturn() && !row.lineReturn()) {
+            return new MasterClassLineClassification(MasterClassLineType.INCOME, true,
+                    "Проведённая расходная накладная точного артикула МК");
+        }
+        if (row.lineAccounted() && receipt && RETURN_OPERATION.equals(upper(row.operationKind()))) {
+            return new MasterClassLineClassification(MasterClassLineType.RETURN, true,
+                    "Проведённая приходная накладная с видом операции ВОЗВРАТ");
+        }
+        if (!row.lineAccounted()) {
+            return new MasterClassLineClassification(MasterClassLineType.IGNORED, false,
+                    "Строка не проведена в складском учёте");
+        }
+        return new MasterClassLineClassification(MasterClassLineType.IGNORED, false,
+                "Тип документа или вид операции не соответствует правилу МК");
+    }
+
+    private static boolean baseGrossIncludes(MasterClassMovementRow row) {
+        return row.lineAccounted()
+                && !row.headerReturn()
+                && !OWN_ORGANIZATION.equalsIgnoreCase(safe(row.organizationType()));
+    }
+
+    private static MasterClassDocumentLine toMasterClassDocumentLine(
+            MasterClassMovementRow row,
+            MasterClassLineClassification classification) {
+        return new MasterClassDocumentLine(
+                row.movementId(), row.documentId(), row.documentNumber(), row.documentNumberSuffix(),
+                row.lineNumber(), row.documentDate(), row.warehouseId(), row.sku(),
+                row.documentType(), row.movementType(), row.operationKind(),
+                row.headerReturn() || row.lineReturn(), row.lineAccounted(),
+                classification.type().name(), row.quantity(), money(row.unitPrice()),
+                money(row.amount()), REPORT_CURRENCY, AMOUNT_SOURCE,
+                classification.included(), classification.reason());
     }
 
     private InventoryComputation calculateInventory(
@@ -578,6 +730,24 @@ public class FolioProfitReportService {
             List<InventoryResult> results,
             int negativeClosingPositionCount,
             int zeroValueClosingPositionCount) {
+    }
+
+    private record MasterClassComputation(
+            MasterClassSummary summary,
+            List<MasterClassDocumentLine> documents,
+            boolean valid) {
+    }
+
+    private record MasterClassLineClassification(
+            MasterClassLineType type,
+            boolean included,
+            String reason) {
+    }
+
+    private enum MasterClassLineType {
+        INCOME,
+        RETURN,
+        IGNORED
     }
 
     private static final class InventoryPosition {

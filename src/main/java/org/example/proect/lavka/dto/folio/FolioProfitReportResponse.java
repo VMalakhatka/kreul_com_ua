@@ -19,6 +19,8 @@ public record FolioProfitReportResponse(
         List<InventoryResult> inventory,
         List<ExpenseSummary> expenses,
         List<DocumentLine> documents,
+        MasterClassSummary masterClass,
+        List<MasterClassDocumentLine> masterClassDocuments,
         Controls controls,
         List<Warning> warnings
 ) {
@@ -29,6 +31,7 @@ public record FolioProfitReportResponse(
             BigDecimal odesaMasterClassIncome,
             BigDecimal odesaMasterClassReturn,
             BigDecimal odesaAdditionalSalary,
+            String odesaAdditionalSalarySource,
             List<Integer> kyivWarehouseIds,
             List<Integer> odesaWarehouseIds,
             List<Integer> kyivStockWarehouseIds,
@@ -105,6 +108,50 @@ public record FolioProfitReportResponse(
             String category,
             String accountingTreatment,
             boolean includedInProfit,
+            String reason
+    ) {
+    }
+
+    public record MasterClassSummary(
+            int warehouseId,
+            String sku,
+            boolean articleFound,
+            String source,
+            BigDecimal income,
+            BigDecimal returns,
+            BigDecimal netContribution,
+            BigDecimal grossProfitAlreadyInBase,
+            BigDecimal grossAdjustmentApplied,
+            int incomeLineCount,
+            int returnLineCount,
+            int ignoredLineCount,
+            int duplicateLineCount,
+            boolean auditTruncated
+    ) {
+    }
+
+    public record MasterClassDocumentLine(
+            long movementId,
+            String documentId,
+            String documentNumber,
+            String documentNumberSuffix,
+            int lineNumber,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
+            LocalDate documentDate,
+            int warehouseId,
+            String sku,
+            String documentType,
+            String movementType,
+            String operationKind,
+            boolean returnDocument,
+            boolean accounted,
+            String classification,
+            BigDecimal quantity,
+            BigDecimal unitPrice,
+            BigDecimal amount,
+            String currency,
+            String amountSource,
+            boolean includedInMasterClassContribution,
             String reason
     ) {
     }
