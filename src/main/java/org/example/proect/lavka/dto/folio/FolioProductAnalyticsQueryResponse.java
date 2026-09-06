@@ -27,7 +27,9 @@ public record FolioProductAnalyticsQueryResponse(
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
             LocalDate periodFrom,
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
-            LocalDate periodTo) {
+            LocalDate periodTo,
+            String warehouseGroupsRevision,
+            FolioProductAnalyticsCapabilitiesResponse.TransitCapability transit) {
     }
 
     public record Totals(
@@ -44,7 +46,9 @@ public record FolioProductAnalyticsQueryResponse(
             Metrics metrics,
             InTransitStock inTransitStock,
             NetworkOrderPolicy networkOrderPolicy,
-            List<WarehouseBreakdown> warehouseBreakdown) {
+            List<WarehouseBreakdown> warehouseBreakdown,
+            Availability availability,
+            List<WarehouseGroupBreakdown> warehouseGroupBreakdown) {
     }
 
     public record WarehouseBreakdown(
@@ -53,8 +57,18 @@ public record FolioProductAnalyticsQueryResponse(
             String currentSupplier,
             String supplierState,
             WarehouseOrderPolicy orderPolicy,
-            Metrics metrics) {
+            Metrics metrics,
+            Availability availability) {
     }
+
+    public record Availability(String status, String basis, Boolean eligible,
+            BigDecimal minimumStock, long periodDays, Long eligibleDays,
+            Long availableDays, Long stockoutDays, BigDecimal availabilityPercent,
+            BigDecimal stockoutPercent, List<String> warnings) { }
+
+    public record WarehouseGroupBreakdown(String code, String name,
+            List<Integer> warehouseIds, String availabilityMode,
+            Availability availability) { }
 
     public record WarehouseOrderPolicy(
             BigDecimal minimumStock,
@@ -94,7 +108,7 @@ public record FolioProductAnalyticsQueryResponse(
     }
 
     public record InTransitStock(
-            int warehouseId,
+            Integer warehouseId,
             String warehouseName,
             Long generationId,
             String status,
@@ -106,8 +120,26 @@ public record FolioProductAnalyticsQueryResponse(
             BigDecimal openingQuantityAtHorizon,
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
             LocalDate lastSupplierReceiptDate,
-            List<TransitSupplier> suppliers) {
+            List<TransitSupplier> suppliers,
+            int calculationVersion,
+            boolean enabled,
+            boolean ready,
+            List<Integer> warehouseIds,
+            String configurationRevision,
+            BigDecimal knownAvailableForPlanningQuantity,
+            List<TransitSourceStock> sources,
+            List<String> warnings) {
     }
+
+    public record TransitSourceStock(int warehouseId, String warehouseName, Long generationId,
+            String status, Boolean supplierOriginConfirmed, BigDecimal physicalQuantity,
+            BigDecimal reservedQuantity, BigDecimal availableQuantity, BigDecimal availableForPlanningQuantity,
+            BigDecimal openingQuantityAtHorizon,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd") LocalDate lastSupplierReceiptDate,
+            List<TransitSupplier> suppliers,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd") LocalDate asOf,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS") java.time.LocalDateTime completedAt,
+            List<String> warnings) { }
 
     public record TransitSupplier(
             String code,

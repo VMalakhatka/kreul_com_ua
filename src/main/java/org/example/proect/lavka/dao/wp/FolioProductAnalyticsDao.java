@@ -1,6 +1,9 @@
 package org.example.proect.lavka.dao.wp;
 
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsCapabilitiesResponse.DictionaryItem;
+import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryRequest.AvailabilityCalculation;
+import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.Availability;
+import org.example.proect.lavka.service.folio.FolioAvailabilityOptions;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -152,6 +155,14 @@ public class FolioProductAnalyticsDao {
     public QueryResult query(QuerySpec spec) {
         SqlParts parts = sqlParts(spec);
         String base = productAggregateSql(parts);
+        if (spec.availability() != null && (spec.availability().filter() != null
+                || spec.sort().stream().anyMatch(s -> s.field().startsWith("availability") || s.field().equals("stockoutPercent")))) {
+            String availability = FolioAvailabilitySql.summary(spec,
+                    FolioAvailabilityOptions.context(spec.availability(), spec.warehouseIds()), null, parts.parameters);
+            base = "SELECT p.*,v.availability_percent,v.stockout_percent,v.availability_status FROM ("
+                    + base + ") p JOIN (" + availability + ") v ON v.sku=p.sku WHERE "
+                    + availabilityPredicate(spec.availability(), parts.parameters);
+        }
         TotalRow total = named.queryForObject("SELECT COUNT(*) product_count,"
                         + "COALESCE(SUM(warehouse_row_count),0) warehouse_row_count,"
                         + sums("q") + " FROM (" + base + ") q",
@@ -194,6 +205,49 @@ public class FolioProductAnalyticsDao {
                 .addValue("skus", requestedSkus), String.class);
     }
 
+    private static String availabilityPredicate(AvailabilityCalculation options, MapSqlParameterSource params) {
+        var filter = options.filter();
+        if (filter == null) return "1=1";
+        List<String> clauses = new ArrayList<>();
+        BigDecimal[] values = {filter.availabilityPercentFrom(), filter.availabilityPercentTo(),
+                filter.stockoutPercentFrom(), filter.stockoutPercentTo()};
+        String[] comparisons = {"v.availability_percent>=", "v.availability_percent<=",
+                "v.stockout_percent>=", "v.stockout_percent<="};
+        for (int i=0; i<values.length; i++) if (values[i] != null) {
+            params.addValue("avLimit" + i, values[i]); clauses.add(comparisons[i] + ":avLimit" + i);
+        }
+        if (filter.availabilityStatus() != null && !filter.availabilityStatus().isEmpty()) {
+            params.addValue("avStatuses", filter.availabilityStatus()); clauses.add("v.availability_status IN (:avStatuses)");
+        }
+        return clauses.isEmpty() ? "1=1" : String.join(" AND ", clauses);
+    }
+
+    public Map<String, Availability> availability(QuerySpec spec, List<Integer> members, List<String> skus) {
+        if (skus.isEmpty() || members.isEmpty()) return Map.of();
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        String sql = FolioAvailabilitySql.summary(spec, members, skus, params);
+        Map<String, Availability> result = new LinkedHashMap<>();
+        named.query(sql, params, (org.springframework.jdbc.core.RowCallbackHandler) rs -> {
+            String status = rs.getString("availability_status");
+            boolean measured = "MEASURED".equals(status);
+            boolean excluded = "NOT_APPLICABLE".equals(status);
+            long days = rs.getLong("period_days");
+            long available = rs.getLong("available_days");
+            List<String> warnings = new ArrayList<>();
+            warnings.add("CURRENT_POLICY_APPLIED_TO_PERIOD");
+            if (rs.getBoolean("negative_stock")) warnings.add("NEGATIVE_PHYSICAL_STOCK");
+            if ("DATA_INCOMPLETE".equals(status)) warnings.add("INCOMPLETE_DAILY_HISTORY");
+            result.put(rs.getString("sku"), new Availability(status, FolioAvailabilityOptions.BASIS,
+                    measured ? Boolean.TRUE : excluded ? Boolean.FALSE : null,
+                    members.size() == 1 ? rs.getBigDecimal("minimum_stock") : null,
+                    days, measured ? Long.valueOf(days) : excluded ? Long.valueOf(0) : null,
+                    measured ? available : null, measured ? days-available : null,
+                    rs.getBigDecimal("availability_percent"), rs.getBigDecimal("stockout_percent"),
+                    List.copyOf(warnings)));
+        });
+        return Map.copyOf(result);
+    }
+
     public List<String> existingBarcodes(String sourceDatabase, List<Integer> warehouseIds,
                                          List<String> requestedBarcodes) {
         if (requestedBarcodes == null || requestedBarcodes.isEmpty()) return List.of();
@@ -228,10 +282,12 @@ public class FolioProductAnalyticsDao {
                        COALESCE(SUM(CASE WHEN m.affects_stock=1 AND m.signed_quantity>0
                             AND m.movement_class='PURCHASE_RECEIPT'
                             AND m.organization_type IN (:supplierTypes)
+                            AND NULLIF(TRIM(m.counterparty_short_name),'') IS NOT NULL
                            THEN 1 ELSE 0 END),0) supplier_inbound_count,
                        MAX(CASE WHEN m.affects_stock=1 AND m.signed_quantity>0
                             AND m.movement_class='PURCHASE_RECEIPT'
                             AND m.organization_type IN (:supplierTypes)
+                            AND NULLIF(TRIM(m.counterparty_short_name),'') IS NOT NULL
                            THEN m.document_date ELSE NULL END) last_supplier_receipt_date
                   FROM folio_product_metric_current c
                   LEFT JOIN folio_product_movement_fact m
@@ -240,6 +296,7 @@ public class FolioProductAnalyticsDao {
                    AND m.sku=c.sku
                    AND m.generation_id=:generationId
                  WHERE c.source_database=:db AND c.warehouse_id=:warehouseId
+                   AND c.generation_id=:generationId
                    AND c.sku IN (:skus)
                  GROUP BY c.sku,c.physical_quantity,c.reserved_quantity,c.available_quantity
                 """, params, rs -> {
@@ -261,6 +318,7 @@ public class FolioProductAnalyticsDao {
                    AND affects_stock=1 AND signed_quantity>0
                    AND movement_class='PURCHASE_RECEIPT'
                    AND organization_type IN (:supplierTypes)
+                   AND NULLIF(TRIM(counterparty_short_name),'') IS NOT NULL
                  GROUP BY sku,counterparty_short_name
                  ORDER BY sku,counterparty_short_name
                 """, params, rs -> {
@@ -497,11 +555,18 @@ public class FolioProductAnalyticsDao {
                 Map.entry("inventoryValue", "inventory_value"),
                 Map.entry("soldUnits", "sold_units"), Map.entry("salesRevenue", "sales_revenue"),
                 Map.entry("salesCogs", "sales_cogs"), Map.entry("grossProfit", "gross_profit"),
-                Map.entry("averageInventoryValue", "average_inventory_value"));
+                Map.entry("averageInventoryValue", "average_inventory_value"),
+                Map.entry("availabilityPercent", "availability_percent"),
+                Map.entry("stockoutPercent", "stockout_percent"),
+                Map.entry("availabilityStatus", "availability_status"));
         List<String> clauses = new ArrayList<>();
         for (SortSpec item : sort) {
             String column = columns.get(item.field());
-            if (column != null) clauses.add(column + ("DESC".equals(item.direction()) ? " DESC" : " ASC"));
+            if (column != null) {
+                if (item.field().equals("availabilityPercent") || item.field().equals("stockoutPercent"))
+                    clauses.add(column + " IS NULL ASC");
+                clauses.add(column + ("DESC".equals(item.direction()) ? " DESC" : " ASC"));
+            }
         }
         if (clauses.isEmpty()) clauses.add("gross_profit DESC");
         clauses.add("sku ASC");
@@ -582,7 +647,13 @@ public class FolioProductAnalyticsDao {
                             Map<String, Selection> productSelections,
                             Map<String, Selection> movementSelections,
                             int pageSize, int offset, List<SortSpec> sort,
-                            String abcBasis) { }
+                            String abcBasis, AvailabilityCalculation availability) {
+        public QuerySpec(String db, List<Integer> warehouses, LocalDate from, LocalDate to,
+                         String search, Map<String, Selection> product, Map<String, Selection> movement,
+                         int size, int offset, List<SortSpec> sort, String basis) {
+            this(db, warehouses, from, to, search, product, movement, size, offset, sort, basis, null);
+        }
+    }
     public record QueryResult(TotalRow total, List<AggregateRow> rows,
                               List<WarehouseRow> warehouseRows,
                               List<BasisRow> basisRows) { }

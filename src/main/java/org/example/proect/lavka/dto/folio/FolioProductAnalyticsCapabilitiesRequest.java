@@ -8,5 +8,9 @@ import java.util.List;
 
 public record FolioProductAnalyticsCapabilitiesRequest(
         @NotBlank String sourceDatabase,
-        @NotEmpty List<@Positive Integer> warehouseIds) {
+        @NotEmpty List<@Positive Integer> warehouseIds,
+        FolioProductAnalyticsQueryRequest.Calculation calculation) {
+    public FolioProductAnalyticsCapabilitiesRequest(String sourceDatabase, List<Integer> warehouseIds) {
+        this(sourceDatabase, warehouseIds, null);
+    }
 }

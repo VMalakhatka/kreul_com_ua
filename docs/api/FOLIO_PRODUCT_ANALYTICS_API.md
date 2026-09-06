@@ -1,6 +1,11 @@
-# Product analytics schema v4
+# Product analytics schema v5
 
-Обновлено: 2026-08-31.
+Обновлено: 2026-09-06.
+
+Новое в v5: физическое наличие по дням, применимость MIN_TVRZAP и группы
+складов. Точный контракт и инструкция фронту:
+[FOLIO_PRODUCT_AVAILABILITY_FRONTEND_V5.md](FOLIO_PRODUCT_AVAILABILITY_FRONTEND_V5.md).
+Остальные экономические формулы, включая `coverageDays`, не менялись.
 
 API строит отчёты только по активным product snapshot в MariaDB. Запросы
 `capabilities` и `query` не обращаются к ФОЛІО/MS SQL и ничего в ФОЛІО не
@@ -10,18 +15,20 @@ API строит отчёты только по активным product snapsho
 
 1. Применить Flyway migrations
    `V11__folio_product_analytics_schema_v3.sql` и
-   `V12__folio_product_analytics_schema_v4.sql`.
+   `V12__folio_product_analytics_schema_v4.sql` и
+   `V13__folio_product_availability_history.sql`.
 2. После деплоя заново выполнить
    `POST /admin/folio/accounting-prices/snapshot/refresh` для каждого склада,
    который должен участвовать в аналитике.
 3. Дождаться `status=ACTIVE`, `phase=COMPLETED` и
-   `analyticsSchemaVersion=4`.
+   `analyticsSchemaVersion=5`.
 
 V12 использует `IF NOT EXISTS`, потому что MariaDB DDL не откатывается вместе
 с Flyway-транзакцией во всех режимах. После прерванного старта migration может
 успеть изменить current-таблицу, но не stage-таблицу. Повторный деплой должен
 безопасно завершить недостающую часть. До успешного старта Java и регистрации
 V12 в `flyway_schema_history` product snapshot не запускать.
+Для v5 также требуется успешная V13; миграция сама не заполняет историю.
 
 Активный snapshot старой схемы продолжает обслуживать старые экраны, но новый
 `query` вернёт `ANALYTICS_SCHEMA_TOO_OLD`, пока выбранный склад не обновлён.
@@ -47,8 +54,11 @@ Content-Type: application/json
 
 `purchasePolicy` отдельно сообщает готовность сетевой политики склада 7
 «Киев ОПТ», его generation и порог неограниченного максимума `9999`.
-`transit` сообщает готовность снимка склада 9 «Транспорт», generation,
-подтверждённые типы организаций поставщика `Т`/`I` и способ расчёта.
+`transit` сообщает готовность каждого настроенного транспортного источника,
+generation, подтверждённые типы организаций поставщика `Т`/`I` и способ расчёта.
+Склад 9 — только совместимый default при отсутствии `calculation.transit`.
+Контракт выбора нескольких складов, revision и handoff:
+[FOLIO_TRANSIT_WAREHOUSES_FRONTEND.md](FOLIO_TRANSIT_WAREHOUSES_FRONTEND.md).
 
 Поддержаны:
 
@@ -62,7 +72,7 @@ Content-Type: application/json
 - ABC и несколько складов.
 
 Основной GTIN берётся из `SCL_ARTC.DOP3_ARTIC`. Дополнительные штрихкоды
-`SCL_CODE` в schema v4 не входят.
+`SCL_CODE` в schema v5 не входят.
 
 Пока возвращаются `supported=false`, `reason=SOURCE_NOT_CONFIRMED`:
 
@@ -70,7 +80,10 @@ Content-Type: application/json
 - менеджер продаж (`salesManagerCodes`), не поставщик;
 - склад-источник и склад-получатель перемещения;
 - SCM lead time и открытые заказы;
-- XYZ и подневный stockout.
+- XYZ.
+
+Подневный stockout поддержан в v5 через `calculation.availability` — см.
+[контракт наличия](FOLIO_PRODUCT_AVAILABILITY_FRONTEND_V5.md).
 
 Frontend обязан скрывать или отключать неподдержанные поля. Он не должен
 подменять их эвристикой.
@@ -146,7 +159,10 @@ Content-Type: application/json
 lead time и товара в пути.
 
 Размер страницы: 1–500. Следующую страницу запрашивать с неизменными условиями
-и `page.cursor=nextCursor` предыдущего ответа.
+и `page.cursor=nextCursor` предыдущего ответа. В v5 курсор привязан к поколениям,
+периоду, фильтрам, сортировке и определениям/ревизии групп. При смене любого
+из этих входов — HTTP 409 `ANALYTICS_CURSOR_EXPIRED`: начать отчёт/экспорт заново,
+не склеивать страницы разных снимков. Старые курсоры до v5 недействительны.
 
 Сортировка: `sku`, `productName`, `physicalQuantity`, `inventoryValue`,
 `soldUnits`, `salesRevenue`, `salesCogs`, `grossProfit`,
@@ -164,7 +180,7 @@ lead time и товара в пути.
 - `rows[].networkOrderPolicy` — сетевое разрешение заказа по карточке склада 7
   «Киев ОПТ»;
 - `rows[].dimensions.primaryBarcode` — основной GTIN карточки;
-- `rows[].inTransitStock` — подтверждённый товар в пути на складе 9;
+- `rows[].inTransitStock` — общий подтверждённый транзит и `sources[]` по отдельным транспортным складам;
 - `rows[].abcClass` — A/B/C по выбранной базе;
 - `facets` — справочники и counts выбранных активных snapshot;
 - `nextCursor` — следующая страница или `null`;
@@ -184,14 +200,14 @@ return COGS пока не подтверждён. Поэтому `grossProfit` �
 
 ## Товар в пути
 
-`inTransitStock` строится только по опубликованному snapshot склада 9
-«Транспорт» и не обращается к живой ФОЛІО во время отчёта. Остаток считается
+`inTransitStock` строится только по опубликованным snapshot выбранных транспортных
+складов (по умолчанию `[9]`) и не обращается к живой ФОЛІО во время отчёта. Остаток считается
 доступным для закупочного планирования только когда его происхождение внутри
 горизонта однозначно подтверждено приходами `PURCHASE_RECEIPT` от организаций
 типов `Т` или `I`.
 
 - `CONFIRMED_SUPPLIER_ORIGIN` — весь положительный входящий поток поставщицкий;
-  `availableForPlanningQuantity=max(availableQuantity,0)`;
+  `availableForPlanningQuantity=availableQuantity`; отрицательное значение не обнуляется;
 - `NO_IN_TRANSIT_STOCK` — физический остаток равен 0, доступно 0;
 - `NEGATIVE_TRANSIT_STOCK` — отрицательный остаток является ошибкой данных и
   не участвует в планировании;
@@ -249,7 +265,7 @@ SKU × склад формируется `orderPolicy`:
   количество нельзя считать без ручной проверки верхнего лимита;
 - отрицательный максимум или `MIN_TVRZAP > MAX_TVRZAP` возвращает
   `status=DATA_ISSUE` и `orderAllowed=null`;
-- если snapshot schema v4 склада 7 отсутствует, устарел или SKU в нём не найден,
+- если snapshot schema v5 склада 7 отсутствует, устарел или SKU в нём не найден,
   сетевое разрешение равно `null`. Frontend не должен трактовать `null` как
   разрешение.
 
@@ -269,13 +285,15 @@ SKU × склад формируется `orderPolicy`:
 | 400 | `INVALID_FILTER_MODE` | режим не ANY/INCLUDE/EXCLUDE |
 | 400 | `SOURCE_FIELD_NOT_CONFIRMED` | источник фильтра/расчёта ещё не подтверждён |
 | 409 | `INCOMPATIBLE_GENERATIONS` | выбранные склады имеют разные версии схемы |
-| 409 | `ANALYTICS_SCHEMA_TOO_OLD` | требуется refresh schema v4 |
+| 409 | `ANALYTICS_SCHEMA_TOO_OLD` | требуется refresh schema v5 |
+| 400 | `INVALID_AVAILABILITY` | неверная группа, ревизия, режим или отбор наличия |
+| 409 | `ANALYTICS_CURSOR_EXPIRED` | входы отчёта/поколения изменились; начать экспорт заново |
 | 503 | `SNAPSHOT_NOT_READY` | нет активного snapshot хотя бы одного склада |
 
 Отсутствие готового snapshot склада 7 не ломает экономический отчёт: строки
 возвращаются с warning `NETWORK_ORDER_POLICY_NOT_READY`, но закупочная
 рекомендация считается неготовой.
-Аналогично отсутствие свежего склада 9 не ломает отчёт, но возвращает warning
+Аналогично отсутствие готового транспортного источника не ломает отчёт, но возвращает warning
 `IN_TRANSIT_STOCK_NOT_READY` и не даёт использовать транзит в планировании.
 
 Тело ошибки содержит `code`, `message` и при наличии `details`.

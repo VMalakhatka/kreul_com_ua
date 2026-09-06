@@ -633,6 +633,8 @@ public class FolioProductSnapshotSourceDao {
         void acceptMovementBatch(List<MovementFact> rows);
 
         void acceptProductActivity(ProductCard product, List<MonthlyActivity> rows);
+
+        default void acceptProductDailyStock(ProductCard product, Map<LocalDate, BigDecimal> daily) { }
     }
 
     public record Warehouse(String databaseName, int warehouseId, String warehouseName,
@@ -968,6 +970,7 @@ public class FolioProductSnapshotSourceDao {
         private final Set<String> productsWithMovements = new HashSet<>();
         private final List<MovementFact> movementBatch = new ArrayList<>(STREAM_BATCH_SIZE);
         private final List<MonthlyActivity> productActivity = new ArrayList<>(36);
+        private final Map<LocalDate, BigDecimal> dailyStock = new LinkedHashMap<>();
         private String currentSku;
         private LocalDate currentMonth;
         private MutableMonthlyActivity currentActivity;
@@ -1000,6 +1003,9 @@ public class FolioProductSnapshotSourceDao {
                 currentActivity = new MutableMonthlyActivity(new MonthlyKey(sku, month));
             }
             currentActivity.add(movement);
+            if (movement.affectsStock()) {
+                dailyStock.merge(movement.documentDate(), movement.signedQuantity(), BigDecimal::add);
+            }
         }
 
         void finish() {
@@ -1009,6 +1015,7 @@ public class FolioProductSnapshotSourceDao {
             for (ProductCard product : productsBySku.values()) {
                 if (!productsWithMovements.contains(product.sku())) {
                     consumer.acceptProductActivity(product, List.of());
+                    consumer.acceptProductDailyStock(product, Map.of());
                 }
             }
         }
@@ -1040,8 +1047,10 @@ public class FolioProductSnapshotSourceDao {
                                     + product.sku());
                 }
                 consumer.acceptProductActivity(product, List.copyOf(productActivity));
+                consumer.acceptProductDailyStock(product, Map.copyOf(dailyStock));
             }
             productActivity.clear();
+            dailyStock.clear();
             currentSku = null;
         }
     }

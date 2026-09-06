@@ -86,6 +86,7 @@ class FolioProductSnapshotServiceTest {
             CaptureConsumer consumer = invocation.getArgument(4);
             consumer.acceptMovementBatch(List.of(movement));
             consumer.acceptProductActivity(product, List.of(activity));
+            consumer.acceptProductDailyStock(product, Map.of(movement.documentDate(), movement.signedQuantity()));
             return new Capture(new Warehouse("Paint_Ua", 5, "Odessa",
                     new BigDecimal("1000"), null), "digest", List.of(product), 1, 1);
         }).when(source).capture(anyInt(), any(), any(), anyInt(), any());
@@ -102,10 +103,34 @@ class FolioProductSnapshotServiceTest {
         verify(snapshot).stageMovements(anyLong(), anyString(), anyInt(), any(), anyList());
         verify(snapshot).stageMonthly(anyLong(), anyString(), anyInt(), any(), anyList());
         verify(snapshot).stageCurrent(anyLong(), anyString(), anyInt(), any(), anyList());
+        verify(snapshot).stageAvailability(anyLong(), anyString(), anyInt(), anyList());
         ArgumentCaptor<Publish> publish = ArgumentCaptor.forClass(Publish.class);
         verify(snapshot).publish(publish.capture());
         assertThat(publish.getValue().movementFactRows()).isEqualTo(1);
         assertThat(publish.getValue().monthlyMetricRows()).isEqualTo(1);
+    }
+
+    @Test
+    void missingAvailabilityCaptureCannotPublishAnApparentlyCompleteV5Snapshot() {
+        FolioProductSnapshotSourceDao source = mock(FolioProductSnapshotSourceDao.class);
+        FolioProductSnapshotDao snapshot = mock(FolioProductSnapshotDao.class);
+        FolioAccountingPriceDao accounting = mock(FolioAccountingPriceDao.class);
+        when(source.currentDatabaseName()).thenReturn("Paint_Ua");
+        when(snapshot.tryAcquireLease(anyString(), anyString(), anyInt())).thenReturn(true);
+        when(snapshot.renewLease(anyString(), anyString(), anyInt())).thenReturn(true);
+        when(snapshot.createGeneration(anyString(), anyInt(), anyInt(), anyString(), any())).thenReturn(19L);
+        when(source.capture(anyInt(), any(), any(), anyInt(), any())).thenReturn(
+                new Capture(new Warehouse("Paint_Ua",5,"Test",new BigDecimal("1000"),null),
+                        "digest",List.of(product()),0,0));
+        var service = new FolioProductSnapshotService(source,snapshot,accounting,
+                new FolioProductEconomicsCalculator(),directExecutor(),
+                Clock.fixed(Instant.parse("2026-08-24T12:00:00Z"),ZoneOffset.UTC),
+                transactionManager(),true,24,600,5_000,3_600);
+        var response = service.request(new FolioProductSnapshotRefreshRequest(5,24));
+        assertThat(response.status()).isEqualTo("FAILED");
+        assertThat(response.error()).contains("availability staging product count mismatch");
+        verify(snapshot, org.mockito.Mockito.never()).publish(any());
+        verify(snapshot).discardStaging(19L);
     }
 
     @Test

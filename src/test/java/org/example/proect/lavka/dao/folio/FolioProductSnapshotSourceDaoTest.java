@@ -70,6 +70,7 @@ class FolioProductSnapshotSourceDaoTest {
         products.put("SKU-2", product("SKU-2"));
         List<Integer> movementBatchSizes = new ArrayList<>();
         Map<String, Integer> activityRows = new LinkedHashMap<>();
+        Map<String, Map<LocalDate, BigDecimal>> dailyRows = new LinkedHashMap<>();
         var accumulator = new FolioProductSnapshotSourceDao.MovementStreamAccumulator(
                 products, new FolioProductSnapshotSourceDao.CaptureConsumer() {
             @Override
@@ -84,6 +85,12 @@ class FolioProductSnapshotSourceDaoTest {
                     List<FolioProductSnapshotSourceDao.MonthlyActivity> rows) {
                 activityRows.put(product.sku(), rows.size());
             }
+
+            @Override
+            public void acceptProductDailyStock(FolioProductSnapshotSourceDao.ProductCard product,
+                                                Map<LocalDate, BigDecimal> daily) {
+                dailyRows.put(product.sku(), daily);
+            }
         });
 
         for (int i = 1; i <= 1_001; i++) accumulator.add(movement(i,
@@ -93,6 +100,9 @@ class FolioProductSnapshotSourceDaoTest {
         assertThat(accumulator.movementCount()).isEqualTo(1_001);
         assertThat(movementBatchSizes).containsExactly(300, 300, 300, 101);
         assertThat(activityRows).containsEntry("SKU-1", 1).containsEntry("SKU-2", 0);
+        assertThat(dailyRows.get("SKU-1")).hasSize(1);
+        assertThat(dailyRows.get("SKU-1").get(LocalDate.of(2026, 7, 10))).isEqualByComparingTo("-1001");
+        assertThat(dailyRows.get("SKU-2")).isEmpty();
     }
 
     @Test

@@ -17,6 +17,7 @@ public record FolioProductAnalyticsCapabilitiesResponse(
         Map<String, List<DictionaryItem>> dictionaries,
         PurchasePolicyCapability purchasePolicy,
         TransitCapability transit,
+        Map<String, Object> features,
         List<AnalyticsWarning> warnings) {
 
     public record WarehouseGeneration(
@@ -56,12 +57,25 @@ public record FolioProductAnalyticsCapabilitiesResponse(
     }
 
     public record TransitCapability(
-            int warehouseId,
+            Integer warehouseId,
             String warehouseName,
             boolean ready,
             Long generationId,
             String unavailableReason,
             List<String> supplierOrganizationTypes,
-            String calculationMode) {
+            String calculationMode,
+            boolean configurable,
+            int calculationVersion,
+            int maxWarehouseCount,
+            boolean enabled,
+            List<Integer> warehouseIds,
+            String configurationRevision,
+            List<TransitSourceCapability> sources,
+            List<String> warnings) {
     }
+
+    public record TransitSourceCapability(int warehouseId, String warehouseName, Long generationId,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd") LocalDate asOf,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS") LocalDateTime completedAt,
+            Integer analyticsSchemaVersion, boolean ready, String unavailableReason) { }
 }

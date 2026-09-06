@@ -196,6 +196,9 @@ public class FolioProductSnapshotService {
             if (capture.movementFactRows() != staging.movementFactRows) {
                 throw new IllegalStateException("Product movement staging row count mismatch");
             }
+            if (capture.products().size() != staging.availabilityProducts) {
+                throw new IllegalStateException("Product availability staging product count mismatch");
+            }
 
             Map<String, ExistingItem> existing = snapshotDao.findExisting(
                     sourceDatabase, warehouseId);
@@ -389,6 +392,8 @@ public class FolioProductSnapshotService {
         private final List<MonthlyMetric> monthly = new ArrayList<>(STAGING_BATCH_SIZE);
         private final List<CurrentMetric> current = new ArrayList<>(STAGING_BATCH_SIZE);
         private final List<Alert> alerts = new ArrayList<>(STAGING_BATCH_SIZE);
+        private final List<FolioProductAvailabilityHistory.Month> availability = new ArrayList<>(STAGING_BATCH_SIZE);
+        private int availabilityProducts;
         private long movementFactRows;
         private int monthlyMetricRows;
         private int movementRowsSinceHeartbeat;
@@ -429,6 +434,20 @@ public class FolioProductSnapshotService {
             flushIfNeeded();
         }
 
+        @Override
+        public void acceptProductDailyStock(ProductCard product,
+                                            Map<LocalDate, java.math.BigDecimal> daily) {
+            availability.addAll(FolioProductAvailabilityHistory.build(product, daily, horizonStart, asOfDate));
+            availabilityProducts++;
+            if (availability.size() >= STAGING_BATCH_SIZE) flushAvailability();
+        }
+
+        private void flushAvailability() {
+            if (availability.isEmpty()) return;
+            snapshotDao.stageAvailability(generationId, sourceDatabase, warehouseId, List.copyOf(availability));
+            availability.clear();
+        }
+
         private void flushIfNeeded() {
             if (monthly.size() >= STAGING_BATCH_SIZE) flushMonthly();
             if (current.size() >= STAGING_BATCH_SIZE) flushCurrent();
@@ -436,6 +455,7 @@ public class FolioProductSnapshotService {
         }
 
         private void finish() {
+            flushAvailability();
             flushMonthly();
             flushCurrent();
             flushAlerts();
@@ -450,9 +470,9 @@ public class FolioProductSnapshotService {
             Runtime runtime = Runtime.getRuntime();
             long usedMiB = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024);
             long maxMiB = runtime.maxMemory() / (1024 * 1024);
-            log.info("[folio.product.snapshot] streaming generation={} warehouse={} movementFacts={} monthly={} heapMiB={}/{}",
+            log.info("[folio.product.snapshot] streaming generation={} warehouse={} movementFacts={} monthly={} availabilityProducts={} heapMiB={}/{}",
                     generationId, warehouseId, movementFactRows,
-                    monthlyMetricRows + monthly.size(), usedMiB, maxMiB);
+                    monthlyMetricRows + monthly.size(), availabilityProducts, usedMiB, maxMiB);
             movementRowsSinceHeartbeat = 0;
             productsSinceHeartbeat = 0;
         }

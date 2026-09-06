@@ -5,7 +5,7 @@ cross-system guides for people are maintained in the WordPress repository:
 `docs/BACKEND_GUIDE.md`, `docs/JAVA_DOCKER_RUNTIME.md` and
 `docs/BOOTSTRAP_AND_RECOVERY.md`.
 
-Verified against the current repository structure: 2026-08-29.
+Verified against the current repository structure: 2026-09-06.
 
 ## Find the Right Document
 
@@ -15,6 +15,8 @@ Verified against the current repository structure: 2026-08-29.
 | Understand Folio account behavior | [`business/01_ACCOUNT.md`](business/01_ACCOUNT.md), [`api/FOLIO_ACCOUNT_JS_API.md`](api/FOLIO_ACCOUNT_JS_API.md), [`api/ACCOUNT_WRITE_MAPPING.md`](api/ACCOUNT_WRITE_MAPPING.md) |
 | Inspect Folio tables and evidence | [`00_DATABASE_CATALOG.md`](00_DATABASE_CATALOG.md) and `.agents/skills/work-with-folio-mssql/references/` |
 | Work with product snapshots and analytics | [`api/FOLIO_PRODUCT_SNAPSHOT_API.md`](api/FOLIO_PRODUCT_SNAPSHOT_API.md), [`api/FOLIO_PRODUCT_ANALYTICS_API.md`](api/FOLIO_PRODUCT_ANALYTICS_API.md), [`api/FOLIO_PRODUCT_ANALYTICS_FRONTEND_HANDOFF_V4.md`](api/FOLIO_PRODUCT_ANALYTICS_FRONTEND_HANDOFF_V4.md) and the current Flyway migrations |
+| Physical availability, stockout days and configured warehouse groups | [`api/FOLIO_PRODUCT_AVAILABILITY_FRONTEND_V5.md`](api/FOLIO_PRODUCT_AVAILABILITY_FRONTEND_V5.md); snapshot owns V13 active/stage monthly masks, analytics owns query-time group evaluation |
+| Configurable transit warehouses and purchase-planning safeguards | [`api/FOLIO_TRANSIT_WAREHOUSES_FRONTEND.md`](api/FOLIO_TRANSIT_WAREHOUSES_FRONTEND.md); independent snapshot scopes, per-source diagnostics, query-time totals and revision-bound cursors |
 | Work with accounting-price operations | [`api/FOLIO_ACCOUNTING_PRICES_API.md`](api/FOLIO_ACCOUNTING_PRICES_API.md) and [`api/FOLIO_ACCOUNTING_PRICE_OPERATIONS_FRONTEND.md`](api/FOLIO_ACCOUNTING_PRICE_OPERATIONS_FRONTEND.md) |
 | Work with balances, debtors or customer documents | Matching `FOLIO_CUSTOMER_*` documents in [`api/`](api/) |
 | Work with the monthly Kyiv/Odesa profit report | [`api/FOLIO_PROFIT_REPORT_API.md`](api/FOLIO_PROFIT_REPORT_API.md) and [`api/FOLIO_PROFIT_REPORT_FRONTEND_TASK.md`](api/FOLIO_PROFIT_REPORT_FRONTEND_TASK.md) |

@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Positive;
 
 import java.time.LocalDate;
+import java.math.BigDecimal;
 import java.util.List;
 
 public record FolioProductAnalyticsQueryRequest(
@@ -62,8 +63,32 @@ public record FolioProductAnalyticsQueryRequest(
             String abcBasis,
             Boolean includeReturns,
             Integer serviceLevelPercent,
-            Integer demandHorizonDays) {
+            Integer demandHorizonDays,
+            AvailabilityCalculation availability,
+            TransitCalculation transit) {
+        public Calculation(String abcBasis, Boolean includeReturns, Integer serviceLevelPercent,
+                           Integer demandHorizonDays) {
+            this(abcBasis, includeReturns, serviceLevelPercent, demandHorizonDays, null, null);
+        }
+        public Calculation(String abcBasis, Boolean includeReturns, Integer serviceLevelPercent,
+                           Integer demandHorizonDays, AvailabilityCalculation availability) {
+            this(abcBasis, includeReturns, serviceLevelPercent, demandHorizonDays, availability, null);
+        }
     }
+
+    public record TransitCalculation(List<Integer> warehouseIds, String configurationRevision) { }
+
+    public record AvailabilityCalculation(Boolean enabled, String basis,
+            String minimumStockEligibility, String presentation,
+            String warehouseGroupsRevision, List<WarehouseGroup> warehouseGroups,
+            Integer warehouseId, String groupCode, AvailabilityFilter filter) { }
+
+    public record WarehouseGroup(String code, String name, List<Integer> warehouseIds,
+                                 String availabilityMode) { }
+
+    public record AvailabilityFilter(BigDecimal availabilityPercentFrom,
+            BigDecimal availabilityPercentTo, BigDecimal stockoutPercentFrom,
+            BigDecimal stockoutPercentTo, List<String> availabilityStatus) { }
 
     public record Page(Integer size, String cursor) {
     }

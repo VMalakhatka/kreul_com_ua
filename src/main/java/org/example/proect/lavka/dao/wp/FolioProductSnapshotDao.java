@@ -28,7 +28,7 @@ import java.util.Optional;
 @Repository
 public class FolioProductSnapshotDao {
 
-    public static final int ANALYTICS_SCHEMA_VERSION = 4;
+    public static final int ANALYTICS_SCHEMA_VERSION = 5;
     private static final int BATCH = 300;
     private final JdbcTemplate jdbc;
 
@@ -89,6 +89,8 @@ public class FolioProductSnapshotDao {
     }
 
     public void discardStagingForScope(String sourceDatabase, int warehouseId) {
+        jdbc.update("DELETE FROM folio_product_availability_monthly_stage WHERE source_database=? AND warehouse_id=?",
+                sourceDatabase, warehouseId);
         jdbc.update("""
                 DELETE FROM folio_product_movement_fact_stage
                  WHERE source_database=? AND warehouse_id=?
@@ -255,6 +257,17 @@ public class FolioProductSnapshotDao {
                  WHERE generation_id=?
                 """, publish.generationId());
         publishStagedAlerts(publish);
+        jdbc.update("DELETE FROM folio_product_availability_monthly WHERE source_database=? AND warehouse_id=?",
+                publish.sourceDatabase(), publish.warehouseId());
+        jdbc.update("""
+                INSERT INTO folio_product_availability_monthly
+                (generation_id,source_database,warehouse_id,sku,month_start,
+                 known_mask,available_mask,negative_mask,quality,reconciliation_difference)
+                SELECT generation_id,source_database,warehouse_id,sku,month_start,
+                       known_mask,available_mask,negative_mask,quality,reconciliation_difference
+                FROM folio_product_availability_monthly_stage WHERE generation_id=?
+                """,
+                publish.generationId());
 
         int updated = jdbc.update("""
                 UPDATE folio_product_snapshot_generation
@@ -657,6 +670,7 @@ public class FolioProductSnapshotDao {
     }
 
     public void discardStaging(long generationId) {
+        jdbc.update("DELETE FROM folio_product_availability_monthly_stage WHERE generation_id=?", generationId);
         jdbc.update("DELETE FROM folio_product_movement_fact_stage WHERE generation_id=?",
                 generationId);
         jdbc.update("DELETE FROM folio_product_metric_monthly_stage WHERE generation_id=?",
@@ -665,6 +679,22 @@ public class FolioProductSnapshotDao {
                 generationId);
         jdbc.update("DELETE FROM folio_product_metric_alert_stage WHERE generation_id=?",
                 generationId);
+    }
+
+    public void stageAvailability(long generationId, String db, int warehouseId,
+            List<org.example.proect.lavka.service.folio.FolioProductAvailabilityHistory.Month> rows) {
+        jdbc.batchUpdate("""
+                INSERT INTO folio_product_availability_monthly_stage
+                (generation_id,source_database,warehouse_id,sku,month_start,
+                 known_mask,available_mask,negative_mask,quality,reconciliation_difference)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                """, rows, BATCH, (ps, row) -> {
+            ps.setLong(1, generationId); ps.setString(2, db); ps.setInt(3, warehouseId);
+            ps.setString(4, row.sku()); ps.setDate(5, java.sql.Date.valueOf(row.monthStart()));
+            ps.setLong(6, row.knownMask()); ps.setLong(7, row.availableMask());
+            ps.setLong(8, row.negativeMask()); ps.setString(9, row.quality());
+            ps.setBigDecimal(10, row.reconciliationDifference());
+        });
     }
 
     public Optional<Generation> latest() {

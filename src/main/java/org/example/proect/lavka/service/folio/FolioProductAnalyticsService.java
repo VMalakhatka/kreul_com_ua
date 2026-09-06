@@ -25,15 +25,17 @@ import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse;
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.Context;
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.Dimensions;
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.Metrics;
-import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.InTransitStock;
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.NetworkOrderPolicy;
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.Row;
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.Totals;
-import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.TransitSupplier;
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.WarehouseBreakdown;
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.WarehouseOrderPolicy;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.Availability;
+import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.WarehouseGroupBreakdown;
+import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryRequest.AvailabilityCalculation;
+import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryRequest.TransitCalculation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -60,15 +62,13 @@ public class FolioProductAnalyticsService {
     public static final int SCHEMA_VERSION = ANALYTICS_SCHEMA_VERSION;
     private static final int NETWORK_POLICY_WAREHOUSE_ID = 7;
     private static final String NETWORK_POLICY_WAREHOUSE_NAME = "Киев ОПТ";
-    private static final int TRANSIT_WAREHOUSE_ID = 9;
-    private static final String TRANSIT_WAREHOUSE_NAME = "Транспорт";
-    private static final List<String> SUPPLIER_ORGANIZATION_TYPES = List.of("Т", "I");
     private static final BigDecimal UNLIMITED_MAXIMUM_THRESHOLD = new BigDecimal("9999");
     private static final List<String> MODES = List.of("ANY", "INCLUDE", "EXCLUDE");
     private static final Set<String> ABC_BASES = Set.of("REVENUE", "GROSS_PROFIT", "SOLD_UNITS");
     private static final Set<String> SORT_FIELDS = Set.of(
             "sku", "productName", "physicalQuantity", "inventoryValue", "soldUnits",
-            "salesRevenue", "salesCogs", "grossProfit", "averageInventoryValue");
+            "salesRevenue", "salesCogs", "grossProfit", "averageInventoryValue",
+            "availabilityPercent", "stockoutPercent", "availabilityStatus");
     private static final Set<String> SUPPORTED_PRODUCT_FILTERS = Set.of(
             "groups", "groupLevel1", "groupLevel2", "groupLevel3", "groupLevel4",
             "groupLevel5", "groupLevel6", "departments", "productTypes", "units",
@@ -103,7 +103,7 @@ public class FolioProductAnalyticsService {
         } else if (!compatible) {
             unavailableReason = "ANALYTICS_SCHEMA_TOO_OLD";
             warnings.add(new AnalyticsWarning("ANALYTICS_SCHEMA_TOO_OLD",
-                    "Refresh every selected warehouse with snapshot schema v4"));
+                    "Refresh every selected warehouse with snapshot schema v5"));
         }
         Map<String, List<DictionaryItem>> dictionaries = compatible
                 ? dao.dictionaries(scope.sourceDatabase(), scope.warehouseIds()) : Map.of();
@@ -111,24 +111,34 @@ public class FolioProductAnalyticsService {
         if (networkGeneration == null
                 || networkGeneration.analyticsSchemaVersion() != SCHEMA_VERSION) {
             warnings.add(new AnalyticsWarning("NETWORK_ORDER_POLICY_NOT_READY",
-                    "Refresh warehouse 7 (Киев ОПТ) with snapshot schema v4 before purchase planning"));
+                    "Refresh warehouse 7 (Киев ОПТ) with snapshot schema v5 before purchase planning"));
         }
-        ActiveGeneration transitGeneration = referenceGeneration(scope, TRANSIT_WAREHOUSE_ID);
-        if (transitGeneration == null
-                || transitGeneration.analyticsSchemaVersion() != SCHEMA_VERSION) {
+        TransitCalculation transitConfig = FolioTransitAnalytics.normalize(request.calculation());
+        TransitCapability transit = FolioTransitAnalytics.capability(transitConfig,
+                transitGenerations(scope, transitConfig), scope.warehouseIds(), SCHEMA_VERSION);
+        if (!transit.ready()) {
             warnings.add(new AnalyticsWarning("IN_TRANSIT_STOCK_NOT_READY",
-                    "Refresh warehouse 9 (Транспорт) with snapshot schema v4 before using in-transit stock"));
+                    "Check context transit sources: " + transit.unavailableReason()));
         }
         return new FolioProductAnalyticsCapabilitiesResponse(
                 true, SCHEMA_VERSION, compatible,
                 warehouses(scope.warehouseIds(), scope.generations()),
                 capabilitiesMap(compatible, unavailableReason),
                 dictionaries, purchasePolicyCapability(networkGeneration),
-                transitCapability(transitGeneration),
+                transit,
+                Map.of("availability", Map.of("supported", compatible,
+                        "basis", List.of("PHYSICAL_END_OF_DAY"),
+                        "groupModes", List.of("ANY_ELIGIBLE_MEMBER"),
+                        "minimumStockEligibility", List.of("CURRENT_POLICY_GT_ZERO")),
+                        "configurableTransit", Map.of("supported", true, "calculationVersion", FolioTransitAnalytics.VERSION,
+                                "maxWarehouseCount", FolioTransitAnalytics.MAX_WAREHOUSES,
+                                "demandUnaffected", true, "openOrdersDeduplicationSupported", false,
+                                "automaticGroupAllocationSupported", false)),
                 List.copyOf(warnings));
     }
 
-    @Transactional(transactionManager = "wpTransactionManager", readOnly = true)
+    @Transactional(transactionManager = "wpTransactionManager", readOnly = true,
+            isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
     public FolioProductAnalyticsQueryResponse query(FolioProductAnalyticsQueryRequest request) {
         Scope scope = scope(request.sourceDatabase(), request.warehouseIds(), true);
         Period period = period(request.period(), scope.generations());
@@ -141,34 +151,54 @@ public class FolioProductAnalyticsService {
         boolean includeReturns = request.calculation() == null
                 || !Boolean.FALSE.equals(request.calculation().includeReturns());
         int pageSize = pageSize(request.page());
-        int offset = decodeOffset(request.page() == null ? null : request.page().cursor());
         List<SortSpec> sort = sort(request.sort());
+        AvailabilityCalculation availability = FolioAvailabilityOptions.normalize(request.calculation(), scope.warehouseIds());
+        List<Integer> availabilityContext = FolioAvailabilityOptions.context(availability, scope.warehouseIds());
+        if (sort.stream().anyMatch(s -> s.field().startsWith("availability") || s.field().equals("stockoutPercent"))
+                && availabilityContext.isEmpty()) {
+            throw error("INVALID_AVAILABILITY", "Availability sorting requires enabled availability and a warehouse/group context");
+        }
+        ActiveGeneration networkGeneration = networkPolicyGeneration(scope);
+        TransitCalculation transitConfig = FolioTransitAnalytics.normalize(request.calculation());
+        List<ActiveGeneration> transitGenerations = transitGenerations(scope, transitConfig);
+        TransitCapability transit = FolioTransitAnalytics.capability(transitConfig,
+                transitGenerations, scope.warehouseIds(), SCHEMA_VERSION);
+        Object applied = new AppliedFilters(scope.sourceDatabase(), scope.warehouseIds(),
+                new AppliedPeriod(period.from(), period.to()), search, product, movement,
+                new AppliedCalculation(abcBasis, includeReturns, availability, transitConfig));
+        String cursorScope = cursorScope(applied, sort, scope.generations(), networkGeneration, transitGenerations);
+        int offset = decodeOffset(request.page() == null ? null : request.page().cursor(), cursorScope);
 
         Map<String, List<DictionaryItem>> dictionaries = dao.dictionaries(
                 scope.sourceDatabase(), scope.warehouseIds());
         validateSelections(scope, product, movement, dictionaries);
         QuerySpec spec = new QuerySpec(scope.sourceDatabase(), scope.warehouseIds(),
                 period.from(), period.to(), search, product, movement,
-                pageSize, offset, sort, abcBasis);
+                pageSize, offset, sort, abcBasis, availability);
         var result = dao.query(spec);
         Map<String, String> abc = abcClasses(result.basisRows());
         List<String> pageSkus = result.rows().stream().map(AggregateRow::sku).toList();
-        ActiveGeneration networkGeneration = networkPolicyGeneration(scope);
         boolean networkPolicyReady = networkGeneration != null
                 && networkGeneration.analyticsSchemaVersion() == SCHEMA_VERSION;
         Map<String, NetworkPolicyRow> networkPolicies = networkPolicyReady
                 ? dao.networkPolicies(scope.sourceDatabase(), NETWORK_POLICY_WAREHOUSE_ID, pageSkus)
                 : Map.of();
-        ActiveGeneration transitGeneration = referenceGeneration(scope, TRANSIT_WAREHOUSE_ID);
-        boolean transitReady = transitGeneration != null
-                && transitGeneration.analyticsSchemaVersion() == SCHEMA_VERSION;
-        Map<String, TransitRow> transitRows = transitReady
-                ? dao.transitRows(scope.sourceDatabase(), TRANSIT_WAREHOUSE_ID,
-                transitGeneration.id(), pageSkus, SUPPLIER_ORGANIZATION_TYPES)
-                : Map.of();
+        Map<Integer, Map<String, TransitRow>> transitRows = new LinkedHashMap<>();
+        for (var source : transit.sources()) if (source.ready() && !pageSkus.isEmpty()) {
+            transitRows.put(source.warehouseId(), dao.transitRows(scope.sourceDatabase(), source.warehouseId(),
+                    source.generationId(), pageSkus, FolioTransitAnalytics.SUPPLIER_TYPES));
+        }
         Map<Integer, String> warehouseNames = scope.generations().stream()
                 .collect(Collectors.toMap(ActiveGeneration::warehouseId,
                         value -> label(value.warehouseName(), value.warehouseId())));
+        Map<Integer, Map<String, Availability>> physicalAvailability = new LinkedHashMap<>();
+        Map<String, Map<String, Availability>> groupAvailability = new LinkedHashMap<>();
+        if (availability != null) {
+            for (int id : scope.warehouseIds()) physicalAvailability.put(id, dao.availability(spec, List.of(id), pageSkus));
+            for (var group : availability.warehouseGroups()) groupAvailability.put(group.code(),
+                    dao.availability(spec, group.warehouseIds(), pageSkus).entrySet().stream()
+                            .collect(Collectors.toMap(Map.Entry::getKey, entry -> groupAvailability(entry.getValue()))));
+        }
         Map<String, List<WarehouseBreakdown>> breakdown = result.warehouseRows().stream()
                 .collect(Collectors.groupingBy(WarehouseRow::sku, LinkedHashMap::new,
                         Collectors.mapping(value -> new WarehouseBreakdown(
@@ -176,22 +206,42 @@ public class FolioProductAnalyticsService {
                                 value.currentSupplier(), value.supplierState(),
                                 warehouseOrderPolicy(
                                         value.minimumStock(), value.maximumStock()),
-                                metrics(value.metrics(), period.days(), includeReturns)),
+                                metrics(value.metrics(), period.days(), includeReturns),
+                                availability == null ? null : availabilityValue(physicalAvailability.get(value.warehouseId()), value.sku(), period.days())),
                                 Collectors.toList())));
         List<Row> rows = result.rows().stream().map(value -> {
-            List<WarehouseBreakdown> warehouseRows = List.copyOf(
+            List<WarehouseBreakdown> warehouseRows = new ArrayList<>(
                     breakdown.getOrDefault(value.sku(), List.of()));
+            if (availability != null) {
+                // Missing physical members must remain visible, never treated as zero stock.
+                for (int id : scope.warehouseIds()) {
+                    if (warehouseRows.stream().noneMatch(w -> w.warehouseId() == id))
+                        warehouseRows.add(new WarehouseBreakdown(id, warehouseNames.get(id), null, null,
+                                null, null, availabilityValue(physicalAvailability.get(id), value.sku(), period.days())));
+                }
+                warehouseRows.sort(Comparator.comparingInt(WarehouseBreakdown::warehouseId));
+            }
+            List<WarehouseGroupBreakdown> groups = availability == null ? List.of() : availability.warehouseGroups().stream()
+                    .map(g -> new WarehouseGroupBreakdown(g.code(), g.name(), g.warehouseIds(), g.availabilityMode(),
+                            availabilityValue(groupAvailability.get(g.code()), value.sku(), period.days()))).toList();
+            Availability overall = null;
+            if (availability != null) {
+                overall = availabilityContext.isEmpty() ? unavailable("CONTEXT_REQUIRED", period.days())
+                        : availability.groupCode() != null
+                        ? availabilityValue(groupAvailability.get(availability.groupCode()), value.sku(), period.days())
+                        : availabilityValue(physicalAvailability.get(availabilityContext.get(0)), value.sku(), period.days());
+            }
             return new Row(
                     value.sku(), value.productName(), abc.getOrDefault(value.sku(), "C"),
                     dimensions(value, warehouseRows),
                     metrics(value.metrics(), period.days(), includeReturns),
-                    inTransitStock(transitGeneration, transitRows.get(value.sku())),
+                    FolioTransitAnalytics.stock(transit, transitRows, value.sku()),
                     networkOrderPolicy(networkGeneration,
                             networkPolicies.get(value.sku())),
-                    warehouseRows);
+                    List.copyOf(warehouseRows), overall, groups);
         }).toList();
         String nextCursor = offset + rows.size() < result.total().productCount()
-                ? encodeOffset(offset + rows.size()) : null;
+                ? encodeOffset(offset + rows.size(), cursorScope) : null;
         List<AnalyticsWarning> warnings = new ArrayList<>();
         warnings.add(new AnalyticsWarning("FACETS_SCOPE_SELECTED_WAREHOUSES",
                 "Facet counts describe the selected warehouse snapshots before report filters"));
@@ -203,19 +253,16 @@ public class FolioProductAnalyticsService {
         }
         if (!networkPolicyReady) {
             warnings.add(new AnalyticsWarning("NETWORK_ORDER_POLICY_NOT_READY",
-                    "Warehouse 7 (Киев ОПТ) has no active snapshot schema v4; network order permission is unknown"));
+                    "Warehouse 7 (Киев ОПТ) has no active snapshot schema v5; network order permission is unknown"));
         }
-        if (!transitReady) {
+        if (!transit.ready()) {
             warnings.add(new AnalyticsWarning("IN_TRANSIT_STOCK_NOT_READY",
-                    "Warehouse 9 (Транспорт) has no active snapshot schema v4; in-transit quantity is unknown"));
+                    "Check context transit sources: " + transit.unavailableReason()));
         }
-        Object applied = new AppliedFilters(scope.sourceDatabase(), scope.warehouseIds(),
-                new AppliedPeriod(period.from(), period.to()), search, product, movement,
-                new AppliedCalculation(abcBasis, includeReturns));
         return new FolioProductAnalyticsQueryResponse(
                 true,
                 new Context(SCHEMA_VERSION, warehouses(scope.warehouseIds(), scope.generations()),
-                        period.from(), period.to()),
+                        period.from(), period.to(), availability == null ? null : availability.warehouseGroupsRevision(), transit),
                 applied,
                 new Totals(result.total().productCount(), result.total().warehouseRowCount(),
                         metrics(result.total().metrics(), period.days(), includeReturns)),
@@ -248,7 +295,7 @@ public class FolioProductAnalyticsService {
             if (!versions.contains(SCHEMA_VERSION)) {
                 throw new FolioProductAnalyticsException("ANALYTICS_SCHEMA_TOO_OLD",
                         HttpStatus.CONFLICT,
-                        "Refresh every selected warehouse with product snapshot schema v4");
+                        "Refresh every selected warehouse with product snapshot schema v5");
             }
         }
         return new Scope(db, warehouseIds, generations);
@@ -272,18 +319,11 @@ public class FolioProductAnalyticsService {
                         .stream().findFirst().orElse(null));
     }
 
-    private static TransitCapability transitCapability(ActiveGeneration generation) {
-        boolean ready = generation != null
-                && generation.analyticsSchemaVersion() == SCHEMA_VERSION;
-        return new TransitCapability(
-                TRANSIT_WAREHOUSE_ID,
-                generation == null ? TRANSIT_WAREHOUSE_NAME
-                        : label(generation.warehouseName(), TRANSIT_WAREHOUSE_ID),
-                ready, generation == null ? null : generation.id(),
-                generation == null ? "SNAPSHOT_NOT_READY"
-                        : ready ? null : "ANALYTICS_SCHEMA_TOO_OLD",
-                SUPPLIER_ORGANIZATION_TYPES,
-                "WAREHOUSE_BALANCE_WITH_CONFIRMED_SUPPLIER_ORIGIN");
+    private List<ActiveGeneration> transitGenerations(Scope scope, TransitCalculation config) {
+        if (config.warehouseIds().isEmpty()) return List.of();
+        // One metadata query for the entire independent scope, never one query per SKU.
+        return dao.activeGenerations(scope.sourceDatabase(), config.warehouseIds()).stream()
+                .sorted(Comparator.comparingInt(ActiveGeneration::warehouseId)).toList();
     }
 
     private static PurchasePolicyCapability purchasePolicyCapability(
@@ -389,60 +429,6 @@ public class FolioProductAnalyticsService {
         return new NetworkOrderPolicy(
                 NETWORK_POLICY_WAREHOUSE_ID, warehouseName, generation.id(),
                 status, policy.orderAllowed(), policy);
-    }
-
-    private static InTransitStock inTransitStock(
-            ActiveGeneration generation, TransitRow row) {
-        String warehouseName = generation == null ? TRANSIT_WAREHOUSE_NAME
-                : label(generation.warehouseName(), TRANSIT_WAREHOUSE_ID);
-        if (generation == null) {
-            return new InTransitStock(TRANSIT_WAREHOUSE_ID, warehouseName, null,
-                    "SNAPSHOT_NOT_READY", null, null, null, null, null,
-                    null, null, List.of());
-        }
-        if (generation.analyticsSchemaVersion() != SCHEMA_VERSION) {
-            return new InTransitStock(TRANSIT_WAREHOUSE_ID, warehouseName, generation.id(),
-                    "ANALYTICS_SCHEMA_TOO_OLD", null, null, null, null, null,
-                    null, null, List.of());
-        }
-        if (row == null) {
-            return new InTransitStock(TRANSIT_WAREHOUSE_ID, warehouseName, generation.id(),
-                    "SKU_NOT_PRESENT", false, BigDecimal.ZERO, BigDecimal.ZERO,
-                    BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                    null, List.of());
-        }
-        String status;
-        Boolean confirmed;
-        BigDecimal availableForPlanning = null;
-        if (row.physicalQuantity().signum() < 0) {
-            status = "NEGATIVE_TRANSIT_STOCK";
-            confirmed = false;
-        } else if (row.physicalQuantity().signum() == 0) {
-            status = "NO_IN_TRANSIT_STOCK";
-            confirmed = true;
-            availableForPlanning = BigDecimal.ZERO;
-        } else if (row.openingQuantity().signum() > 0) {
-            status = "OPENING_BALANCE_UNATTRIBUTED";
-            confirmed = false;
-        } else if (row.inboundCount() == 0) {
-            status = "NO_CONFIRMED_INBOUND";
-            confirmed = false;
-        } else if (row.supplierInboundCount() != row.inboundCount()) {
-            status = "MIXED_ORIGIN";
-            confirmed = false;
-        } else {
-            status = "CONFIRMED_SUPPLIER_ORIGIN";
-            confirmed = true;
-            availableForPlanning = row.availableQuantity().max(BigDecimal.ZERO);
-        }
-        List<TransitSupplier> suppliers = row.suppliers().stream()
-                .map(value -> new TransitSupplier(value.code(), value.name(),
-                        value.receiptQuantity(), value.lastReceiptDate()))
-                .toList();
-        return new InTransitStock(TRANSIT_WAREHOUSE_ID, warehouseName, generation.id(),
-                status, confirmed, row.physicalQuantity(), row.reservedQuantity(),
-                row.availableQuantity(), availableForPlanning, row.openingQuantity(),
-                row.lastSupplierReceiptDate(), suppliers);
     }
 
     private static Period period(FolioProductAnalyticsQueryRequest.Period requested,
@@ -775,10 +761,12 @@ public class FolioProductAnalyticsService {
                 compatible, true, List.of(), compatible ? null : unavailableReason));
         for (String key : List.of("brands", "salesManagerCodes",
                 "sourceWarehouseIds", "destinationWarehouseIds", "scmSupplierTerms",
-                "openSupplierOrders", "xyz", "dailyStockout")) {
+                "openSupplierOrders", "xyz")) {
             result.put(key, new FilterCapability(false, true, List.of(),
                     "SOURCE_NOT_CONFIRMED"));
         }
+        result.put("dailyStockout", new FilterCapability(compatible, false, List.of(),
+                compatible ? null : unavailableReason));
         return Map.copyOf(result);
     }
 
@@ -786,22 +774,58 @@ public class FolioProductAnalyticsService {
         return name == null || name.isBlank() ? "Warehouse " + id : name;
     }
 
-    private static int decodeOffset(String cursor) {
+    private static int decodeOffset(String cursor, String expectedScope) {
         if (cursor == null || cursor.isBlank()) return 0;
         try {
             String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
-            if (!decoded.startsWith("offset:")) throw new IllegalArgumentException();
-            int offset = Integer.parseInt(decoded.substring(7));
+            String[] pieces = decoded.split(":");
+            if (pieces.length != 3 || !pieces[0].equals("v5")) throw new IllegalArgumentException();
+            if (!pieces[1].equals(expectedScope)) throw new FolioProductAnalyticsException(
+                    "ANALYTICS_CURSOR_EXPIRED", HttpStatus.CONFLICT,
+                    "Snapshot generations, filters or warehouse groups changed; restart pagination/export");
+            int offset = Integer.parseInt(pieces[2]);
             if (offset < 0) throw new IllegalArgumentException();
             return offset;
+        } catch (FolioProductAnalyticsException error) {
+            throw error;
         } catch (RuntimeException error) {
             throw error("UNSUPPORTED_FILTER_VALUE", "Invalid page cursor");
         }
     }
 
-    private static String encodeOffset(int offset) {
+    private static String encodeOffset(int offset, String scope) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(
-                ("offset:" + offset).getBytes(StandardCharsets.UTF_8));
+                ("v5:" + scope + ":" + offset).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String cursorScope(Object applied, List<SortSpec> sort, List<ActiveGeneration> generations,
+                                      ActiveGeneration network, List<ActiveGeneration> transit) {
+        try {
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+                    .enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
+            byte[] input = mapper.writeValueAsBytes(java.util.Arrays.asList(applied, sort, generations, network, transit));
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(input));
+        } catch (java.io.IOException | java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("Could not bind analytics cursor to snapshot", e);
+        }
+    }
+
+    private static Availability availabilityValue(Map<String, Availability> values, String sku, long days) {
+        return values == null ? unavailable("DATA_INCOMPLETE", days)
+                : values.getOrDefault(sku, unavailable("DATA_INCOMPLETE", days));
+    }
+
+    private static Availability groupAvailability(Availability value) {
+        // A group has no single minimum stock, including a temporarily one-member group.
+        return new Availability(value.status(), value.basis(), value.eligible(), null,
+                value.periodDays(), value.eligibleDays(), value.availableDays(), value.stockoutDays(),
+                value.availabilityPercent(), value.stockoutPercent(), value.warnings());
+    }
+
+    private static Availability unavailable(String status, long days) {
+        return new Availability(status, FolioAvailabilityOptions.BASIS, null, null, days,
+                null, null, null, null, null, List.of());
     }
 
     private static FolioProductAnalyticsException error(String code, String message) {
@@ -816,7 +840,8 @@ public class FolioProductAnalyticsService {
             LocalDate from,
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
             LocalDate to) { }
-    private record AppliedCalculation(String abcBasis, boolean includeReturns) { }
+    private record AppliedCalculation(String abcBasis, boolean includeReturns,
+                                      AvailabilityCalculation availability, TransitCalculation transit) { }
     private record AppliedFilters(String sourceDatabase, List<Integer> warehouseIds,
                                   AppliedPeriod period,
                                   String search,
