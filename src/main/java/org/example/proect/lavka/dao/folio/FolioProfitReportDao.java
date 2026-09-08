@@ -30,7 +30,7 @@ public class FolioProfitReportDao {
         return jdbc.query("""
                 SELECT p.UNICUM_PLT, p.N_PLAT_POR, p.DATE_P_POR, p.SUM_POR,
                        p.NOT_NAL, p.ID_SCLAD, p.CODCEL_POR, p.ORG_PREDM,
-                       p.L_NAME_POR, p.VID_DOC, p.DOCUMN_POR
+                       p.L_NAME_POR, p.VID_DOC, p.DOCUMN_POR, p.IST_INF
                   FROM dbo.SCL_PLAT p WITH (NOLOCK)
                  WHERE p.TYPE_POR = 0
                    AND ((p.DATE_P_POR >= ? AND p.DATE_P_POR < ?)
@@ -39,7 +39,9 @@ public class FolioProfitReportDao {
                 """, (rs, rowNum) -> mapPayment(rs),
                 Timestamp.valueOf(monthStart.atStartOfDay()),
                 Timestamp.valueOf(nextMonthStart.atStartOfDay()),
-                "%" + explicitPeriodMarker + "%");
+                // Deliberately broad candidate match: Java resolves Unicode whitespace,
+                // boundaries and invalid markers. Keep explicit periods outside the date window.
+                "%" + explicitPeriodMarker.replace(" ", "%") + "%");
     }
 
     public List<GrossMarginRow> findGrossMargins(LocalDate monthStart, LocalDate nextMonthStart) {
@@ -245,7 +247,8 @@ public class FolioProfitReportDao {
                 trim(rs.getString("ORG_PREDM")),
                 trim(rs.getString("L_NAME_POR")),
                 trim(rs.getString("VID_DOC")),
-                trim(rs.getString("DOCUMN_POR"))
+                trim(rs.getString("DOCUMN_POR")),
+                trim(rs.getString("IST_INF"))
         );
     }
 
@@ -285,8 +288,15 @@ public class FolioProfitReportDao {
             String expenseCode,
             String name,
             String documentClass,
-            String note
+            String note,
+            String sourceInfo
     ) {
+        public PaymentRow(long paymentId, String documentNumber, LocalDate documentDate, BigDecimal amount,
+                boolean bank, Integer warehouseId, String purposeCode, String expenseCode, String name,
+                String documentClass, String note) {
+            this(paymentId, documentNumber, documentDate, amount, bank, warehouseId, purposeCode,
+                    expenseCode, name, documentClass, note, null);
+        }
     }
 
     public record GrossMarginRow(

@@ -8,6 +8,41 @@
 
 ## API
 
+### Дополнение 2026-09-08: детализация и периоды
+
+После деплоя Java с `ruleVersion=2026-09-08.1` использовать новый раздел
+[API: детальные строки и аудит](FOLIO_PROFIT_REPORT_API.md#детальные-строки-и-аудит-версия-2026-09-081).
+Канонические поля и все 32 `lineId` перечислены там; не копировать классификатор
+в PHP/JS. Денежные/decimal значения результата теперь JSON-строки.
+
+1. В summary и audit показывать `expenseLines`, включая нулевые и ручные
+   строки. `expenses` остаётся старым агрегированным представлением.
+2. Добавить `kyivAdditionalSalary` ≥0, отсутствие → default0; Одесса default5000.
+   Отправлять в обоих запросах одинаковые параметры. Не превращать default
+   прошлого расчёта в override нового месяца; явный0 всегда сохранять.
+3. Показывать `filters` как фактические условия; контрольный `operationTypes`
+   не объявлять обязательным, когда `operationRequired=false`.
+4. `periodDiagnostics[]` содержит вложенный `document` (полный DocumentLine),
+   `status`, `reason`, `includedInTotals`, `amountTreatment`. Проблемные строки
+   не дублируются в `documents`. Для смешанных405 итог остаётся предварительным:
+   не распределять 55/350 и не заменять его нулём на фронте.
+5. При `complete=false` явно помечать итог как требующий проверки. Показывать
+   `controls.provisionalDocumentAmount` и `provisionalOperatingExpenseTotal`,
+   а также `periodProblemCount`; это части уже показанного итога, не добавки.
+6. Выводить отдельно `periodDiagnosticsTruncated`, `controls.auditTruncated`,
+   `masterClass.auditTruncated`. Не называть ограниченную выгрузку полной.
+7. Детализация строки связана через `expenseLineIds`; основной идентификатор
+   налогового документа `SHARED_TAX_*` не является строкой конкретного города.
+   Городские распределения брать из Java, не делить пул заново.
+8. В аудите выводить безопасные `sourceInfo`, `periodNote`, `periodStatus`,
+   `resolvedMonth`/`periodSource`, ставки и allocations. `paymentId` не заменять
+   номером документа. МК остаётся в отдельном `masterClassDocuments`.
+
+SQL/миграции ФОЛИО для этой доработки не нужны. Production и WordPress этим
+изменением Java не обновлялись; повторную сверку API выполнять после деплоя.
+
+### Существующие endpoints
+
 - краткий отчёт: `GET /admin/folio/profit-report?month=YYYY-MM`;
 - отчёт с реестром: `GET /admin/folio/profit-report/audit?month=YYYY-MM`;
 - полное описание: [FOLIO_PROFIT_REPORT_API.md](FOLIO_PROFIT_REPORT_API.md).
@@ -21,6 +56,7 @@
 | `odesaMasterClassIncome` | deprecated | Не отправлять: backend игнорирует старое ручное значение |
 | `odesaMasterClassReturn` | deprecated | Не отправлять: backend игнорирует старое ручное значение |
 | `odesaAdditionalSalary` | money ≥ 0 | Необязательное переопределение серверных `5000.00`; явный `0` допустим |
+| `kyivAdditionalSalary` | money ≥ 0 | Дополнительные работы Киева, default `0.00`; источник значения в inputs |
 | `kyivStockWarehouseIds` | integer[] | Склады, участвующие в остатках Киева; default `1,7,12` |
 | `odesaStockWarehouseIds` | integer[] | Склады, участвующие в остатках Одессы; default `5` |
 

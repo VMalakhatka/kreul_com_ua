@@ -25,6 +25,7 @@ public class FolioProfitReportController {
     @GetMapping
     public ResponseEntity<FolioProfitReportResponse> report(
             @RequestParam String month,
+            @RequestParam(required = false) BigDecimal kyivAdditionalSalary,
             @RequestParam(required = false) BigDecimal odesaTaxShare,
             @RequestParam(required = false) BigDecimal rubToUahRate,
             @RequestParam(required = false) BigDecimal odesaMasterClassIncome,
@@ -32,7 +33,7 @@ public class FolioProfitReportController {
             @RequestParam(required = false) BigDecimal odesaAdditionalSalary,
             @RequestParam(required = false) List<Integer> kyivStockWarehouseIds,
             @RequestParam(required = false) List<Integer> odesaStockWarehouseIds) {
-        return ResponseEntity.ok(service.calculate(request(month, odesaTaxShare, rubToUahRate,
+        return ResponseEntity.ok(service.calculate(request(month, kyivAdditionalSalary, odesaTaxShare, rubToUahRate,
                 odesaMasterClassIncome, odesaMasterClassReturn, odesaAdditionalSalary,
                 kyivStockWarehouseIds, odesaStockWarehouseIds), false));
     }
@@ -40,6 +41,7 @@ public class FolioProfitReportController {
     @GetMapping("/audit")
     public ResponseEntity<FolioProfitReportResponse> audit(
             @RequestParam String month,
+            @RequestParam(required = false) BigDecimal kyivAdditionalSalary,
             @RequestParam(required = false) BigDecimal odesaTaxShare,
             @RequestParam(required = false) BigDecimal rubToUahRate,
             @RequestParam(required = false) BigDecimal odesaMasterClassIncome,
@@ -47,13 +49,14 @@ public class FolioProfitReportController {
             @RequestParam(required = false) BigDecimal odesaAdditionalSalary,
             @RequestParam(required = false) List<Integer> kyivStockWarehouseIds,
             @RequestParam(required = false) List<Integer> odesaStockWarehouseIds) {
-        return ResponseEntity.ok(service.calculate(request(month, odesaTaxShare, rubToUahRate,
+        return ResponseEntity.ok(service.calculate(request(month, kyivAdditionalSalary, odesaTaxShare, rubToUahRate,
                 odesaMasterClassIncome, odesaMasterClassReturn, odesaAdditionalSalary,
                 kyivStockWarehouseIds, odesaStockWarehouseIds), true));
     }
 
     private static Request request(
             String month,
+            BigDecimal kyivAdditionalSalary,
             BigDecimal odesaTaxShare,
             BigDecimal rubToUahRate,
             BigDecimal odesaMasterClassIncome,
@@ -63,6 +66,6 @@ public class FolioProfitReportController {
             List<Integer> odesaStockWarehouseIds) {
         return new Request(month, odesaTaxShare, rubToUahRate,
                 odesaMasterClassIncome, odesaMasterClassReturn, odesaAdditionalSalary,
-                kyivStockWarehouseIds, odesaStockWarehouseIds);
+                kyivStockWarehouseIds, odesaStockWarehouseIds, kyivAdditionalSalary);
     }
 }

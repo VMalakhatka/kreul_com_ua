@@ -17,6 +17,9 @@ import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.MasterClassD
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.MasterClassSummary;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.Warning;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.WarehouseInventoryResult;
+import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.PeriodDiagnostic;
+import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.PeriodPolicy;
+import org.example.proect.lavka.service.folio.FolioExpensePeriod.Resolution;
 import org.example.proect.lavka.property.FolioProfitReportProperties;
 import org.example.proect.lavka.service.folio.FolioProfitClassifier.Category;
 import org.example.proect.lavka.service.folio.FolioProfitClassifier.City;
@@ -40,13 +43,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Service
 public class FolioProfitReportService {
 
-    private static final String RULE_VERSION = "2026-09-05.1";
+    private static final String RULE_VERSION = "2026-09-08.1";
     private static final String REPORT_CURRENCY = "UAH";
     private static final String MASTER_CLASS_SOURCE = "FOLIO_SCL_NAKL_SCL_MOVE";
     private static final String AMOUNT_SOURCE = "SCL_MOVE.SUM_PREDM";
@@ -67,7 +68,6 @@ public class FolioProfitReportService {
             "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u043e\u043a\u0442\u044f\u0431\u0440\u044c",
             "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u043d\u043e\u044f\u0431\u0440\u044c",
             "\u041c\u0430\u0441\u0442\u0435\u0440-\u041a\u043b\u0430\u0441\u0441 \u0434\u0435\u043a\u0430\u0431\u0440\u044c");
-    private static final Pattern EXPLICIT_PERIOD = Pattern.compile("(?<!\\d)(\\d{4})\\s+(0[1-9]|1[0-2])(?!\\d)");
     private static final DateTimeFormatter FOLIO_PERIOD = DateTimeFormatter.ofPattern("yyyy MM");
     private static final ZoneId REPORT_ZONE = ZoneId.of("Europe/Kyiv");
     private static final BigDecimal QUANTITY_EPSILON = new BigDecimal("0.000001");
@@ -104,6 +104,9 @@ public class FolioProfitReportService {
                 "ODESA_ADDITIONAL_SALARY_INVALID");
         String additionalSalarySource = request.odesaAdditionalSalary() == null
                 ? "DEFAULT" : "REQUEST_OVERRIDE";
+        BigDecimal kyivAdditionalSalary = optionalNonNegative(request.kyivAdditionalSalary(),
+                "KYIV_ADDITIONAL_SALARY_INVALID");
+        String kyivSalarySource = request.kyivAdditionalSalary() == null ? "DEFAULT" : "REQUEST_OVERRIDE";
         List<Integer> kyivStockWarehouseIds = warehouseIdsOrDefault(
                 request.kyivStockWarehouseIds(), properties.getKyivWarehouseIds(), "kyivStockWarehouseIds");
         List<Integer> odesaStockWarehouseIds = warehouseIdsOrDefault(
@@ -112,7 +115,12 @@ public class FolioProfitReportService {
         assertWarehousesDoNotOverlap(kyivStockWarehouseIds, odesaStockWarehouseIds);
 
         List<Warning> warnings = new ArrayList<>();
-        List<ResolvedPayment> resolved = resolvePayments(month, rubRate, warnings);
+        List<PeriodDiagnostic> periodDiagnostics = new ArrayList<>();
+        PaymentResolution paymentResolution = resolvePayments(month, rubRate, taxShare, periodDiagnostics);
+        List<ResolvedPayment> resolved = paymentResolution.included();
+        if (paymentResolution.problemCount() > 0) warnings.add(warning("EXPENSE_PERIOD_REVIEW_REQUIRED",
+                "Есть повреждённые или смешанные периоды: итог предварительный; см. periodDiagnostics",
+                Map.of("count", paymentResolution.problemCount())));
         List<GrossMarginRow> grossRows = dao.findGrossMargins(month.atDay(1), month.plusMonths(1).atDay(1));
         MasterClassComputation masterClass = calculateMasterClass(month, includeDocuments, warnings);
         InventoryComputation inventory = calculateInventory(
@@ -120,6 +128,7 @@ public class FolioProfitReportService {
 
         Map<SummaryKey, SummaryAccumulator> summaries = new LinkedHashMap<>();
         Map<String, BigDecimal> taxPools = new LinkedHashMap<>();
+        FolioProfitExpenseLines lines = new FolioProfitExpenseLines();
         BigDecimal selectedAmount = BigDecimal.ZERO;
         BigDecimal capitalizedTotal = BigDecimal.ZERO;
         BigDecimal excludedTotal = BigDecimal.ZERO;
@@ -128,6 +137,7 @@ public class FolioProfitReportService {
 
         for (ResolvedPayment payment : resolved) {
             ClassifiedPayment classified = payment.classified();
+            lines.add(classified, taxShare);
             selectedAmount = selectedAmount.add(classified.reportAmount());
             if (classified.treatment() == Treatment.TAX_POOL) {
                 boolean allocated = allocateTax(classified, taxShare, summaries, taxPools, warnings);
@@ -151,6 +161,10 @@ public class FolioProfitReportService {
 
         addSummary(summaries, City.ODESA, Category.SALARY, Treatment.OPERATING_EXPENSE,
                 additionalSalary, additionalSalary, 0);
+        addSummary(summaries, City.KYIV, Category.SALARY, Treatment.OPERATING_EXPENSE,
+                kyivAdditionalSalary, kyivAdditionalSalary, 0);
+        lines.manual("KYIV_ADDITIONAL_SALARY", kyivAdditionalSalary, kyivSalarySource);
+        lines.manual("ODESA_ADDITIONAL_SALARY", additionalSalary, additionalSalarySource);
 
         if (unclassifiedCount > 0) {
             warnings.add(warning("UNCLASSIFIED_DOCUMENTS",
@@ -203,11 +217,14 @@ public class FolioProfitReportService {
         );
 
         List<DocumentLine> documents = includeDocuments
-                ? resolved.stream().limit(properties.getMaxAuditDocuments()).map(this::toDocumentLine).toList()
+                ? resolved.stream().filter(p -> !p.period().problem()).limit(properties.getMaxAuditDocuments())
+                    .map(p -> toDocumentLine(p, taxShare, rubRate, true)).toList()
                 : List.of();
-        boolean auditTruncated = includeDocuments && resolved.size() > properties.getMaxAuditDocuments();
+        boolean auditTruncated = includeDocuments && resolved.stream().filter(p -> !p.period().problem()).count()
+                > properties.getMaxAuditDocuments();
         BigDecimal operatingTotal = money(kyivExpenses.add(odesaExpenses));
         boolean complete = unclassifiedCount == 0
+                && paymentResolution.problemCount() == 0
                 && masterClass.valid()
                 && inventory.negativeClosingPositionCount() == 0
                 && inventory.zeroValueClosingPositionCount() == 0;
@@ -221,7 +238,7 @@ public class FolioProfitReportService {
                 new Inputs(taxShare, "REGISTERED_EMPLOYEE_SHARE", rubRate,
                         null, null, additionalSalary, additionalSalarySource,
                         List.copyOf(properties.getKyivWarehouseIds()), List.of(properties.getOdesaWarehouseId()),
-                        kyivStockWarehouseIds, odesaStockWarehouseIds),
+                        kyivStockWarehouseIds, odesaStockWarehouseIds, kyivAdditionalSalary, kyivSalarySource),
                 cities,
                 inventory.results(),
                 expenseRows,
@@ -230,8 +247,21 @@ public class FolioProfitReportService {
                 masterClass.documents(),
                 new Controls(resolved.size(), money(selectedAmount), operatingTotal, money(capitalizedTotal),
                         money(excludedTotal), money(unclassifiedTotal), unclassifiedCount, auditTruncated,
-                        Map.copyOf(taxPools)),
-                List.copyOf(warnings)
+                        Map.copyOf(taxPools), paymentResolution.diagnosticCount(), paymentResolution.problemCount(),
+                        (int) resolved.stream().filter(p -> p.period().problem()).count(),
+                        money(resolved.stream().filter(p -> p.period().problem()).map(p -> p.classified().reportAmount())
+                                .reduce(BigDecimal.ZERO, BigDecimal::add)),
+                        money(resolved.stream().filter(p -> p.period().problem()).map(p -> {
+                            var a = FolioProfitExpenseLines.allocation(p.classified(), taxShare);
+                            return a.kyiv().add(a.odesa());
+                        }).reduce(BigDecimal.ZERO, BigDecimal::add))),
+                List.copyOf(warnings),
+                lines.rows(),
+                new PeriodPolicy(month.minusMonths(1).atDay(1), month.plusMonths(2).atDay(1), true,
+                        "Все расходы: M-1/M/M+1 и явные маркеры вне окна. Ошибочные периоды требуют проверки; "
+                        + "прежнее влияние сохранено как предварительное, без распределения смешанных сумм."),
+                List.copyOf(periodDiagnostics),
+                paymentResolution.diagnosticCount() > periodDiagnostics.size()
         );
     }
 
@@ -507,39 +537,31 @@ public class FolioProfitReportService {
         }
     }
 
-    private List<ResolvedPayment> resolvePayments(YearMonth target, BigDecimal rubRate, List<Warning> warnings) {
+    private PaymentResolution resolvePayments(YearMonth target, BigDecimal rubRate, BigDecimal taxShare,
+            List<PeriodDiagnostic> diagnostics) {
         List<PaymentRow> candidates = dao.findPaymentCandidates(
-                target.atDay(1), target.plusMonths(1).atDay(1), target.format(FOLIO_PERIOD));
+                target.minusMonths(1).atDay(1), target.plusMonths(2).atDay(1), target.format(FOLIO_PERIOD));
         List<ResolvedPayment> result = new ArrayList<>();
+        int problemCount = 0;
+        int diagnosticCount = 0;
         for (PaymentRow row : candidates) {
-            PeriodResolution period = resolvePeriod(row);
-            if (period.ambiguous()) {
-                warnings.add(warning("AMBIGUOUS_EXPLICIT_PERIOD",
-                        "В примечании документа найдено несколько разных отчётных месяцев; документ исключён",
-                        Map.of("paymentId", row.paymentId(), "documentNumber", safe(row.documentNumber()))));
-                continue;
+            Resolution period = FolioExpensePeriod.resolve(row.note(), row.documentDate());
+            ResolvedPayment payment = new ResolvedPayment(row, classifier.classify(row, rubRate), period);
+            boolean included = !period.excluded() && target.equals(period.month());
+            if (period.problem()) problemCount++;
+            if (period.problem() || !included) {
+                diagnosticCount++;
+                if (diagnostics.size() < properties.getMaxAuditDocuments()) {
+                    diagnostics.add(new PeriodDiagnostic(toDocumentLine(payment, taxShare, rubRate, included),
+                            period.problem() ? period.status() : "OUTSIDE_REPORT_MONTH",
+                            period.problem() ? "Период требует ручной проверки; автоматическое распределение не выполнено"
+                                    : "Разрешённый месяц не совпадает с отчётным",
+                            included, included ? "LEGACY_PROVISIONAL_INCLUDED" : "EXCLUDED"));
+                }
             }
-            if (!target.equals(period.month())) {
-                continue;
-            }
-            result.add(new ResolvedPayment(row, classifier.classify(row, rubRate), period));
+            if (included) result.add(payment);
         }
-        return result;
-    }
-
-    private static PeriodResolution resolvePeriod(PaymentRow row) {
-        Matcher matcher = EXPLICIT_PERIOD.matcher(safe(row.note()));
-        Set<YearMonth> periods = new LinkedHashSet<>();
-        while (matcher.find()) {
-            periods.add(YearMonth.of(Integer.parseInt(matcher.group(1)), Integer.parseInt(matcher.group(2))));
-        }
-        if (periods.size() > 1) {
-            return new PeriodResolution(periods.iterator().next(), "EXPLICIT_NOTE", true);
-        }
-        if (periods.size() == 1) {
-            return new PeriodResolution(periods.iterator().next(), "EXPLICIT_NOTE", false);
-        }
-        return new PeriodResolution(YearMonth.from(row.documentDate()), "DOCUMENT_DATE", false);
+        return new PaymentResolution(result, problemCount, diagnosticCount);
     }
 
     private boolean allocateTax(
@@ -603,17 +625,31 @@ public class FolioProfitReportService {
                 key.treatment().name(), money(value.amount), money(value.profitImpact), value.documentCount);
     }
 
-    private DocumentLine toDocumentLine(ResolvedPayment resolved) {
+    private DocumentLine toDocumentLine(ResolvedPayment resolved, BigDecimal taxShare, BigDecimal rubRate,
+            boolean includedInTotals) {
         PaymentRow row = resolved.source();
         ClassifiedPayment classified = resolved.classified();
+        var allocation = FolioProfitExpenseLines.allocation(classified, taxShare);
+        BigDecimal impact = includedInTotals ? allocation.kyiv().add(allocation.odesa()) : money(BigDecimal.ZERO);
+        List<String> ids = FolioProfitExpenseLines.lineIds(classified);
         return new DocumentLine(
                 row.paymentId(), row.documentNumber(), row.documentDate(), resolved.period().month().toString(),
                 resolved.period().source(), row.bank() ? "BANK" : "CASH", row.warehouseId(),
                 row.purposeCode(), row.expenseCode(), row.name(), row.documentClass(), money(row.amount()),
                 classified.sourceCurrency(), classified.reportAmount(), REPORT_CURRENCY, classified.city().name(),
                 classified.category().name(), classified.treatment().name(),
-                classified.treatment() == Treatment.OPERATING_EXPENSE || classified.treatment() == Treatment.TAX_POOL,
-                classified.reason());
+                includedInTotals && allocation.operating(),
+                classified.reason(), FolioProfitExpenseLines.documentLineId(classified), ids, safeSourceInfo(row.sourceInfo()),
+                resolved.period().evidence(), resolved.period().status(),
+                resolved.period().problem() ? List.of(resolved.period().status()) : List.of(),
+                money(impact), includedInTotals ? allocation.kyiv() : money(BigDecimal.ZERO),
+                includedInTotals ? allocation.odesa() : money(BigDecimal.ZERO),
+                "RUB".equals(classified.sourceCurrency()) ? rubRate : BigDecimal.ONE);
+    }
+
+    private static String safeSourceInfo(String value) {
+        // IST_INF is a short classification label, not a place for payment credentials.
+        return value != null && value.matches("[\\p{L}\\p{N}№ ._-]{1,32}") ? value.trim() : null;
     }
 
     private static BigDecimal profitImpact(ClassifiedPayment classified) {
@@ -710,15 +746,19 @@ public class FolioProfitReportService {
             BigDecimal odesaMasterClassReturn,
             BigDecimal odesaAdditionalSalary,
             List<Integer> kyivStockWarehouseIds,
-            List<Integer> odesaStockWarehouseIds
+            List<Integer> odesaStockWarehouseIds,
+            BigDecimal kyivAdditionalSalary
     ) {
+        public Request(String month, BigDecimal taxShare, BigDecimal rubRate, BigDecimal mkIncome,
+                BigDecimal mkReturn, BigDecimal odesaSalary, List<Integer> kyivStock, List<Integer> odesaStock) {
+            this(month, taxShare, rubRate, mkIncome, mkReturn, odesaSalary, kyivStock, odesaStock, null);
+        }
     }
 
-    private record ResolvedPayment(PaymentRow source, ClassifiedPayment classified, PeriodResolution period) {
+    private record ResolvedPayment(PaymentRow source, ClassifiedPayment classified, Resolution period) {
     }
 
-    private record PeriodResolution(YearMonth month, String source, boolean ambiguous) {
-    }
+    private record PaymentResolution(List<ResolvedPayment> included, int problemCount, int diagnosticCount) {}
 
     private record SummaryKey(City city, Category category, Treatment treatment) {
     }
