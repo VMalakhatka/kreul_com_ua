@@ -26,7 +26,8 @@ public record FolioProfitReportResponse(
         List<ExpenseLine> expenseLines,
         PeriodPolicy periodPolicy,
         List<PeriodDiagnostic> periodDiagnostics,
-        boolean periodDiagnosticsTruncated
+        boolean periodDiagnosticsTruncated,
+        Map<String, SectionStatus> sections
 ) {
     public record Inputs(
             @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal odesaTaxShare,
@@ -209,4 +210,6 @@ public record FolioProfitReportResponse(
 
     public record PeriodDiagnostic(DocumentLine document, String status, String reason,
             boolean includedInTotals, String amountTreatment) {}
+
+    public record SectionStatus(String status, String errorCode, String errorId, String message) {}
 }

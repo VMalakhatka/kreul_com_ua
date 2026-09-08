@@ -2,6 +2,8 @@ package org.example.proect.lavka.dao.folio;
 
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.core.ArgumentPreparedStatementSetter;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
@@ -27,7 +29,7 @@ public class FolioProfitReportDao {
             LocalDate monthStart,
             LocalDate nextMonthStart,
             String explicitPeriodMarker) {
-        return jdbc.query("""
+        return query("""
                 SELECT p.UNICUM_PLT, p.N_PLAT_POR, p.DATE_P_POR, p.SUM_POR,
                        p.NOT_NAL, p.ID_SCLAD, p.CODCEL_POR, p.ORG_PREDM,
                        p.L_NAME_POR, p.VID_DOC, p.DOCUMN_POR, p.IST_INF
@@ -45,7 +47,7 @@ public class FolioProfitReportDao {
     }
 
     public List<GrossMarginRow> findGrossMargins(LocalDate monthStart, LocalDate nextMonthStart) {
-        return jdbc.query("""
+        return query("""
                 SELECT m.ID_SCLAD,
                        ISNULL(o.MY_ORGANIZ, '') AS ORG_TYPE,
                        n.VOZVRAT_PR,
@@ -73,12 +75,12 @@ public class FolioProfitReportDao {
     }
 
     public boolean masterClassArticleExists(String sku) {
-        Integer count = jdbc.queryForObject("""
+        List<Integer> counts = query("""
                 SELECT COUNT(*)
                   FROM dbo.ALL_ARTC a WITH (NOLOCK)
                  WHERE a.COD_ARTIC = ?
-                """, Integer.class, sku);
-        return count != null && count > 0;
+                """, (rs, rowNum) -> rs.getInt(1), sku);
+        return !counts.isEmpty() && counts.get(0) > 0;
     }
 
     public List<MasterClassMovementRow> findMasterClassMovements(
@@ -86,7 +88,7 @@ public class FolioProfitReportDao {
             String sku,
             LocalDate monthStart,
             LocalDate nextMonthStart) {
-        return jdbc.query("""
+        return query("""
                 SELECT m.RECNO, n.UNICUM_NUM, n.N_PLAT_POR,
                        ISNULL(n.DOPN_SCHET, '') AS DOPN_SCHET,
                        m.NUM_PREDMT, n.DATE_P_POR, m.ID_SCLAD, m.NAME_PREDM,
@@ -146,7 +148,7 @@ public class FolioProfitReportDao {
                  ORDER BY ID_SCLAD
                 """.formatted(placeholders(warehouseIds.size()));
         Map<Integer, String> result = new LinkedHashMap<>();
-        jdbc.query(sql, (org.springframework.jdbc.core.RowCallbackHandler) rs ->
+        query(sql, (rs, rowNum) ->
                 result.put(rs.getInt("ID_SCLAD"), trim(rs.getString("NAME_SCLAD"))),
                 warehouseIds.toArray());
         return result;
@@ -161,7 +163,7 @@ public class FolioProfitReportDao {
                   FROM dbo.SCL_ARTC a WITH (NOLOCK)
                  WHERE a.ID_SCLAD IN (%s)
                 """.formatted(placeholders(warehouseIds.size()));
-        return jdbc.query(sql, (rs, rowNum) -> new InventoryOpeningRow(
+        return query(sql, (rs, rowNum) -> new InventoryOpeningRow(
                 rs.getInt("ID_SCLAD"),
                 trim(rs.getString("COD_ARTIC")),
                 decimal(rs, "NACH_KOLCH"),
@@ -221,7 +223,7 @@ public class FolioProfitReportDao {
         args.add("П");
         args.add("Р");
         args.addAll(warehouseIds);
-        return jdbc.query(sql, (rs, rowNum) -> new InventoryMovementRow(
+        return query(sql, (rs, rowNum) -> new InventoryMovementRow(
                 rs.getInt("ID_SCLAD"),
                 trim(rs.getString("NAME_PREDM")),
                 decimal(rs, "OPENING_QUANTITY_DELTA"),
@@ -233,6 +235,15 @@ public class FolioProfitReportDao {
 
     private static String placeholders(int count) {
         return String.join(",", java.util.Collections.nCopies(count, "?"));
+    }
+
+    private <T> List<T> query(String sql, RowMapper<T> mapper, Object... args) {
+        FolioProfitReadBudget.remainingQuerySeconds();
+        return jdbc.query(sql, statement -> {
+            // Applied after JdbcTemplate defaults, without mutating the shared template.
+            statement.setQueryTimeout(FolioProfitReadBudget.remainingQuerySeconds());
+            new ArgumentPreparedStatementSetter(args).setValues(statement);
+        }, mapper);
     }
 
     private static PaymentRow mapPayment(ResultSet rs) throws SQLException {

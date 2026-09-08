@@ -213,12 +213,14 @@ class FolioProfitReportServiceTest {
 
     @Test
     void rejectsWarehouseAssignedToBothCities() {
-        assertThatThrownBy(() -> service.calculate(new FolioProfitReportService.Request(
+        var report = service.calculate(new FolioProfitReportService.Request(
                 "2026-07", null, null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                List.of(1, 5), List.of(5)), false))
-                .isInstanceOf(FolioAccountValidationException.class)
-                .extracting(error -> ((FolioAccountValidationException) error).getCode())
-                .isEqualTo("STOCK_WAREHOUSES_OVERLAP");
+                List.of(1, 5), List.of(5)), false);
+        assertThat(report.sections().get("INVENTORY_KYIV").errorCode()).isEqualTo("STOCK_WAREHOUSES_OVERLAP");
+        assertThat(report.sections().get("INVENTORY_ODESA").errorCode()).isEqualTo("STOCK_WAREHOUSES_OVERLAP");
+        assertThat(report.inventory()).isEmpty();
+        assertThat(city(report, "KYIV").profit()).isNotNull();
+        assertThat(report.complete()).isFalse();
     }
 
     @Test void detailedLinesReconcileAndPreservePaymentIdentityAndZeroOverrides() throws Exception {
@@ -309,9 +311,12 @@ class FolioProfitReportServiceTest {
     }
 
     @Test void rejectsNegativeKyivManualAndHandlesYearBoundary() {
-        assertThatThrownBy(() -> service.calculate(new FolioProfitReportService.Request("2026-01", null,
-                null, null, null, null, null, null, new BigDecimal("-1")), false))
-                .isInstanceOf(FolioAccountValidationException.class);
+        var invalid = service.calculate(new FolioProfitReportService.Request("2026-01", null,
+                null, null, null, null, null, null, new BigDecimal("-1")), false);
+        assertThat(invalid.sections().get("EXPENSE_INPUTS").errorCode()).isEqualTo("KYIV_ADDITIONAL_SALARY_INVALID");
+        assertThat(invalid.sections().get("EXPENSES").status()).isEqualTo("UNAVAILABLE");
+        assertThat(city(invalid, "KYIV").operatingExpenses()).isNull();
+        assertThat(city(invalid, "KYIV").profit()).isNull();
         stubEmptyInventory();
         var report = service.calculate(new FolioProfitReportService.Request("2026-01", null, null,
                 null, null, null, null, null), false);
