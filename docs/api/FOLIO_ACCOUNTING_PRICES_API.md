@@ -931,8 +931,194 @@ Native-проход возвращает коды безопасного про�
 `operationDate`, `formula`, `numerator`, `denominator`, `quantityBefore` и
 `movementQuantity`. Java больше не должна получать SQL error 8134 для
 подтверждённых веток средней цены и не использует временный `TIP_TOVR`
-quarantine в штатном production-проходе. Неожиданный сырой 8134 считается
-ошибкой установки/непокрытой веткой и остаётся fail-stop.
+quarantine в штатном production-проходе. Неожиданный сырой 8134 означает
+непокрытую ветку/возможное несовпадение установки. Для native-full он остаётся
+fail-stop. Для native-range с 2026-09-07 добавлен ограниченный fallback ниже.
+
+### Raw Divide by zero: безопасный пропуск в native-range (2026-09-07)
+
+Java продолжает следующий SKU своего явного списка без повторного вызова ошибочного,
+только когда DAO получил 8134/SQLState22012 именно от процедуры, @@TRANCOUNT
+на том же соединении после ошибки положителен и равен исходному, Java владеет
+транзакцией и TransactionTemplate успешно завершил rollback (вернул исходное
+исключение, а не ошибку отката). Проверка @@TRANCOUNT ограничена 10 секундами.
+Текст сообщения без SQL-кода недостаточен; смешанная цепочка неизвестных ошибок
+и потери соединения не разрешает пропуск.
+
+Если граница/rollback не подтверждены: OUTCOME_UNKNOWN,
+NATIVE_ARITHMETIC_ROLLBACK_UNCONFIRMED, без автоматического retry.
+Неизвестные SQL-ошибки и native-full не преобразуются в обычные пропуски.
+SQL-сессионные настройки для подавления арифметических ошибок не меняются.
+
+Warning ACCOUNTING_PRICE_DIVIDE_BY_ZERO содержит details: sku, warehouseId,
+sourceDatabase, jobId, stage=FOLIO_PROCEDURE_CALL, вызванную procedure,
+accountingMethod, committed=false, rollbackConfirmed=true, skipped=true,
+транзакционные счётчики, sqlErrors[] (errorCode/sqlState/message), recommendation.
+Дополнительный read-only inspect одного SKU после отката даёт
+currentStateAfterRollback, inspectionWarnings/inspectionErrors, включая найденные
+документы/остатки. Если inspect не удался, передаётся inspectionError.
+
+SQL Server/jTDS может не сообщить выражение/строку процедуры/документ:
+diagnosticStatus=SQL_DIVISION_CONFIRMED_EXPRESSION_NOT_REPORTED,
+formulaConfirmed=false, documentConfirmed=false. Найденные инспекцией документы
+— **кандидаты**, не доказательство причины деления. Не советовать корректировку
+конкретного документа до подтверждения формулы в лаборатории.
+
+Пропуск увеличивает processedSku, но не committedChunks. returnCode/currentUnits
+предыдущего SKU не выдаются за результат упавшей процедуры. Конец порции —
+COMPLETED_WITH_WARNINGS / PREVIEW_READY_WITH_WARNINGS. failedChunk может отсутствовать:
+данные безопасно пропущенного SKU находятся в warnings.
+
+### Безопасная пауза после SQL-блокировки native-range (2026-09-08)
+
+Для `applyMode=SAFE_APPLY_ONLY` terminal status может содержать точный код
+`FOLIO_LOCK_BUSY_RETRYABLE_AFTER_SNAPSHOT`. Это **разрешение оркестратору на
+отложенное продолжение через новый snapshot**, а не повтор прежнего POST.
+
+```json
+{
+  "running": false,
+  "status": "FAILED_PARTIAL",
+  "errorCode": "FOLIO_LOCK_BUSY_RETRYABLE_AFTER_SNAPSHOT",
+  "jobId": "original-job-uuid",
+  "processedSku": 123,
+  "committedChunks": 123,
+  "request": {
+    "warehouseId": 10,
+    "previewOnly": false,
+    "confirmApply": true,
+    "applyMode": "SAFE_APPLY_ONLY",
+    "skus": ["original-selection"]
+  },
+  "error": "Folio lock conflict for SKU ...; current transaction rolled back before commit",
+  "recommendation": "Wait and continue through a fresh product snapshot."
+}
+```
+
+Если ранних commit нет — `FAILED`; иначе `FAILED_PARTIAL`.
+`failedChunk` отсутствует. Сохраняются исходные request, jobId, counters и
+`lastCommittedArt`. Незавершённый SKU не увеличивает `processedSku`/`committedChunks`,
+не получает `FAILED` из-за одной временной блокировки и не теряется из отбора
+после нового snapshot. `returnCode` и procedure-unit поля предыдущего товара
+не выдаются за результат блокировки. Terminal status стабилен до следующего
+запуска в том же Java-процессе; это не журнал восстановления после рестарта.
+
+Код разрешён только когда одновременно доказано:
+
+1. Ошибка именно SQL Server **1222** (lock timeout) или **1205** (deadlock victim),
+   возможно с сопутствующей 3621. Анализируется SQL-код/цепочка исключений,
+   **никогда текст сообщения**. SQLState `08*`, смешанные неизвестные ошибки,
+   обычный query timeout и один `CannotAcquireLockException` без SQL-кода не подходят.
+2. Ошибка возникла внутри callback текущего SKU, до commit; callback принадлежит
+   новой Spring-транзакции, rollback вернул управление без ошибки и наружу
+   вышло именно исходное callback-исключение.
+3. Проверена граница на том же JDBC-соединении: для SAFE `@@TRANCOUNT` сохранён,
+   либо после SQL 1205 стал 0. При блокировке до SAFE ещё не было изменений;
+   после успешного SAFE требуется ранее проверенный OUT-контракт и граница.
+   Неизвестная граница — `OUTCOME_UNKNOWN` + `NATIVE_LOCK_ROLLBACK_UNCONFIRMED`.
+4. У **каждого** ранее сохранённого SKU успешно прошёл postcheck, получен полный
+   fingerprint и подтверждена запись VERIFIED в MariaDB. Пустой/неполный capture,
+   пропущенный row, ошибка записи или конкурентное изменение такого SKU запрещают код.
+
+Эта финальная проверка — существующий protected-state/fingerprint postcheck
+выбранного набора и его публикация, не полный экономический snapshot.
+После паузы WordPress всё равно обязан построить свежий product snapshot.
+SQL 1205 откатывает транзакцию жертвы; SQL 1222 сам по себе такого доказательства
+не даёт — Java требует подтверждения своего rollback.
+Справка: [SQL 1222](https://learn.microsoft.com/en-us/sql/relational-databases/errors-events/mssqlserver-1222-database-engine-error),
+[deadlock victim rollback](https://learn.microsoft.com/en-us/sql/relational-databases/sql-server-deadlocks-guide).
+
+Потеря связи при commit/rollback, restart, rejected OUT, нарушения инвариантов,
+арифметика и бизнес-ошибки **не** превращаются в retryable lock.
+Блокировки при исходном baseline или финальной проверке, без доказательства
+транзакции текущего SKU, также не получают этот код. В первом релизе не включать
+автоповтор по нему для preview, native-full или двухпроходного apply.
+
+WordPress при точном коде освобождает ecosystem lock, сохраняет расписание и
+планирует продолжение через 10 минут, если осталось минимум 25 минут окна.
+После ожидания нужно минимум 15 минут. Затем новый snapshot и новый отбор
+оставшихся SKU; старый `skus[]` не повторять. При нехватке времени — финальный
+snapshot и `PAUSED_TIME_LIMIT`. Для остальных `FAILED_PARTIAL`/`OUTCOME_UNKNOWN`
+сохраняется ручная проверка. Java не держит транзакцию/поток в 10-минутном ожидании.
+
+Нужен деплой Java, SQL-процедуры, схема MariaDB и env этим изменением не меняются.
+Frontend-задача: `public/docs/api/FOLIO_ACCOUNTING_PRICE_LOCK_RETRY_BACKEND_TASK.md`.
+
+### Постоянная диагностика и инструкция WordPress
+
+Миграция V14__folio_accounting_price_diagnostic.sql создаёт **в MariaDB** таблицу
+folio_accounting_price_diagnostic: id, job_id, source_database, warehouse_id, sku,
+preview_only, error_code, message, diagnostics_json (LONGTEXT), created_at.
+Уникальность job × база × склад × SKU × preview; повтор записи идемпотентен.
+Полный JSON сохраняется независимо от warningsTruncated и ограничения last_error.
+
+Для apply журнал и FAILED обновляются атомарно в MariaDB. У существующего товара
+очищается applied_digest, чтобы старый VERIFIED не замаскировал новую ошибку
+после refresh; applied_at сохраняет дату прежнего commit. Для preview — только
+журнал, без изменения верификации. Если snapshot-товара нет, журнал всё равно есть.
+Сбой сохранения — `ARITHMETIC_DIAGNOSTIC_NOT_PERSISTED` для SQL 8134,
+`NEGATIVE_STOCK_DIAGNOSTIC_NOT_PERSISTED` для отрицательной хронологии,
+`SKU_DIAGNOSTIC_NOT_PERSISTED` для остальных диагностированных пропусков.
+Native-job останавливается с системной ошибкой, `committed=false` относится
+к проблемному SKU (не ко всей порции). Уже сохранённые товары не откатываются.
+При переполненном warnings код остаётся в верхнем `error`; это не тихая потеря
+отчёта. Обычный point preview/apply возвращает эту ошибку в `errors`.
+
+Журнал V14 теперь общий: подтверждённый отрицательный остаток и другие
+диагностированные отказы SAFE сохраняются после отката каждого SKU, до
+ограничения/дедупликации warnings. Двухпроходный job пишет отдельные записи
+preview/apply даже при одном отображаемом предупреждении. Point-проверка
+`/recalculate` и старый `/recalculate/full` также сохраняют блокирующую
+диагностику после завершения MS SQL-транзакции. У point-запроса Java создаёт
+UUID и возвращает его в `warnings[].details.jobId`. Один первичный код на
+job/SKU: предпочтение отрицательной хронологии, остальные point-находки —
+`relatedIssues`. Повторная запись обновляет код вместе с JSON и сообщением.
+
+Для `NEGATIVE_CHRONOLOGICAL_STOCK` полный JSON содержит:
+
+- `sourceDatabase`, `warehouseId`, `sku`, `jobId`, `stage`, `skipped=true`, `committed=false`;
+- `initialQuantity`, `movementPosition` (с 1), `movementCount`,
+  `quantityBefore`, `quantityAfter`, `shortageQuantity`;
+- `operation`: `recno`, `documentId` (внутренний UNICUM_NUM),
+  `documentNumber` (видимый номер), `documentDate` (ISO), `documentType`
+  (исходные `П`/`Р`), `kind` (`RECEIPT`/`EXPENSE`), `returnMovement`,
+  `quantity`, `warehouseId`;
+- `currentState`: `physicalQuantity`, `availableQuantity`,
+  `accountingQuantity`, `accountingPrice`.
+
+Нули сохраняются; неизвестные поля документа/текущего состояния — `null`.
+`triggerMovementConfirmed=true` подтверждает первый отрицательный момент
+в прочитанной хронологии, **не** ошибочность самого документа.
+`businessRootCauseConfirmed=false`: оператор проверяет движение и предыдущие
+приходы, их даты, склад и количество. Для native этот разбор выполняется
+после rollback, поэтому не является транзакционным снимком момента ошибки.
+Если возвраты, конкурентные изменения или ошибка чтения не позволяют восстановить
+точное движение, сохраняется исходный отказ и
+`diagnosticStatus=TRIGGER_MOVEMENT_NOT_RECONSTRUCTED`,
+`triggerMovementConfirmed=false`; документ и числа не выдумываются.
+
+Успешное сохранение бизнес-ошибки не останавливает native-range: отрицательный
+SKU откатывается/пропускается, остальные продолжают. Preview не меняет состояния
+верификации: ранее `FAILED` остаётся `FAILED`, ранее `VERIFIED` не переименовывается.
+Apply очищает `applied_digest` и сохраняет `FAILED`; последующий snapshot
+сохраняет этот отказ. Журнал при обновлении snapshot не удаляется.
+
+Для прежних пяти SKU достаточно **после деплоя Java** вызвать обычный
+`POST /admin/folio/accounting-prices/recalculate` с `previewOnly=true` отдельно
+для каждого: это SELECT-only в ФОЛИО и запись диагностического журнала в MariaDB.
+Если нужен именно запуск SAFE, используйте native-range preview в окно
+обслуживания — он временно изменяет/блокирует строки и завершает их rollback.
+Старые короткие `last_error` задним числом автоматически не обогащаются.
+
+Фронту: читать журнал server-side подготовленными запросами, фильтровать по
+базе/складу/SKU/job_id, пагинация по id DESC. Полные сведения — diagnostics_json,
+не last_error. Показывать SKU, этап, SQL-код, rollback и рекомендации. Документы
+из inspection — «диагностические кандидаты». Использовать warnings[].details.sku;
+для технической остановки также currentArt/checkpointArt. FAILED автоматически
+не повторять; после исправления — явный native-range одного SKU.
+
+Нужен деплой Java с V14. Новых запросов apply на Paint_Ua в этой доработке не было;
+прохождение тестов не доказывает, что проблемная формула конкретного SKU уже найдена.
 
 В начале native job Java пишет одну диагностическую строку
 `native_session_options` с `optionMask`, `ansiWarnings`, `arithAbort` и

@@ -53,6 +53,154 @@ import static org.mockito.Mockito.when;
 
 class FolioAccountingPriceServiceTest {
 
+    private static final String LOCK_RETRY = "FOLIO_LOCK_BUSY_RETRYABLE_AFTER_SNAPSHOT";
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"0,1222", "1,1222", "2,1205"})
+    void confirmedLockOnlyBecomesRetryableAfterAllEarlierCommitsVerified(int prior, int vendor) {
+        var result = runLockScenario(prior, vendor, "ok");
+        assertThat(result.status()).isEqualTo(prior == 0 ? "FAILED" : "FAILED_PARTIAL");
+        assertThat(result.errorCode()).isEqualTo(LOCK_RETRY);
+        assertThat(result.recommendation()).isEqualTo("Wait and continue through a fresh product snapshot.");
+        assertThat(result.failedChunk()).isNull();
+        assertThat(result.running()).isFalse();
+        assertThat(result.committedChunks()).isEqualTo(prior);
+        assertThat(result.processedSku()).isEqualTo(prior);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"missingFingerprint", "publishMissing", "publishFailed", "verifyFailed", "invariantChanged"})
+    void earlierCommitWithoutCompletedVerificationForbidsLockRetry(String scenario) {
+        var result = runLockScenario(1, 1222, scenario);
+        assertThat(result.status()).isEqualTo("FAILED_PARTIAL");
+        assertThat(result.committedChunks()).isEqualTo(1);
+        assertThat(result.errorCode()).isNotEqualTo(LOCK_RETRY);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"boundaryLost", "rollbackFailed", "outerTransaction"})
+    void unconfirmedLockRollbackIsUnknownAndNeverRetryable(String scenario) {
+        var result = runLockScenario(0, 1222, scenario);
+        assertThat(result.status()).isEqualTo("OUTCOME_UNKNOWN");
+        assertThat(result.errorCode()).isEqualTo("NATIVE_LOCK_ROLLBACK_UNCONFIRMED");
+        assertThat(result.committedChunks()).isZero();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"genericBusy", "queryTimeout", "arithmetic", "commitFailure"})
+    void unrelatedOrCommitErrorsDoNotPermitLockRetry(String scenario) {
+        var result = runLockScenario(0, 1222, scenario);
+        assertThat(result.errorCode()).isNotEqualTo(LOCK_RETRY);
+    }
+
+    @Test
+    void rowLockBeforeProcedureCanBeRetriedAfterOwnedRollback() {
+        var result = runLockScenario(0, 1222, "beforeProcedure");
+        assertThat(result.errorCode()).isEqualTo(LOCK_RETRY);
+        assertThat(result.procedureCalls()).isZero();
+    }
+
+    @Test
+    void protectedPostcheckRowLockAfterProcedureRollsBackBeforePermittingRetry() {
+        var result = runLockScenario(1, 1222, "postcheckLock");
+        assertThat(result.errorCode()).isEqualTo(LOCK_RETRY);
+        assertThat(result.committedChunks()).isEqualTo(1);
+        assertThat(result.processedSku()).isEqualTo(1);
+        assertThat(result.failedChunk()).isNull();
+    }
+
+    private static org.example.proect.lavka.dto.folio.FolioAccountingPriceNativeFullStatusResponse runLockScenario(
+            int prior, int vendor, String scenario) {
+        var dao = mock(FolioAccountingPriceDao.class);
+        var recorder = mock(FolioProductVerificationRecorder.class);
+        stubNativeWarehouse(dao);
+        List<String> selected = new ArrayList<>();
+        List<ProductFingerprint> fingerprints = new ArrayList<>();
+        for (int i = 0; i < prior; i++) {
+            String sku = "GOOD-" + i;
+            selected.add(sku);
+            fingerprints.add(fingerprint(sku, "digest-" + i));
+        }
+        String blocked = "LOCKED";
+        selected.add(blocked);
+        var baseline = protectedSnapshot(selected, "scope");
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(selected);
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, selected)).thenReturn(baseline);
+        for (String sku : selected) {
+            when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, sku, sku))
+                    .thenReturn(protectedSnapshot(List.of(sku), "scope"));
+            when(dao.callNativeFullChunk(eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                    eq(sku), eq(0), eq(0), eq(120))).thenReturn(nativeChunk(sku, 1, 0, null, null));
+        }
+        var lockSql = new java.sql.SQLException("blocked", "S0001", vendor);
+        RuntimeException failure = switch (scenario) {
+            case "genericBusy" -> new CannotAcquireLockException("lock timeout");
+            case "queryTimeout" -> new org.springframework.dao.QueryTimeoutException("timeout",
+                    new java.sql.SQLException("timeout", "HYT00", 0));
+            case "arithmetic" -> new DataIntegrityViolationException("divide by zero",
+                    new java.sql.SQLException("divide", "22012", 8134));
+            default -> new org.example.proect.lavka.dao.folio.NativeLockFailure(lockSql, 2,
+                    scenario.equals("boundaryLost") ? null : vendor == 1205 ? 0 : 2, false);
+        };
+        if (!scenario.equals("commitFailure") && !scenario.equals("beforeProcedure")
+                && !scenario.equals("postcheckLock")) {
+            when(dao.callNativeFullChunk(eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                    eq(blocked), eq(0), eq(0), eq(120))).thenThrow(failure);
+        }
+        if (scenario.equals("beforeProcedure")) {
+            // Recovery is disabled in this fixture. Only baseline precedes the SKU transaction.
+            when(dao.findWarehouseForUpdate(WAREHOUSE_ID)).thenReturn(
+                    new WarehouseRow(WAREHOUSE_ID, "Test", 1000, null))
+                    .thenThrow(new CannotAcquireLockException("row locked", lockSql));
+            when(dao.nativeTransactionCount()).thenReturn(2);
+        }
+        if (scenario.equals("postcheckLock")) {
+            when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, blocked, blocked))
+                    .thenThrow(new CannotAcquireLockException("row lock", lockSql));
+            when(dao.nativeTransactionCount()).thenReturn(1); // matches nativeChunk fixture OUT boundary
+        }
+        when(recorder.captureBatch(eq(WAREHOUSE_ID), anyList(), eq(120))).thenReturn(fingerprints);
+        when(recorder.confirmAppliedBatch(fingerprints)).thenReturn(
+                fingerprints.stream().map(ProductFingerprint::sku).collect(java.util.stream.Collectors.toSet()));
+        if (scenario.equals("missingFingerprint")) when(recorder.captureBatch(eq(WAREHOUSE_ID), anyList(), eq(120)))
+                .thenReturn(List.of());
+        if (scenario.equals("publishMissing")) when(recorder.confirmAppliedBatch(fingerprints)).thenReturn(Set.of());
+        if (scenario.equals("publishFailed")) when(recorder.confirmAppliedBatch(fingerprints))
+                .thenThrow(new IllegalStateException("MariaDB unavailable"));
+        if (scenario.equals("verifyFailed")) when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, selected))
+                .thenReturn(baseline).thenThrow(new IllegalStateException("postcheck failed"));
+        if (scenario.equals("invariantChanged")) when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, selected))
+                .thenReturn(baseline, protectedSnapshot(selected, "changed"));
+        var transactions = new TrackingTransactionManager() {
+            @Override public TransactionStatus getTransaction(TransactionDefinition definition) {
+                return new SimpleTransactionStatus(!scenario.equals("outerTransaction"));
+            }
+            @Override public void rollback(TransactionStatus status) {
+                if (scenario.equals("rollbackFailed") && rollbacks >= 1)
+                    throw new TransactionSystemException("rollback failed");
+                super.rollback(status);
+            }
+            @Override public void commit(TransactionStatus status) {
+                if (scenario.equals("commitFailure") && !status.isRollbackOnly())
+                    throw new TransactionSystemException("JDBC commit failed");
+                super.commit(status);
+            }
+        };
+        var service = nativeService(dao, recorder, transactions);
+        service.configureNativeRestartRecovery(0, 0);
+        var request = new FolioAccountingPriceNativeFullRequest(WAREHOUSE_ID, false, true,
+                null, null, selected, FolioAccountingPriceNativeFullRequest.SAFE_APPLY_ONLY);
+        service.requestNativeRange(request);
+        var result = service.nativeFullStatus(false);
+        var again = service.nativeFullStatus(false);
+        assertThat(again).isEqualTo(result);
+        assertThat(result.request()).isEqualTo(request);
+        assertThat(result.jobId()).isNotBlank();
+        verify(recorder, never()).markFailed(anyString(), anyInt(), eq(blocked), anyString());
+        verify(recorder, never()).recordSkuFailureDiagnostic(anyString(), anyInt(), eq(blocked), anyString(), anyBoolean(), any());
+        return result;
+    }
+
     private static final int WAREHOUSE_ID = 12;
     private static final String CLEAN_SKU = "CLEAN";
     private static final String NEGATIVE_SKU = "NEGATIVE";
@@ -175,10 +323,121 @@ class FolioAccountingPriceServiceTest {
                         NEGATIVE_SKU, WAREHOUSE_ID, false));
 
         assertThat(response.status()).isEqualTo("BLOCKED");
-        verify(recorder).markFailed(
+        verify(recorder).recordSkuFailureDiagnostic(
                 eq("Paint_Rus"), eq(WAREHOUSE_ID), eq(NEGATIVE_SKU),
-                org.mockito.ArgumentMatchers.contains("NEGATIVE_CHRONOLOGICAL_STOCK"));
+                anyString(), eq(false), org.mockito.ArgumentMatchers.argThat(issue ->
+                        "NEGATIVE_CHRONOLOGICAL_STOCK".equals(issue.code())));
         verify(recorder, never()).confirmApplied(any());
+    }
+
+    @Test
+    void pointPreviewPersistsNegativeDiagnosticWithoutCallingProcedure() {
+        var dao = mock(FolioAccountingPriceDao.class);
+        var recorder = mock(FolioProductVerificationRecorder.class);
+        stubNativeWarehouse(dao);
+        stubProduct(dao, NEGATIVE_SKU, article(NEGATIVE_SKU, "0"), List.of(
+                new MovementRow(1001L, BigDecimal.ONE, null, WAREHOUSE_ID,
+                        LocalDateTime.of(2026, 8, 15, 0, 0), "Р", false, new BigDecimal("11"))));
+        var response = service(dao, recorder, false, false).recalculate(
+                new FolioAccountingPriceRecalculationRequest(NEGATIVE_SKU, WAREHOUSE_ID, true));
+        var issue = response.warnings().get(0);
+        assertThat(issue.code()).isEqualTo("NEGATIVE_CHRONOLOGICAL_STOCK");
+        assertThat(issue.details()).containsEntry("stage", "JAVA_CHRONOLOGY_PREFLIGHT")
+                .containsEntry("committed", false).containsEntry("triggerMovementConfirmed", true)
+                .containsEntry("businessRootCauseConfirmed", false);
+        assertThat(((Map<?, ?>) issue.details().get("operation")).containsKey("documentNumber")).isTrue();
+        assertThat(((Map<?, ?>) issue.details().get("operation")).get("documentNumber")).isNull();
+        assertThat(((Map<?, ?>) issue.details().get("currentState")).get("accountingPrice"))
+                .isEqualTo(BigDecimal.ZERO);
+        verify(recorder).recordSkuFailureDiagnostic(eq("Paint_Rus"), eq(WAREHOUSE_ID), eq(NEGATIVE_SKU),
+                anyString(), eq(true), eq(issue));
+        verify(recorder, never()).confirmApplied(any());
+        verify(dao, never()).rebuildOne(anyString(), anyInt(), anyInt());
+    }
+
+    @Test
+    void pointPreviewReportsJournalFailureWithOriginalDiagnostic() {
+        var dao = mock(FolioAccountingPriceDao.class);
+        var recorder = mock(FolioProductVerificationRecorder.class);
+        stubNativeWarehouse(dao);
+        stubProduct(dao, NEGATIVE_SKU, article(NEGATIVE_SKU, "0"), List.of(expense(1L, "11")));
+        org.mockito.Mockito.doThrow(new IllegalStateException("MariaDB unavailable")).when(recorder)
+                .recordSkuFailureDiagnostic(anyString(), anyInt(), anyString(), anyString(), anyBoolean(), any());
+        var response = service(dao, recorder, false, false).recalculate(
+                new FolioAccountingPriceRecalculationRequest(NEGATIVE_SKU, WAREHOUSE_ID, true));
+        assertThat(response.ok()).isFalse();
+        assertThat(response.errors()).singleElement().satisfies(error -> {
+            assertThat(error.code()).isEqualTo("NEGATIVE_STOCK_DIAGNOSTIC_NOT_PERSISTED");
+            assertThat(error.details()).containsEntry("committed", false);
+        });
+        assertThat(response.warnings()).extracting(issue -> issue.code()).contains("NEGATIVE_CHRONOLOGICAL_STOCK");
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void nativeRangePersistsEveryNegativeSkuEvenWhenWarningsTruncated(boolean previewOnly) {
+        var dao = mock(FolioAccountingPriceDao.class);
+        var recorder = mock(FolioProductVerificationRecorder.class);
+        stubNativeWarehouse(dao);
+        List<String> selected = List.of("BAD-A", "BAD-B", "GOOD");
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(selected);
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, selected))
+                .thenReturn(protectedSnapshot(selected, "scope"));
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, "GOOD", "GOOD"))
+                .thenReturn(protectedSnapshot(List.of("GOOD"), "scope"));
+        for (String bad : List.of("BAD-A", "BAD-B")) {
+            stubProduct(dao, bad, article(bad, "0"), List.of(expense(1001L, "11")));
+            when(dao.callNativeFullChunk(eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                    eq(bad), eq(0), eq(0), eq(120)))
+                    .thenReturn(safeProblemChunk(bad, "GOOD", "NEGATIVE_CHRONOLOGICAL_STOCK"));
+        }
+        when(dao.callNativeFullChunk(eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq("GOOD"), eq(0), eq(0), eq(120))).thenReturn(nativeChunk("GOOD", 1, 0, null, null));
+        var service = new FolioAccountingPriceService(dao, recorder, DIRECT_EXECUTOR, CLOCK,
+                new TrackingTransactionManager(), true, true, true, true, true,
+                Set.of("Paint_Rus"), 100, 5000, 120, 120, 1);
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(WAREHOUSE_ID,
+                previewOnly, !previewOnly, null, null, selected,
+                previewOnly ? null : FolioAccountingPriceNativeFullRequest.SAFE_APPLY_ONLY));
+        var result = service.nativeFullStatus(false);
+        assertThat(result.status()).isEqualTo(previewOnly ? "PREVIEW_READY_WITH_WARNINGS" : "COMPLETED_WITH_WARNINGS");
+        assertThat(result.committedChunks()).isEqualTo(previewOnly ? 0 : 1);
+        assertThat(result.processedSku()).isEqualTo(3);
+        assertThat(result.warningsTruncated()).isTrue();
+        assertThat(result.warnings()).hasSize(1);
+        for (String bad : List.of("BAD-A", "BAD-B")) {
+            verify(recorder).recordSkuFailureDiagnostic(eq("Paint_Rus"), eq(WAREHOUSE_ID), eq(bad),
+                    eq(result.jobId()), eq(previewOnly), org.mockito.ArgumentMatchers.argThat(issue ->
+                            issue.code().equals("NEGATIVE_CHRONOLOGICAL_STOCK")
+                            && Boolean.TRUE.equals(issue.details().get("triggerMovementConfirmed"))
+                            && issue.details().containsKey("operation")
+                            && Boolean.FALSE.equals(issue.details().get("committed"))));
+        }
+    }
+
+    @Test
+    void nativePreviewJournalFailureStopsWithExplicitSystemCodeNotSuccessfulSkip() {
+        var dao = mock(FolioAccountingPriceDao.class);
+        var recorder = mock(FolioProductVerificationRecorder.class);
+        stubNativeWarehouse(dao);
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(List.of(NEGATIVE_SKU));
+        stubProduct(dao, NEGATIVE_SKU, article(NEGATIVE_SKU, "0"), List.of(expense(1L, "11")));
+        when(dao.callNativeFullChunk(eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(NEGATIVE_SKU), eq(0), eq(0), eq(120)))
+                .thenReturn(safeProblemChunk(NEGATIVE_SKU, null, "NEGATIVE_CHRONOLOGICAL_STOCK"));
+        org.mockito.Mockito.doThrow(new IllegalStateException("MariaDB unavailable")).when(recorder)
+                .recordSkuFailureDiagnostic(anyString(), anyInt(), anyString(), anyString(), anyBoolean(), any());
+        var service = nativeService(dao, recorder, new TrackingTransactionManager());
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(WAREHOUSE_ID, true, false,
+                null, null, List.of(NEGATIVE_SKU)));
+        var result = service.nativeFullStatus(false);
+        assertThat(result.status()).isEqualTo("FAILED");
+        assertThat(result.committedChunks()).isZero();
+        assertThat(result.error()).contains("NEGATIVE_STOCK_DIAGNOSTIC_NOT_PERSISTED", NEGATIVE_SKU);
+        assertThat(result.warnings()).singleElement().satisfies(issue -> {
+            assertThat(issue.code()).isEqualTo("NEGATIVE_STOCK_DIAGNOSTIC_NOT_PERSISTED");
+            assertThat(issue.details()).containsEntry("committed", false);
+        });
     }
 
     @Test
@@ -1139,6 +1398,90 @@ class FolioAccountingPriceServiceTest {
     }
 
     @Test
+    void nativeRangeRollsBackRawArithmeticPersistsDiagnosticAndCommitsFollowingSku() {
+        FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        String bad = "SKU-BAD";
+        String next = "SKU-NEXT";
+        List<String> selected = List.of(CLEAN_SKU, bad, next);
+        stubProduct(dao, bad, article(bad, "800"), List.of(expense(1001L, "11")));
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(selected);
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, selected))
+                .thenReturn(protectedSnapshot(selected, "scope"));
+        for (String sku : List.of(CLEAN_SKU, next)) {
+            when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, sku, sku))
+                    .thenReturn(protectedSnapshot(List.of(sku), "scope"));
+            when(dao.callNativeFullChunk(eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                    eq(sku), eq(0), eq(0), eq(120))).thenReturn(nativeChunk(sku, 1, 0, null, null));
+        }
+        when(dao.callNativeFullChunk(eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(bad), eq(0), eq(0), eq(120))).thenThrow(rawArithmetic(2));
+        var recorder = mock(FolioProductVerificationRecorder.class);
+        var tx = new TrackingTransactionManager();
+        var service = nativeService(dao, recorder, tx);
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(WAREHOUSE_ID, false, true,
+                null, null, selected, FolioAccountingPriceNativeFullRequest.SAFE_APPLY_ONLY));
+        var result = service.nativeFullStatus(false);
+        assertThat(result.status()).isEqualTo("COMPLETED_WITH_WARNINGS");
+        assertThat(result.committedChunks()).isEqualTo(2);
+        assertThat(result.processedSku()).isEqualTo(3);
+        assertThat(result.procedureCalls()).isEqualTo(3);
+        assertThat(result.lastCommittedArt()).isEqualTo(next);
+        var issue = result.warnings().stream().filter(w -> w.code().equals("ACCOUNTING_PRICE_DIVIDE_BY_ZERO"))
+                .findFirst().orElseThrow();
+        assertThat(issue.details()).containsEntry("sku", bad).containsEntry("rollbackConfirmed", true)
+                .containsEntry("committed", false).containsEntry("formulaConfirmed", false)
+                .containsEntry("stage", "FOLIO_PROCEDURE_CALL");
+        assertThat(issue.details()).containsKey("inspectionWarnings");
+        verify(recorder).recordSkuFailureDiagnostic(eq("Paint_Rus"), eq(WAREHOUSE_ID), eq(bad),
+                eq(result.jobId()), eq(false), eq(issue));
+        verify(dao, times(1)).callNativeFullChunk(eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq(bad), eq(0), eq(0), eq(120));
+    }
+
+    @Test
+    void arithmeticWithLostTransactionBoundaryNeverSkipsOrRetries() {
+        assertArithmeticStops(new TrackingTransactionManager(), rawArithmetic(0));
+    }
+
+    @Test
+    void arithmeticRollbackFailureNeverSkipsOrRetries() {
+        PlatformTransactionManager brokenRollback = new PlatformTransactionManager() {
+            public TransactionStatus getTransaction(TransactionDefinition definition) { return new SimpleTransactionStatus(); }
+            public void commit(TransactionStatus status) { }
+            public void rollback(TransactionStatus status) { throw new org.springframework.transaction.TransactionSystemException("JDBC rollback failed"); }
+        };
+        assertArithmeticStops(brokenRollback, rawArithmetic(2));
+    }
+
+    private void assertArithmeticStops(PlatformTransactionManager tx,
+            org.example.proect.lavka.dao.folio.NativeProcedureArithmeticException error) {
+        var dao = mock(FolioAccountingPriceDao.class);
+        stubNativeWarehouse(dao);
+        List<String> selected = List.of("SKU-BAD", "SKU-NEXT");
+        when(dao.findSkus(WAREHOUSE_ID)).thenReturn(selected);
+        when(dao.captureNativeProtectedSnapshot(WAREHOUSE_ID, selected))
+                .thenReturn(protectedSnapshot(selected, "scope"));
+        when(dao.callNativeFullChunk(eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq("SKU-BAD"), eq(0), eq(0), eq(120))).thenThrow(error);
+        var service = nativeService(dao, tx, true);
+        service.requestNativeRange(new FolioAccountingPriceNativeFullRequest(WAREHOUSE_ID, false, true,
+                null, null, selected, FolioAccountingPriceNativeFullRequest.SAFE_APPLY_ONLY));
+        var result = service.nativeFullStatus(false);
+        assertThat(result.status()).isEqualTo("OUTCOME_UNKNOWN");
+        assertThat(result.committedChunks()).isZero();
+        assertThat(result.procedureCalls()).isEqualTo(1);
+        assertThat(result.errorCode()).isEqualTo("NATIVE_ARITHMETIC_ROLLBACK_UNCONFIRMED");
+        verify(dao, never()).callNativeFullChunk(eq(null), eq(WAREHOUSE_ID), eq(0), eq(0), eq(false),
+                eq("SKU-NEXT"), anyInt(), anyInt(), anyInt());
+    }
+
+    private static org.example.proect.lavka.dao.folio.NativeProcedureArithmeticException rawArithmetic(Integer after) {
+        return new org.example.proect.lavka.dao.folio.NativeProcedureArithmeticException(
+                new java.sql.SQLException("Divide by zero error encountered", "22012", 8134), 2, after);
+    }
+
+    @Test
     void nativeRangeSafeApplyOnlyStopsAfterUnknownErrorAndKeepsEarlierCommit() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
         stubNativeWarehouse(dao);
@@ -1356,6 +1699,7 @@ class FolioAccountingPriceServiceTest {
     @Test
     void nativeApplyRollsBackNegativeSkuAndCommitsFollowingCleanSku() {
         FolioAccountingPriceDao dao = mock(FolioAccountingPriceDao.class);
+        var recorder = mock(FolioProductVerificationRecorder.class);
         stubNativeWarehouse(dao);
         stubProduct(dao, NEGATIVE_SKU, article(NEGATIVE_SKU, "800"), List.of(
                 expense(1001L, "11")
@@ -1370,7 +1714,7 @@ class FolioAccountingPriceServiceTest {
                 eq(CLEAN_SKU), eq(0), eq(100), eq(120)))
                 .thenReturn(nativeChunk(CLEAN_SKU, 60, 100, null, null));
         TrackingTransactionManager transactions = new TrackingTransactionManager();
-        FolioAccountingPriceService service = nativeService(dao, transactions, true);
+        FolioAccountingPriceService service = nativeService(dao, recorder, transactions);
 
         service.requestNativeFull(new FolioAccountingPriceNativeFullRequest(
                 WAREHOUSE_ID, false, true));
@@ -1389,8 +1733,14 @@ class FolioAccountingPriceServiceTest {
         // Two preview SKUs and the problematic apply SKU were rolled back;
         // only the clean apply SKU was committed.
         assertThat(transactions.rollbacks).isEqualTo(5);
-        // One read-only diagnostic transaction plus one clean SKU commit.
-        assertThat(transactions.commits).isEqualTo(2);
+        for (boolean preview : List.of(true, false)) {
+            verify(recorder).recordSkuFailureDiagnostic(eq("Paint_Rus"), eq(WAREHOUSE_ID), eq(NEGATIVE_SKU),
+                    eq(completed.jobId()), eq(preview), org.mockito.ArgumentMatchers.argThat(issue ->
+                            issue.code().equals("NEGATIVE_CHRONOLOGICAL_STOCK")
+                                    && issue.details().containsKey("operation")));
+        }
+        // Independent read-only diagnostics in preview and apply, plus one clean SKU commit.
+        assertThat(transactions.commits).isEqualTo(3);
     }
 
     @Test
@@ -1939,9 +2289,9 @@ class FolioAccountingPriceServiceTest {
         return new TrackingTransactionManager();
     }
 
-    private static final class TrackingTransactionManager implements PlatformTransactionManager {
+    private static class TrackingTransactionManager implements PlatformTransactionManager {
         private int commits;
-        private int rollbacks;
+        protected int rollbacks;
         private final List<Integer> timeouts = new ArrayList<>();
 
         @Override

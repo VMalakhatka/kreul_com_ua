@@ -115,7 +115,7 @@ public class FolioProductAnalyticsService {
         }
         TransitCalculation transitConfig = FolioTransitAnalytics.normalize(request.calculation());
         TransitCapability transit = FolioTransitAnalytics.capability(transitConfig,
-                transitGenerations(scope, transitConfig), scope.warehouseIds(), SCHEMA_VERSION);
+                transitGenerations(scope, transitConfig), scope.warehouseIds(), scope.generations(), SCHEMA_VERSION);
         if (!transit.ready()) {
             warnings.add(new AnalyticsWarning("IN_TRANSIT_STOCK_NOT_READY",
                     "Check context transit sources: " + transit.unavailableReason()));
@@ -132,9 +132,11 @@ public class FolioProductAnalyticsService {
                         "minimumStockEligibility", List.of("CURRENT_POLICY_GT_ZERO")),
                         "configurableTransit", Map.of("supported", true, "calculationVersion", FolioTransitAnalytics.VERSION,
                                 "maxWarehouseCount", FolioTransitAnalytics.MAX_WAREHOUSES,
-                                "demandUnaffected", true, "openOrdersDeduplicationSupported", false,
+                                "demandUnaffected", true, "supplierOriginRequiredForNetworkStock", false,
+                                "crossWarehouseSnapshotCertificationSupported", false,
+                                "openOrdersDeduplicationSupported", false,
                                 "automaticGroupAllocationSupported", false)),
-                List.copyOf(warnings));
+                transitWarnings(warnings, transit));
     }
 
     @Transactional(transactionManager = "wpTransactionManager", readOnly = true,
@@ -162,7 +164,7 @@ public class FolioProductAnalyticsService {
         TransitCalculation transitConfig = FolioTransitAnalytics.normalize(request.calculation());
         List<ActiveGeneration> transitGenerations = transitGenerations(scope, transitConfig);
         TransitCapability transit = FolioTransitAnalytics.capability(transitConfig,
-                transitGenerations, scope.warehouseIds(), SCHEMA_VERSION);
+                transitGenerations, scope.warehouseIds(), scope.generations(), SCHEMA_VERSION);
         Object applied = new AppliedFilters(scope.sourceDatabase(), scope.warehouseIds(),
                 new AppliedPeriod(period.from(), period.to()), search, product, movement,
                 new AppliedCalculation(abcBasis, includeReturns, availability, transitConfig));
@@ -266,7 +268,16 @@ public class FolioProductAnalyticsService {
                 applied,
                 new Totals(result.total().productCount(), result.total().warehouseRowCount(),
                         metrics(result.total().metrics(), period.days(), includeReturns)),
-                rows, dictionaries, nextCursor, List.copyOf(warnings), List.of());
+                rows, dictionaries, nextCursor, transitWarnings(warnings, transit), List.of());
+    }
+
+    private static List<AnalyticsWarning> transitWarnings(List<AnalyticsWarning> warnings, TransitCapability transit) {
+        List<AnalyticsWarning> result = new ArrayList<>(warnings);
+        if (transit.enabled() && !transit.networkSnapshotConsistency().confirmed()) {
+            result.add(new AnalyticsWarning(transit.networkSnapshotConsistency().status(),
+                    transit.networkSnapshotConsistency().recommendation()));
+        }
+        return List.copyOf(result);
     }
 
     private Scope scope(String sourceDatabase, List<Integer> requested, boolean strict) {
@@ -804,7 +815,8 @@ public class FolioProductAnalyticsService {
             var mapper = new com.fasterxml.jackson.databind.ObjectMapper()
                     .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
                     .enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
-            byte[] input = mapper.writeValueAsBytes(java.util.Arrays.asList(applied, sort, generations, network, transit));
+            byte[] input = mapper.writeValueAsBytes(java.util.Arrays.asList(applied, sort, generations, network, transit,
+                    FolioTransitAnalytics.VERSION));
             return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(input));
         } catch (java.io.IOException | java.security.NoSuchAlgorithmException e) {
             throw new IllegalStateException("Could not bind analytics cursor to snapshot", e);

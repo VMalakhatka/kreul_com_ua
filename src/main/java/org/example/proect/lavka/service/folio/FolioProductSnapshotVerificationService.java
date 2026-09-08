@@ -95,4 +95,20 @@ public class FolioProductSnapshotVerificationService
         log.warn("[folio.product.snapshot] recalculation_failed db={} warehouse={} sku={} recorded={}",
                 sourceDatabase, warehouseId, sku, updated == 1);
     }
+
+    @Override
+    public void recordSkuFailureDiagnostic(String sourceDatabase, int warehouseId, String sku,
+            String jobId, boolean previewOnly,
+            org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationResponse.Issue issue) {
+        try {
+            String json = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+                    .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                    .writeValueAsString(issue.details());
+            snapshotDao.recordSkuFailureDiagnostic(sourceDatabase, warehouseId, sku, jobId, previewOnly,
+                    issue.code(), issue.message(), json, LocalDateTime.now(clock));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+            throw new IllegalStateException("Could not serialize SKU failure diagnostic", error);
+        }
+    }
 }

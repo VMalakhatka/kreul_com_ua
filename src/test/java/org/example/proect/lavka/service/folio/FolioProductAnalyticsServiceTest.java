@@ -114,8 +114,10 @@ class FolioProductAnalyticsServiceTest {
         assertThat(response.rows().get(0).dimensions().primaryBarcode())
                 .isEqualTo("4000798123456");
         assertThat(response.rows().get(0).inTransitStock().status())
-                .isEqualTo("CONFIRMED_SUPPLIER_ORIGIN");
+                .isEqualTo("NETWORK_SNAPSHOT_CONSISTENCY_UNCONFIRMED");
         assertThat(response.rows().get(0).inTransitStock().availableForPlanningQuantity())
+                .isNull();
+        assertThat(response.rows().get(0).inTransitStock().sources().get(0).supplierInTransitAvailableQuantity())
                 .isEqualByComparingTo("10");
         assertThat(response.totals().metrics().grossMarginPercent())
                 .isEqualByComparingTo("40.000000");
@@ -383,7 +385,11 @@ class FolioProductAnalyticsServiceTest {
                 .thenReturn(Map.of("SKU-1",FolioTransitAnalyticsTest.row("8","0","8",0,1,1)));
         var service = new FolioProductAnalyticsService(dao);
         var response = service.query(transitRequest(List.of(10,9,9),null));
-        assertThat(response.rows().get(0).inTransitStock().availableForPlanningQuantity()).isEqualByComparingTo("20");
+        assertThat(response.rows().get(0).inTransitStock().availableForPlanningQuantity()).isNull();
+        assertThat(response.rows().get(0).inTransitStock().availableQuantity()).isEqualByComparingTo("20");
+        assertThat(response.rows().get(0).inTransitStock().availableForNetworkPlanningQuantity()).isNull();
+        assertThat(response.context().transit().networkSnapshotConsistency().salesSources())
+                .extracting("generationId").containsExactly(101L,102L);
         assertThat(response.rows().get(0).metrics().regularSoldUnits()).isEqualByComparingTo("90");
         assertThat(response.totals().metrics().availableQuantity()).isEqualByComparingTo("30");
         assertThat(response.context().warehouses()).extracting("id").containsExactly(1,5);

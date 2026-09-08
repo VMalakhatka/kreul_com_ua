@@ -59,4 +59,11 @@ public interface FolioProductVerificationRecorder {
     }
 
     void markFailed(String sourceDatabase, int warehouseId, String sku, String error);
+
+    default void recordSkuFailureDiagnostic(String sourceDatabase, int warehouseId, String sku,
+            String jobId, boolean previewOnly,
+            org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationResponse.Issue issue) {
+        if (!previewOnly) markFailed(sourceDatabase, warehouseId, sku,
+                issue.code() + ": " + issue.message() + "; jobId=" + jobId);
+    }
 }

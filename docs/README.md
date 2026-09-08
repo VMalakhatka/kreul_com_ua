@@ -16,12 +16,14 @@ Verified against the current repository structure: 2026-09-06.
 | Inspect Folio tables and evidence | [`00_DATABASE_CATALOG.md`](00_DATABASE_CATALOG.md) and `.agents/skills/work-with-folio-mssql/references/` |
 | Work with product snapshots and analytics | [`api/FOLIO_PRODUCT_SNAPSHOT_API.md`](api/FOLIO_PRODUCT_SNAPSHOT_API.md), [`api/FOLIO_PRODUCT_ANALYTICS_API.md`](api/FOLIO_PRODUCT_ANALYTICS_API.md), [`api/FOLIO_PRODUCT_ANALYTICS_FRONTEND_HANDOFF_V4.md`](api/FOLIO_PRODUCT_ANALYTICS_FRONTEND_HANDOFF_V4.md) and the current Flyway migrations |
 | Physical availability, stockout days and configured warehouse groups | [`api/FOLIO_PRODUCT_AVAILABILITY_FRONTEND_V5.md`](api/FOLIO_PRODUCT_AVAILABILITY_FRONTEND_V5.md); snapshot owns V13 active/stage monthly masks, analytics owns query-time group evaluation |
-| Configurable transit warehouses and purchase-planning safeguards | [`api/FOLIO_TRANSIT_WAREHOUSES_FRONTEND.md`](api/FOLIO_TRANSIT_WAREHOUSES_FRONTEND.md); independent snapshot scopes, per-source diagnostics, query-time totals and revision-bound cursors |
-| Work with accounting-price operations | [`api/FOLIO_ACCOUNTING_PRICES_API.md`](api/FOLIO_ACCOUNTING_PRICES_API.md) and [`api/FOLIO_ACCOUNTING_PRICE_OPERATIONS_FRONTEND.md`](api/FOLIO_ACCOUNTING_PRICE_OPERATIONS_FRONTEND.md) |
+| Configurable transit warehouses and purchase-planning safeguards | [`api/FOLIO_TRANSIT_WAREHOUSES_FRONTEND.md`](api/FOLIO_TRANSIT_WAREHOUSES_FRONTEND.md); calculation v3 separates network physical stock from supplier transit; independent snapshots block confirmed network totals until cross-warehouse consistency is proved |
+| Work with accounting-price operations | [`api/FOLIO_ACCOUNTING_PRICES_API.md`](api/FOLIO_ACCOUNTING_PRICES_API.md) and [`api/FOLIO_ACCOUNTING_PRICE_OPERATIONS_FRONTEND.md`](api/FOLIO_ACCOUNTING_PRICE_OPERATIONS_FRONTEND.md); V14 owns durable arithmetic diagnostics and confirmed-rollback SKU skips |
 | Work with balances, debtors or customer documents | Matching `FOLIO_CUSTOMER_*` documents in [`api/`](api/) |
 | Work with the monthly Kyiv/Odesa profit report | [`api/FOLIO_PROFIT_REPORT_API.md`](api/FOLIO_PROFIT_REPORT_API.md) and [`api/FOLIO_PROFIT_REPORT_FRONTEND_TASK.md`](api/FOLIO_PROFIT_REPORT_FRONTEND_TASK.md) |
 | Work with product media | The matching `FOLIO_*MEDIA*` document in [`api/`](api/) and the current controller/service/DAO |
 | Run an isolated Paint_Rus experiment | [`folio-experiments/00_PAINT_RUS_EXPERIMENTS.md`](folio-experiments/00_PAINT_RUS_EXPERIMENTS.md) and the Folio skill safety rules |
+| Validate SAFE negative-correction arithmetic | [`folio-experiments/36_negative_correction_validation.md`](folio-experiments/36_negative_correction_validation.md); candidate scripts 33/34, 15 SQL 2000 fixture cases, production installation gated |
+| Check installed SAFE negative-correction wrapper | [`folio-experiments/37_installed_safe_negative_correction_golden_master.md`](folio-experiments/37_installed_safe_negative_correction_golden_master.md); 13 real-wrapper rollback cases in Paint_Rus, independent postchecks, no Paint_Ua installation |
 | Build, run or deploy Java | WordPress `docs/JAVA_DOCKER_RUNTIME.md` and `$build-java-docker-runtime` |
 
 ## Source of Truth

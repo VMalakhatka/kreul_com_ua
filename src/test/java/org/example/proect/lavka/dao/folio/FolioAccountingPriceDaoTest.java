@@ -27,6 +27,83 @@ import static org.mockito.Mockito.when;
 
 class FolioAccountingPriceDaoTest {
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"1222,2", "1205,0"})
+    void nativeLockCapturesSameConnectionBoundary(int vendorCode, int after) throws Exception {
+        var jdbc = mock(JdbcTemplate.class);
+        var connection = mock(Connection.class);
+        var count = mock(PreparedStatement.class);
+        var rows = mock(ResultSet.class);
+        var procedure = mock(java.sql.CallableStatement.class);
+        when(connection.prepareStatement("SELECT @@TRANCOUNT")).thenReturn(count);
+        when(count.executeQuery()).thenReturn(rows);
+        when(rows.next()).thenReturn(true);
+        when(rows.getInt(1)).thenReturn(2, after);
+        when(connection.prepareCall(anyString())).thenReturn(procedure);
+        when(procedure.execute()).thenThrow(new java.sql.SQLException("lock", "S0001", vendorCode));
+        when(jdbc.execute(any(ConnectionCallback.class))).thenAnswer(invocation ->
+                ((ConnectionCallback<?>) invocation.getArgument(0)).doInConnection(connection));
+        assertThatThrownBy(() -> new FolioAccountingPriceDao(jdbc).callNativeFullChunk(
+                null, 5, 0, 0, false, "SKU", 0, 0, 120))
+                .isInstanceOfSatisfying(NativeLockFailure.class, e -> assertThat(e.rollbackBoundaryKnown()).isTrue());
+        verify(procedure, times(1)).execute();
+        verify(count, times(2)).executeQuery();
+    }
+
+    @Test
+    void nativeLockClassifierRejectsMixedErrorsAndNeverReadsMessageText() {
+        var lock = new java.sql.SQLException("lock", "S0001", 1222);
+        assertThat(NativeLockFailure.lockCode(lock)).isEqualTo(1222);
+        lock.setNextException(new java.sql.SQLException("statement terminated", "S0001", 3621));
+        assertThat(NativeLockFailure.lockCode(lock)).isEqualTo(1222);
+        lock.setNextException(new java.sql.SQLException("connection lost", "08S01", 0));
+        assertThat(NativeLockFailure.lockCode(lock)).isZero();
+        assertThat(NativeLockFailure.lockCode(new java.sql.SQLException("1222 lock timeout", "HYT00", 0))).isZero();
+        assertThat(NativeLockFailure.lockCode(new CannotAcquireLockException("lock timeout 1222"))).isZero();
+        var mixed = new java.sql.SQLException("lock", "S0001", 1205);
+        mixed.setNextException(new java.sql.SQLException("divide", "22012", 8134));
+        assertThat(NativeLockFailure.lockCode(mixed)).isZero();
+        assertThat(new NativeLockFailure(new java.sql.SQLException("lock", "S0001", 1222), 2, 0, false)
+                .rollbackBoundaryKnown()).isFalse();
+        assertThat(new NativeLockFailure(new java.sql.SQLException("lock", "S0001", 1205), 2, null, false)
+                .rollbackBoundaryKnown()).isFalse();
+    }
+
+    @Test
+    void nativeArithmeticCapturesBoundaryOnTheSameConnectionWithoutRetryingProcedure() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        Connection connection = mock(Connection.class);
+        PreparedStatement count = mock(PreparedStatement.class);
+        ResultSet countRows = mock(ResultSet.class);
+        java.sql.CallableStatement procedure = mock(java.sql.CallableStatement.class);
+        when(connection.prepareStatement("SELECT @@TRANCOUNT")).thenReturn(count);
+        when(count.executeQuery()).thenReturn(countRows);
+        when(countRows.next()).thenReturn(true);
+        when(countRows.getInt(1)).thenReturn(2);
+        when(connection.prepareCall(anyString())).thenReturn(procedure);
+        when(procedure.execute()).thenThrow(new java.sql.SQLException("Divide by zero", "22012", 8134));
+        when(jdbc.execute(any(ConnectionCallback.class))).thenAnswer(invocation ->
+                ((ConnectionCallback<?>) invocation.getArgument(0)).doInConnection(connection));
+        assertThatThrownBy(() -> new FolioAccountingPriceDao(jdbc).callNativeFullChunk(
+                null, 5, 0, 0, false, "SKU", 0, 0, 120))
+                .isInstanceOfSatisfying(NativeProcedureArithmeticException.class, e -> {
+                    assertThat(e.transactionCountBefore()).isEqualTo(2);
+                    assertThat(e.boundaryPreserved()).isTrue();
+                });
+        verify(procedure, times(1)).execute();
+        verify(count, times(2)).executeQuery();
+    }
+
+    @Test
+    void arithmeticClassificationRejectsMixedUnknownOrConnectionErrors() {
+        var divide = new java.sql.SQLException("Divide by zero", "22012", 8134);
+        assertThat(NativeProcedureArithmeticException.isolatedDivideByZero(divide)).isTrue();
+        divide.setNextException(new java.sql.SQLException("Connection closed", "08S01", 0));
+        assertThat(NativeProcedureArithmeticException.isolatedDivideByZero(divide)).isFalse();
+        assertThat(NativeProcedureArithmeticException.isolatedDivideByZero(
+                new java.sql.SQLException("text mentions divide by zero", "S0001", 50000))).isFalse();
+    }
+
     @Test
     void mutexMaterialisesServerTransactionBeforeTransactionOwnedAppLock() throws Exception {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);

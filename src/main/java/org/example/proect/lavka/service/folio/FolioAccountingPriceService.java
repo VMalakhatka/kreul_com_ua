@@ -2,6 +2,8 @@ package org.example.proect.lavka.service.folio;
 
 import lombok.extern.slf4j.Slf4j;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao;
+import org.example.proect.lavka.dao.folio.NativeProcedureArithmeticException;
+import org.example.proect.lavka.dao.folio.NativeLockFailure;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.ArticleRow;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.ArithmeticSessionOptions;
 import org.example.proect.lavka.dao.folio.FolioAccountingPriceDao.MovementRow;
@@ -275,8 +277,11 @@ public class FolioAccountingPriceService {
         }
         try {
             if (previewOnly) {
-                return Objects.requireNonNull(readTransaction.execute(status ->
+                var response = Objects.requireNonNull(readTransaction.execute(status ->
                         inspect(sku, request.warehouseId(), false, true)));
+                if (response.eligibleToApply()) return response;
+                return recordInspectionDiagnostic(response, UUID.randomUUID().toString(),
+                        dao.currentDatabaseName());
             }
             try {
                 AppliedProduct applied = Objects.requireNonNull(
@@ -284,11 +289,9 @@ public class FolioAccountingPriceService {
                                 applyOne(sku, request.warehouseId())));
                 FolioAccountingPriceRecalculationResponse response =
                         recordAppliedVerification(applied);
-                if (!response.eligibleToApply()) {
-                    recordFailedVerificationForCurrentDatabase(
-                            request.warehouseId(), sku, firstIssueMessage(response));
-                }
-                return response;
+                if (response.eligibleToApply() || response.procedureExecuted()) return response;
+                return recordInspectionDiagnostic(response, UUID.randomUUID().toString(),
+                        dao.currentDatabaseName());
             } catch (CannotAcquireLockException e) {
                 throw new FolioAccountingPriceBusyException(e);
             }
@@ -655,23 +658,22 @@ public class FolioAccountingPriceService {
                         .filter(article -> article.warehouseId() == movement.warehouseId())
                         .findFirst()
                         .orElse(null);
-                Map<String, Object> operation = diagnosticMap(
+                Map<String, Object> operation = nullableDiagnosticMap(
                         "kind", operationKind,
                         "documentType", movement.documentType(),
                         "quantity", movement.quantity(),
+                        "returnMovement", movement.returnMovement(),
                         "recno", movement.recno(),
                         "documentId", movement.documentId(),
                         "documentNumber", movement.documentNumber(),
                         "documentDate", formatDate(movement.documentDate()),
                         "warehouseId", movement.warehouseId()
                 );
-                Map<String, Object> currentState = current == null
-                        ? Map.of()
-                        : diagnosticMap(
-                        "physicalQuantity", current.physicalQuantity(),
-                        "availableQuantity", current.availableQuantity(),
-                        "accountingQuantity", current.accountingQuantity(),
-                        "accountingPrice", current.accountingPrice()
+                Map<String, Object> currentState = nullableDiagnosticMap(
+                        "physicalQuantity", current == null ? null : current.physicalQuantity(),
+                        "availableQuantity", current == null ? null : current.availableQuantity(),
+                        "accountingQuantity", current == null ? null : current.accountingQuantity(),
+                        "accountingPrice", current == null ? null : current.accountingPrice()
                 );
                 warnings.add(issue(
                         "NEGATIVE_CHRONOLOGICAL_STOCK",
@@ -684,6 +686,12 @@ public class FolioAccountingPriceService {
                         "shortageQuantity", shortage,
                         "movementPosition", movementPosition,
                         "movementCount", movements.size(),
+                        "stage", "JAVA_CHRONOLOGY_PREFLIGHT",
+                        "triggerMovementConfirmed", true,
+                        "businessRootCauseConfirmed", false,
+                        "recommendation", "Inspect this movement and preceding receipts for this SKU: "
+                                + "check missing receipts, dates, warehouse and quantities. "
+                                + "The triggering movement is not necessarily the erroneous document.",
                         "currentState", currentState
                 ));
                 String sku = current != null
@@ -743,15 +751,12 @@ public class FolioAccountingPriceService {
                                 writeTransaction.execute(status ->
                                         applyOne(sku, request.warehouseId())));
                         result = recordAppliedVerification(applied);
-                        if (!result.eligibleToApply()) {
-                            recordFailedVerification(
-                                    sourceDatabase, request.warehouseId(), sku,
-                                    firstIssueMessage(result));
-                        }
                     }
                 } catch (FolioAccountingPriceNotFoundException e) {
                     result = missingDuringFull(request, sku, e);
                 }
+
+                result = recordInspectionDiagnostic(result, jobId, sourceDatabase);
 
                 progress.processedProducts++;
                 if (result.eligibleToApply()) {
@@ -987,9 +992,10 @@ public class FolioAccountingPriceService {
                         progress, method, selectedSkus, false, protectedBaseline,
                         committedForBatchVerification, recoveryBaseline);
             } catch (RuntimeException applyError) {
+                boolean earlierCommitsVerified = progress.committedChunks == 0;
                 if (safeApplyOnly && !committedForBatchVerification.isEmpty()) {
                     try {
-                        finalizeNativeSelectionVerification(
+                        earlierCommitsVerified = finalizeNativeSelectionVerification(
                                 progress, method, selectedSkus, protectedBaseline,
                                 committedForBatchVerification);
                     } catch (RuntimeException verificationError) {
@@ -999,6 +1005,18 @@ public class FolioAccountingPriceService {
                                 committedForBatchVerification.size(),
                                 safeMessage(verificationError), verificationError);
                     }
+                }
+                if (safeApplyOnly && applyError instanceof RolledBackSkuLockException
+                        && earlierCommitsVerified && progress.failedChunk == null
+                        && committedForBatchVerification.size() == progress.committedChunks) {
+                    progress.errorCode = "FOLIO_LOCK_BUSY_RETRYABLE_AFTER_SNAPSHOT";
+                    progress.recommendation = "Wait and continue through a fresh product snapshot.";
+                    progress.returnCode = null;
+                    progress.currentUnits = null;
+                    progress.procedureCurrentUnits = null;
+                    progress.procedureTotalUnits = null;
+                    log.warn("[folio.accounting-price] native_lock_retryable_after_snapshot job={} warehouse={} sku={} committed={} verified=true",
+                            progress.jobId, progress.request.warehouseId(), progress.currentArt, progress.committedChunks);
                 }
                 throw applyError;
             }
@@ -1062,11 +1080,42 @@ public class FolioAccountingPriceService {
             nativeCheckpoint(progress, "SKU_TRANSACTION_START", sku);
             Set<String> seen = new HashSet<>();
             seen.add(sku);
-            NativeExecutedChunk executed = executeNativeChunk(
+            NativeExecutedChunk executed;
+            try {
+                executed = executeNativeChunk(
                     progress, progress.database, progress.request.warehouseId(), method,
                     sku, 0, 0, seen, rollbackOnly, canonicalTotal,
                     protectedBaseline, Set.of(), null, true,
                     recoveryBaseline.get(sku), !rollbackOnly, false);
+            } catch (RolledBackSkuArithmeticException failure) {
+                Issue diagnostic = diagnoseRawNativeArithmetic(progress, sku, failure.failure);
+                if (progress.reportedProblemKeys.add(diagnostic.code() + '\u0000' + sku)) {
+                    addNativeIssue(progress, diagnostic);
+                }
+                // Persist independently of the bounded status warning list. Failure to persist must be visible.
+                try {
+                    verificationRecorder.recordSkuFailureDiagnostic(progress.database, progress.request.warehouseId(),
+                            sku, progress.jobId, rollbackOnly, diagnostic);
+                } catch (RuntimeException journalError) {
+                    addNativeIssue(progress, issue("ARITHMETIC_DIAGNOSTIC_NOT_PERSISTED",
+                            "SKU rolled back, but diagnostic journal/FAILED state could not be saved",
+                            "sku", sku, "warehouseId", progress.request.warehouseId(), "committed", false,
+                            "reason", safeMessage(journalError)));
+                    throw journalError;
+                }
+                processed++;
+                progress.processedSku = processed;
+                progress.progressUnits = processed;
+                progress.returnCode = null; // no successful OUT result; do not reuse preceding SKU's zero
+                progress.currentUnits = null;
+                progress.procedureCurrentUnits = null;
+                progress.procedureTotalUnits = null;
+                nativeCheckpoint(progress, "SKU_ARITHMETIC_ROLLED_BACK_SKIPPED", sku);
+                log.warn("[folio.accounting-price] native_arithmetic_sku_skipped job={} warehouse={} sku={} diagnostics={}",
+                        progress.jobId, progress.request.warehouseId(), sku, diagnostic.details());
+                publishNative(progress, true, true, null);
+                continue; // explicit Java selection, never guess a SQL continuation cursor
+            }
             nativeCheckpoint(progress, "SKU_TRANSACTION_FINISHED", sku);
             NativeFullChunkOutput output = executed.output();
             progress.returnCode = output.returnCode();
@@ -1086,17 +1135,10 @@ public class FolioAccountingPriceService {
                 String key = (output.problemCode() == null
                         ? "FOLIO_NATIVE_RECALCULATION_PROBLEM"
                         : output.problemCode()) + '\u0000' + problemSku;
-                Issue issue = null;
+                Issue issue = persistNativeProblem(progress, problemSku, rollbackOnly,
+                        diagnoseNativeProblem(progress.request.warehouseId(), output, sku));
                 if (progress.reportedProblemKeys.add(key)) {
-                    issue = diagnoseNativeProblem(
-                            progress.request.warehouseId(), output, sku);
                     addNativeIssue(progress, issue);
-                }
-                if (!rollbackOnly) {
-                    recordFailedVerification(
-                            progress.database, progress.request.warehouseId(), problemSku,
-                            issue == null ? nativeProblemMessage(output)
-                                    : issue.code() + ": " + issue.message());
                 }
             } else if (!rollbackOnly) {
                 progress.committedChunks++;
@@ -1272,28 +1314,19 @@ public class FolioAccountingPriceService {
 
             if (output.hasProblem()) {
                 problemDetected = true;
-                Issue diagnosedIssue = null;
+                String failedSku = output.problemArt() == null ? output.art() : output.problemArt();
+                Issue diagnosedIssue = persistNativeProblem(progress, failedSku, rollbackOnly,
+                        diagnoseNativeProblem(progress.request.warehouseId(), output, cursor));
                 String problemKey = (output.problemCode() == null
                         ? "NEGATIVE_CHRONOLOGICAL_STOCK" : output.problemCode())
                         + '\u0000'
                         + (output.problemArt() == null ? output.art() : output.problemArt());
                 if (progress.reportedProblemKeys.add(problemKey)) {
-                    diagnosedIssue = diagnoseNativeProblem(
-                            progress.request.warehouseId(), output, cursor);
                     addNativeIssue(progress, diagnosedIssue);
                     log.warn("[folio.accounting-price] native_safe_sku_skipped job={} warehouse={} art={} code={} date={} checkpoint={} newArt={} committedChunks={}",
                             progress.jobId, progress.request.warehouseId(), output.art(),
                             output.problemCode(), output.problemDate(), cursor,
                             output.newArt(), progress.committedChunks);
-                }
-                if (!rollbackOnly) {
-                    String failedSku = output.problemArt() == null
-                            ? output.art() : output.problemArt();
-                    recordFailedVerification(
-                            progress.database, progress.request.warehouseId(), failedSku,
-                            diagnosedIssue == null
-                                    ? nativeProblemMessage(output)
-                                    : diagnosedIssue.code() + ": " + diagnosedIssue.message());
                 }
                 publishNative(progress, true, true, null);
                 // LAVKA_I_UCHET_TOVAR_SAFE processes exactly one SKU. Its
@@ -1622,10 +1655,18 @@ public class FolioAccountingPriceService {
                                                     boolean allowRestartRecovery,
                                                     boolean captureRollbackFingerprint) {
         AtomicReference<NativeExecutedChunk> preparedChunk = new AtomicReference<>();
+        AtomicReference<NativeProcedureArithmeticException> procedureFailure = new AtomicReference<>();
+        AtomicReference<NativeLockFailure> lockFailure = new AtomicReference<>();
+        AtomicReference<RuntimeException> lockCallbackError = new AtomicReference<>();
+        AtomicBoolean procedureStarted = new AtomicBoolean();
+        AtomicReference<Integer> validatedBoundary = new AtomicReference<>();
+        AtomicBoolean ownsTransaction = new AtomicBoolean();
         try {
             nativeCheckpoint(progress, "MSSQL_TRANSACTION_ACQUIRE", cursor);
             NativeExecutedChunk executed = Objects.requireNonNull(
                     nativeWriteTransaction.execute(status -> {
+                ownsTransaction.set(status.isNewTransaction());
+                try {
                 nativeCheckpoint(progress, "MUTEX_ACQUIRE", cursor);
                 dao.acquireRecalculationMutex(lockTimeoutMs);
                 nativeCheckpoint(progress, "SCOPE_VALIDATE", cursor);
@@ -1663,10 +1704,16 @@ public class FolioAccountingPriceService {
                         progress.preflightChunks++;
                     }
                     nativeCheckpoint(progress, "FOLIO_PROCEDURE_CALL", cursor);
-                    output = dao.callNativeFullChunk(
+                    procedureStarted.set(true);
+                    try {
+                        output = dao.callNativeFullChunk(
                             null, warehouseId,
                             method.calculationMode(), method.periodMode(), method.includeTax(),
                             cursor, 0, totalUnits, nativeFullTimeoutSeconds);
+                    } catch (NativeProcedureArithmeticException arithmetic) {
+                        procedureFailure.set(arithmetic);
+                        throw arithmetic;
+                    }
                     procedureCompleted = true;
                     nativeCheckpoint(progress, "FOLIO_PROCEDURE_RETURNED", cursor);
                 } finally {
@@ -1729,6 +1776,7 @@ public class FolioAccountingPriceService {
                     throw validationError;
                 }
                 String processedEndArt = null;
+                validatedBoundary.set(output.transactionCountAfter());
                 Optional<ProductFingerprint> fingerprint = Optional.empty();
                 if (!output.hasProblem()
                         && (!rollbackOnly || captureRollbackFingerprint)) {
@@ -1780,12 +1828,48 @@ public class FolioAccountingPriceService {
                         new NativeExecutedChunk(output, processedEndArt, fingerprint);
                 preparedChunk.set(prepared);
                 return prepared;
+                } catch (RuntimeException failure) {
+                    if (partialSelection && !rollbackOnly && progress.request.isSafeApplyOnly()
+                            && progress.failedChunk == null) {
+                        if (failure instanceof NativeLockFailure evidence) {
+                            lockFailure.set(evidence);
+                            lockCallbackError.set(failure);
+                        } else if (!isNativeOutcomeUnknown(failure) && NativeLockFailure.lockCode(failure) != 0) {
+                            Integer after = null;
+                            try { after = dao.nativeTransactionCount(); }
+                            catch (RuntimeException boundaryError) { failure.addSuppressed(boundaryError); }
+                            lockFailure.set(new NativeLockFailure(failure, validatedBoundary.get(),
+                                    after, !procedureStarted.get()));
+                            lockCallbackError.set(failure);
+                        }
+                    }
+                    throw failure;
+                }
             }));
             nativeCheckpoint(progress, "TRANSACTION_FINISHED", cursor);
             return executed;
-        } catch (CannotAcquireLockException e) {
-            throw new FolioAccountingPriceBusyException(e);
         } catch (RuntimeException error) {
+            if (lockFailure.get() != null) {
+                if (error == lockCallbackError.get() && ownsTransaction.get()
+                        && lockFailure.get().rollbackBoundaryKnown()) {
+                    throw new RolledBackSkuLockException(cursor, error);
+                }
+                progress.errorCode = "NATIVE_LOCK_ROLLBACK_UNCONFIRMED";
+                progress.recommendation = "Do not retry automatically; verify the transaction outcome for " + cursor;
+                throw new NativeOutcomeUnknownException("Could not confirm lock-error rollback for SKU " + cursor, error);
+            }
+            NativeProcedureArithmeticException arithmetic = procedureFailure.get();
+            if (partialSelection && arithmetic != null) {
+                // TransactionTemplate rethrows the original callback exception only AFTER rollback returned.
+                // A rollback exception or participation in an outer transaction is not proof of rollback.
+                if (error == arithmetic && ownsTransaction.get() && arithmetic.boundaryPreserved()) {
+                    throw new RolledBackSkuArithmeticException(arithmetic);
+                }
+                progress.errorCode = "NATIVE_ARITHMETIC_ROLLBACK_UNCONFIRMED";
+                progress.recommendation = "Do not retry automatically; verify the transaction outcome for " + cursor;
+                throw new NativeOutcomeUnknownException(
+                        "Could not confirm arithmetic-error rollback for SKU " + cursor, error);
+            }
             if (allowRestartRecovery && partialSelection && !rollbackOnly
                     && isNativeOutcomeUnknown(error)) {
                 return recoverNativeSelectionAfterRestart(
@@ -2095,7 +2179,7 @@ public class FolioAccountingPriceService {
         }
     }
 
-    private void finalizeNativeSelectionVerification(
+    private boolean finalizeNativeSelectionVerification(
             NativeProgress progress,
             AccountingMethod method,
             List<String> selectedSkus,
@@ -2135,12 +2219,21 @@ public class FolioAccountingPriceService {
         for (NativeSelectedProductChange change : verification.concurrentChanges()) {
             addNativeConcurrentChangeIssue(progress, change);
         }
-        recordNativeAppliedVerificationsBatch(progress, verification.fingerprints());
+        Set<String> required = Set.copyOf(committedSkus);
+        Set<String> captured = verification.fingerprints().stream()
+                .filter(fp -> progress.database.equals(fp.sourceDatabase())
+                        && fp.warehouseId() == progress.request.warehouseId()
+                        && fp.sourceDigest() != null && !fp.sourceDigest().isBlank())
+                .map(ProductFingerprint::sku).collect(java.util.stream.Collectors.toSet());
+        boolean allPersisted = recordNativeAppliedVerificationsBatch(progress, verification.fingerprints());
         log.info("[folio.accounting-price] native_selected_baseline_verified job={} warehouse={} selectedSkuCount={} committedSkuCount={} fingerprintCount={} concurrentChangeCount={} durationMs={}",
                 progress.jobId, progress.request.warehouseId(), selectedSkus.size(),
                 committedSkus.size(), verification.fingerprints().size(),
                 verification.concurrentChanges().size(),
                 (System.nanoTime() - startedNanos) / 1_000_000L);
+        return allPersisted && captured.equals(required)
+                && verification.fingerprints().size() == required.size()
+                && verification.concurrentChanges().stream().noneMatch(NativeSelectedProductChange::committed);
     }
 
     private static List<NativeSelectedProductChange> nativeSelectionChanges(
@@ -2283,10 +2376,58 @@ public class FolioAccountingPriceService {
         return new NativeProtectedSnapshot(rangeSkus, Map.copyOf(rangeStates));
     }
 
+    private Issue diagnoseRawNativeArithmetic(NativeProgress progress, String sku,
+                                             NativeProcedureArithmeticException error) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("sku", sku);
+        details.put("warehouseId", progress.request.warehouseId());
+        details.put("sourceDatabase", progress.database);
+        details.put("jobId", progress.jobId);
+        details.put("stage", "FOLIO_PROCEDURE_CALL");
+        details.put("procedure", "dbo.LAVKA_I_UCHET_TOVAR_SAFE");
+        details.put("accountingMethod", progress.accountingMethod);
+        details.put("committed", false);
+        details.put("rollbackConfirmed", true);
+        details.put("skipped", true);
+        details.put("transactionCountBefore", error.transactionCountBefore());
+        details.put("transactionCountAfterError", error.transactionCountAfterError());
+        details.put("formulaConfirmed", false);
+        details.put("documentConfirmed", false);
+        details.put("diagnosticStatus", "SQL_DIVISION_CONFIRMED_EXPRESSION_NOT_REPORTED");
+        details.put("recommendation", "Inspect the safe procedure's unguarded division for this SKU. "
+                + "Read-only inspection findings are candidates, not proof of the failing document/formula. "
+                + "Correct only after confirming the cause; rerun this SKU explicitly after correction.");
+        List<Map<String, Object>> sqlErrors = new ArrayList<>();
+        SQLException sql = (SQLException) error.getCause();
+        Set<SQLException> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (; sql != null && sqlErrors.size() < 16 && seen.add(sql); sql = sql.getNextException()) {
+            Map<String, Object> sqlDetails = new LinkedHashMap<>();
+            sqlDetails.put("errorCode", sql.getErrorCode());
+            putIfNotNull(sqlDetails, "sqlState", sql.getSQLState());
+            String message = sql.getMessage();
+            if (message != null) sqlDetails.put("message", message.substring(0, Math.min(2000, message.length())));
+            sqlErrors.add(Map.copyOf(sqlDetails));
+        }
+        details.put("sqlErrors", List.copyOf(sqlErrors));
+        try {
+            var inspection = readTransaction.execute(status -> inspect(sku, progress.request.warehouseId(), false, true));
+            if (inspection != null) {
+                details.put("currentStateAfterRollback", inspection.before());
+                details.put("inspectionWarnings", inspection.warnings());
+                details.put("inspectionErrors", inspection.errors());
+            }
+        } catch (RuntimeException inspectionError) {
+            details.put("inspectionError", safeMessage(inspectionError));
+        }
+        return new Issue("ACCOUNTING_PRICE_DIVIDE_BY_ZERO",
+                "SQL division by zero for selected SKU; its transaction was rolled back, SKU skipped", Map.copyOf(details));
+    }
+
     private Issue diagnoseNativeProblem(int warehouseId,
                                         NativeFullChunkOutput output,
                                         String checkpointArt) {
-        if (output.problemCode() != null && !output.problemCode().isBlank()) {
+        if (output.problemCode() != null && !output.problemCode().isBlank()
+                && !"NEGATIVE_CHRONOLOGICAL_STOCK".equals(output.problemCode())) {
             Map<String, Object> details = new LinkedHashMap<>();
             details.put("sku", output.problemArt() == null
                     ? output.art() : output.problemArt());
@@ -2329,7 +2470,8 @@ public class FolioAccountingPriceService {
         try {
             FolioAccountingPriceRecalculationResponse inspection =
                     Objects.requireNonNull(readTransaction.execute(status ->
-                            inspect(output.art(), warehouseId, false, true)));
+                            inspect(output.problemArt() == null ? output.art() : output.problemArt(),
+                                    warehouseId, false, true)));
             Issue chronology = inspection.warnings().stream()
                     .filter(issue -> "NEGATIVE_CHRONOLOGICAL_STOCK".equals(issue.code()))
                     .findFirst()
@@ -2344,16 +2486,24 @@ public class FolioAccountingPriceService {
                 if (output.newArt() != null) {
                     details.put("nextArt", output.newArt());
                 }
-                return new Issue(chronology.code(), chronology.message(), Map.copyOf(details));
+                return new Issue(chronology.code(), chronology.message(),
+                        java.util.Collections.unmodifiableMap(details));
             }
         } catch (Exception e) {
             log.warn("[folio.accounting-price] native_problem_diagnostics_failed warehouse={} art={} msg={}",
                     warehouseId, output.art(), safeMessage(e));
         }
         return issue(
-                "FOLIO_NATIVE_RECALCULATION_PROBLEM",
+                "NEGATIVE_CHRONOLOGICAL_STOCK".equals(output.problemCode())
+                        ? output.problemCode() : "FOLIO_NATIVE_RECALCULATION_PROBLEM",
                 "Folio stopped the native accounting-price recalculation; the chunk was rolled back",
                 "warehouseId", warehouseId,
+                "stage", "FOLIO_PROCEDURE_POST_ROLLBACK_INSPECTION",
+                "triggerMovementConfirmed", false,
+                "businessRootCauseConfirmed", false,
+                "diagnosticStatus", "TRIGGER_MOVEMENT_NOT_RECONSTRUCTED",
+                "recommendation", "Refresh diagnostic preview during a quiet window; "
+                        + "the exact triggering movement could not be reconstructed after rollback.",
                 "procedureArt", output.art(),
                 "folioProblemDate", output.problemDate(),
                 "checkpointArt", checkpointArt,
@@ -2423,6 +2573,78 @@ public class FolioAccountingPriceService {
         progress.warnings.add(issue);
     }
 
+    private static Issue contextualDiagnostic(Issue issue, String database, int warehouseId,
+                                               String sku, String jobId, String defaultStage) {
+        Map<String, Object> details = new LinkedHashMap<>(issue.details());
+        details.put("sourceDatabase", database);
+        details.put("warehouseId", warehouseId);
+        details.put("sku", sku);
+        details.put("jobId", jobId);
+        details.putIfAbsent("stage", defaultStage);
+        details.put("skipped", true);
+        details.put("committed", false);
+        return new Issue(issue.code(), issue.message(), java.util.Collections.unmodifiableMap(details));
+    }
+
+    private static String journalFailureCode(Issue issue) {
+        return "NEGATIVE_CHRONOLOGICAL_STOCK".equals(issue.code())
+                ? "NEGATIVE_STOCK_DIAGNOSTIC_NOT_PERSISTED" : "SKU_DIAGNOSTIC_NOT_PERSISTED";
+    }
+
+    private Issue persistNativeProblem(NativeProgress progress, String sku,
+                                       boolean previewOnly, Issue problem) {
+        Issue diagnostic = contextualDiagnostic(problem, progress.database,
+                progress.request.warehouseId(), sku, progress.jobId, "FOLIO_PROCEDURE_CALL");
+        try {
+            // Run after MSSQL rollback, on MariaDB. Never gate persistence on warning deduplication/caps.
+            verificationRecorder.recordSkuFailureDiagnostic(progress.database, progress.request.warehouseId(),
+                    sku, progress.jobId, previewOnly, diagnostic);
+        } catch (RuntimeException error) {
+            String code = journalFailureCode(problem);
+            log.error("[folio.accounting-price] diagnostic_not_persisted job={} warehouse={} sku={} diagnostic={}",
+                    progress.jobId, progress.request.warehouseId(), sku, diagnostic, error);
+            addNativeIssue(progress, issue(code, "SKU was not committed; diagnostic journal could not be saved",
+                    "sku", sku, "warehouseId", progress.request.warehouseId(), "jobId", progress.jobId,
+                    "committed", false, "reason", safeMessage(error)));
+            throw new IllegalStateException(code + ": " + sku, error);
+        }
+        return diagnostic;
+    }
+
+    private FolioAccountingPriceRecalculationResponse recordInspectionDiagnostic(
+            FolioAccountingPriceRecalculationResponse response, String jobId, String database) {
+        if (response.eligibleToApply() || response.procedureExecuted()) return response;
+        List<Issue> problems = new ArrayList<>(response.warnings());
+        problems.addAll(response.errors());
+        if (problems.isEmpty()) return response;
+        // One primary failure per job/SKU. Keep other findings nested rather than overwrite the row.
+        Issue primary = problems.stream().filter(p -> "NEGATIVE_CHRONOLOGICAL_STOCK".equals(p.code()))
+                .findFirst().orElse(problems.get(0));
+        Issue diagnostic = contextualDiagnostic(primary, database, response.requestedWarehouseId(),
+                response.sku(), jobId, "JAVA_PREFLIGHT");
+        Map<String, Object> details = new LinkedHashMap<>(diagnostic.details());
+        details.put("relatedIssues", problems.stream().filter(p -> p != primary).toList());
+        diagnostic = new Issue(primary.code(), primary.message(), java.util.Collections.unmodifiableMap(details));
+        List<Issue> warnings = new ArrayList<>(response.warnings());
+        List<Issue> errors = new ArrayList<>(response.errors());
+        if (warnings.contains(primary)) warnings.set(warnings.indexOf(primary), diagnostic);
+        else errors.set(errors.indexOf(primary), diagnostic);
+        try {
+            verificationRecorder.recordSkuFailureDiagnostic(database, response.requestedWarehouseId(),
+                    response.sku(), jobId, response.previewOnly(), diagnostic);
+        } catch (RuntimeException error) {
+            log.error("[folio.accounting-price] diagnostic_not_persisted job={} sku={}", jobId, response.sku(), error);
+            errors.add(issue(journalFailureCode(primary), "SKU was not committed; diagnostic journal could not be saved",
+                    "sku", response.sku(), "warehouseId", response.requestedWarehouseId(), "jobId", jobId,
+                    "committed", false, "reason", safeMessage(error)));
+        }
+        return new FolioAccountingPriceRecalculationResponse(errors.isEmpty() && response.ok(),
+                response.previewOnly(), response.status(), response.sku(), response.requestedWarehouseId(),
+                response.affectedWarehouseIds(), response.accountingMethod(), response.eligibleToApply(),
+                response.procedureExecuted(), response.priceChanged(), response.before(), response.after(),
+                List.copyOf(warnings), List.copyOf(errors));
+    }
+
     private FolioAccountingPriceRecalculationResponse recordAppliedVerification(
             AppliedProduct applied) {
         FolioAccountingPriceRecalculationResponse response = applied.response();
@@ -2460,20 +2682,23 @@ public class FolioAccountingPriceService {
         }
     }
 
-    private void recordNativeAppliedVerificationsBatch(
+    private boolean recordNativeAppliedVerificationsBatch(
             NativeProgress progress,
             List<ProductFingerprint> fingerprints) {
-        if (fingerprints == null || fingerprints.isEmpty()) return;
+        if (fingerprints == null || fingerprints.isEmpty()) return true;
         try {
             Set<String> confirmed = Objects.requireNonNullElse(
                     verificationRecorder.confirmAppliedBatch(fingerprints), Set.of());
+            boolean complete = true;
             for (ProductFingerprint fingerprint : fingerprints) {
                 if (!confirmed.contains(fingerprint.sku())) {
+                    complete = false;
                     addNativeIssue(progress, snapshotConfirmationIssue(
                             fingerprint.sku(), fingerprint.warehouseId(),
                             "The active product snapshot has no matching SKU row"));
                 }
             }
+            return complete;
         } catch (RuntimeException error) {
             ProductFingerprint first = fingerprints.get(0);
             log.error("[folio.product.snapshot] native_applied_digest_batch_publish_failed job={} db={} warehouse={} skuCount={}",
@@ -2483,6 +2708,7 @@ public class FolioAccountingPriceService {
                 addNativeIssue(progress, snapshotConfirmationIssue(
                         fingerprint.sku(), fingerprint.warehouseId(), safeMessage(error)));
             }
+            return false;
         }
     }
 
@@ -3066,6 +3292,14 @@ public class FolioAccountingPriceService {
         return Map.copyOf(details);
     }
 
+    private static Map<String, Object> nullableDiagnosticMap(Object... keyValues) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        for (int i = 0; i + 1 < keyValues.length; i += 2) {
+            details.put(String.valueOf(keyValues[i]), keyValues[i + 1]);
+        }
+        return java.util.Collections.unmodifiableMap(details);
+    }
+
     private static void putIfNotNull(Map<String, Object> target,
                                      String key,
                                      Object value) {
@@ -3400,6 +3634,20 @@ public class FolioAccountingPriceService {
             extends RuntimeException {
         private NativeNegativeDuringApplyException(String message) {
             super(message);
+        }
+    }
+
+    private static final class RolledBackSkuLockException extends RuntimeException {
+        private RolledBackSkuLockException(String sku, Throwable cause) {
+            super("Folio lock conflict for SKU " + sku + "; current transaction rolled back before commit", cause);
+        }
+    }
+
+    private static final class RolledBackSkuArithmeticException extends RuntimeException {
+        private final NativeProcedureArithmeticException failure;
+        private RolledBackSkuArithmeticException(NativeProcedureArithmeticException failure) {
+            super(failure.getMessage(), failure);
+            this.failure = failure;
         }
     }
 

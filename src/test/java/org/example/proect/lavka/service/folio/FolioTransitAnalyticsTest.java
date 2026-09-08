@@ -21,6 +21,8 @@ class FolioTransitAnalyticsTest {
         assertThat(disabled.enabled()).isFalse();
         assertThat(disabled.warehouseId()).isNull();
         assertThat(disabled.availableForPlanningQuantity()).isEqualByComparingTo("0");
+        assertThat(disabled.availableForNetworkPlanningQuantity()).isEqualByComparingTo("0");
+        assertThat(disabled.networkPlanningReady()).isTrue();
     }
 
     @Test void invalidRevisionIdsAndSourceLimitFailClosed() {
@@ -40,27 +42,34 @@ class FolioTransitAnalyticsTest {
         var b = row("8","0","8",0,1,1);
         var data = Map.of(9,Map.of("SKU",a),10,Map.of("SKU",b));
         var stock = FolioTransitAnalytics.stock(capability(9,10),data,"SKU");
-        assertThat(stock.availableForPlanningQuantity()).isEqualByComparingTo("20");
+        assertThat(stock.availableForPlanningQuantity()).isNull();
+        assertThat(stock.availableForNetworkPlanningQuantity()).isNull();
+        assertThat(stock.availableQuantity()).isEqualByComparingTo("20");
         assertThat(stock.knownAvailableForPlanningQuantity()).isEqualByComparingTo("20");
         assertThat(stock.sources()).hasSize(2);
-        assertThat(stock.ready()).isTrue();
+        assertThat(stock.ready()).isFalse();
+        assertThat(stock.networkPlanningStatus()).isEqualTo("NETWORK_SNAPSHOT_CONSISTENCY_UNCONFIRMED");
         assertThat(stock.warehouseId()).isNull();
         assertThat(stock.sources().get(0).suppliers().get(0).receiptQuantityInHorizon()).isEqualByComparingTo("1000");
         var legacy = FolioTransitAnalytics.stock(capability(9),data,"SKU");
         assertThat(legacy.warehouseId()).isEqualTo(9);
         assertThat(legacy.generationId()).isEqualTo(109);
-        assertThat(legacy.status()).isEqualTo("CONFIRMED_SUPPLIER_ORIGIN");
-        assertThat(legacy.availableForPlanningQuantity()).isEqualByComparingTo("12");
+        assertThat(legacy.sources().get(0).supplierOriginStatus()).isEqualTo("CONFIRMED_SUPPLIER_ORIGIN");
+        assertThat(legacy.sources().get(0).supplierInTransitAvailableQuantity()).isEqualByComparingTo("12");
+        assertThat(legacy.supplierInTransitAvailableQuantity()).isNull();
     }
 
-    @Test void unknownMissingMixedOrNegativeSourceNeverCreatesCompleteTotal() {
-        List<TransitRow> invalid = List.of(row("8","0","8",0,2,1),row("8","0","8",1,2,2),
-                row("8","0","8",-1,2,2),row("8","9","-1",0,2,2),row("8","0","9",0,2,2));
+    @Test void unknownMissingOrNegativeSourceNeverCreatesCompleteTotal() {
+        List<TransitRow> invalid = List.of(row("-1","0","-1",0,2,2),row("8","-1","9",0,2,2),
+                row("8","9","-1",0,2,2),row("8","0","9",0,2,2),
+                new TransitRow("SKU",null,BigDecimal.ZERO,BigDecimal.ONE,null,0,0,null,List.of()));
         for (var bad : invalid) {
             var stock = FolioTransitAnalytics.stock(capability(9,10),Map.of(
                     9,Map.of("SKU",row("12","0","12",0,1,1)),10,Map.of("SKU",bad)),"SKU");
             assertThat(stock.status()).isEqualTo("INCOMPLETE_TRANSIT_DATA");
             assertThat(stock.availableForPlanningQuantity()).isNull();
+            assertThat(stock.availableForNetworkPlanningQuantity()).isNull();
+            assertThat(stock.sources().get(1).availableForNetworkPlanningQuantity()).isNull();
             assertThat(stock.knownAvailableForPlanningQuantity()).isEqualByComparingTo("12");
         }
         var absent = FolioTransitAnalytics.stock(capability(9),Map.of(),"SKU");
@@ -73,8 +82,10 @@ class FolioTransitAnalyticsTest {
 
     @Test void zeroIsConfirmedOnlyFromAnExistingNonnegativeBalancedCard() {
         var stock = FolioTransitAnalytics.stock(capability(9),Map.of(9,Map.of("SKU",row("0","0","0",0,0,0))),"SKU");
-        assertThat(stock.status()).isEqualTo("NO_IN_TRANSIT_STOCK");
-        assertThat(stock.availableForPlanningQuantity()).isEqualByComparingTo("0");
+        assertThat(stock.sources().get(0).status()).isEqualTo("NO_AVAILABLE_TRANSIT_STOCK");
+        assertThat(stock.sources().get(0).availableForNetworkPlanningQuantity()).isEqualByComparingTo("0");
+        // Even a zero snapshot cannot certify stock at the time of the other snapshots.
+        assertThat(stock.availableForNetworkPlanningQuantity()).isNull();
     }
 
     @Test void overlapWithAnalysisStockBlocksDeductionRatherThanDoubleCounting() {
@@ -82,6 +93,7 @@ class FolioTransitAnalyticsTest {
         var stock = FolioTransitAnalytics.stock(cap,Map.of(9,Map.of("SKU",row("12","0","12",0,1,1))),"SKU");
         assertThat(stock.status()).isEqualTo("TRANSIT_SCOPE_OVERLAP");
         assertThat(stock.availableForPlanningQuantity()).isNull();
+        assertThat(stock.availableForNetworkPlanningQuantity()).isNull();
         assertThat(stock.sources().get(0).availableForPlanningQuantity()).isEqualByComparingTo("12");
     }
 
@@ -95,6 +107,49 @@ class FolioTransitAnalyticsTest {
                 .isEqualTo("INCOMPLETE_SNAPSHOT_METADATA");
     }
 
+    @Test void internalMixedAndOpeningStockAreNetworkStockButNotConfirmedSupplierTransit() {
+        var inputs = List.of(row("8","2","6",0,2,0), row("8","2","6",0,2,1),
+                row("8","2","6",1,2,2), row("8","2","6",0,0,0),
+                new TransitRow("SKU",new BigDecimal("8"),new BigDecimal("2"),new BigDecimal("6"),
+                        null,2,2,null,List.of()));
+        for (var input : inputs) {
+            var stock = FolioTransitAnalytics.stock(capability(9),Map.of(9,Map.of("SKU",input)),"SKU");
+            var source = stock.sources().get(0);
+            assertThat(source.status()).isEqualTo("AVAILABLE_PHYSICAL_STOCK");
+            assertThat(source.availableForNetworkPlanningQuantity()).isEqualByComparingTo("6");
+            assertThat(source.supplierInTransitAvailableQuantity()).isNull();
+            assertThat(source.supplierOriginConfirmed()).isFalse();
+        }
+    }
+
+    @Test void identicalTimestampsCannotCertifyThatTheSameTransferredUnitWasNotCountedTwice() {
+        var cap = capability(9,10);
+        assertThat(cap.networkSnapshotConsistency().salesSources()).extracting("warehouseId").containsExactly(1);
+        assertThat(cap.networkSnapshotConsistency().transitSources()).extracting("generationId").containsExactly(109L,110L);
+        assertThat(cap.networkSnapshotConsistency().confirmed()).isFalse();
+        var stock = FolioTransitAnalytics.stock(cap,Map.of(9,Map.of("SKU",row("1","0","1",0,1,0)),
+                10,Map.of("SKU",row("1","0","1",0,1,0))),"SKU");
+        assertThat(stock.availableQuantity()).isEqualByComparingTo("2"); // diagnostic, not two proven units
+        assertThat(stock.availableForNetworkPlanningQuantity()).isNull();
+        assertThat(stock.networkPlanningReady()).isFalse();
+    }
+
+    @Test void jsonSeparatesPhysicalNetworkQuantityFromSupplierTransitAndPublishesNullGate() {
+        var stock = FolioTransitAnalytics.stock(capability(9),
+                Map.of(9,Map.of("SKU",row("8","2","6",0,2,0))),"SKU");
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+                .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+        var json = mapper.valueToTree(stock);
+        assertThat(json.get("calculationVersion").asInt()).isEqualTo(3);
+        assertThat(json.get("availableForNetworkPlanningQuantity").isNull()).isTrue();
+        assertThat(json.get("networkPlanningReady").asBoolean()).isFalse();
+        var source = json.get("sources").get(0);
+        assertThat(source.get("availableForNetworkPlanningQuantity").decimalValue()).isEqualByComparingTo("6");
+        assertThat(source.get("supplierInTransitAvailableQuantity").isNull()).isTrue();
+        assertThat(json.get("networkSnapshotConsistency").get("salesSources").get(0).get("generationId").asLong())
+                .isEqualTo(101);
+    }
+
     static TransitCalculation config(Integer... ids) {
         return FolioTransitAnalytics.normalize(calculation(new TransitCalculation(List.of(ids),null)));
     }
@@ -104,7 +159,8 @@ class FolioTransitAnalyticsTest {
                 LocalDate.of(2026,9,1),LocalDateTime.of(2026,9,1,0,0),"ACTIVE");
     }
     private static org.example.proect.lavka.dto.folio.FolioProductAnalyticsCapabilitiesResponse.TransitCapability capability(Integer... ids) {
-        return FolioTransitAnalytics.capability(config(ids),Arrays.stream(ids).map(FolioTransitAnalyticsTest::generation).toList(),List.of(1),5);
+        return FolioTransitAnalytics.capability(config(ids),Arrays.stream(ids).map(FolioTransitAnalyticsTest::generation).toList(),
+                List.of(1),List.of(generation(1)),5);
     }
     static TransitRow row(String physical,String reserve,String available,int opening,int inbound,int supplierInbound) {
         return new TransitRow("SKU",new BigDecimal(physical),new BigDecimal(reserve),new BigDecimal(available),

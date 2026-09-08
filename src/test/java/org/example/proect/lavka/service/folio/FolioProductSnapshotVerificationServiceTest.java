@@ -23,6 +23,33 @@ class FolioProductSnapshotVerificationServiceTest {
             Instant.parse("2026-08-20T10:00:00Z"), ZoneOffset.UTC);
 
     @Test
+    void serializesCompleteNegativeDiagnosticIncludingZeroAndUnknownValues() throws Exception {
+        var sourceDao = mock(FolioProductSnapshotSourceDao.class);
+        var snapshotDao = mock(FolioProductSnapshotDao.class);
+        var service = new FolioProductSnapshotVerificationService(sourceDao, snapshotDao, CLOCK);
+        var details = new java.util.LinkedHashMap<String, Object>();
+        details.put("quantityBefore", java.math.BigDecimal.ZERO);
+        details.put("quantityAfter", java.math.BigDecimal.ONE.negate());
+        details.put("documentNumber", null);
+        details.put("documentDate", LocalDateTime.of(2026, 9, 7, 0, 0));
+        var issue = new org.example.proect.lavka.dto.folio.FolioAccountingPriceRecalculationResponse.Issue(
+                "NEGATIVE_CHRONOLOGICAL_STOCK", "negative stock", details);
+        service.recordSkuFailureDiagnostic("Paint_Ua", 5, "SKU", "job", true, issue);
+        var json = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(snapshotDao).recordSkuFailureDiagnostic(org.mockito.ArgumentMatchers.eq("Paint_Ua"),
+                org.mockito.ArgumentMatchers.eq(5), org.mockito.ArgumentMatchers.eq("SKU"),
+                org.mockito.ArgumentMatchers.eq("job"), org.mockito.ArgumentMatchers.eq(true),
+                org.mockito.ArgumentMatchers.eq(issue.code()), org.mockito.ArgumentMatchers.eq(issue.message()),
+                json.capture(), org.mockito.ArgumentMatchers.eq(LocalDateTime.ofInstant(CLOCK.instant(), ZoneOffset.UTC)));
+        var tree = new com.fasterxml.jackson.databind.ObjectMapper().readTree(json.getValue());
+        assertThat(tree.has("quantityBefore")).isTrue();
+        assertThat(tree.get("quantityBefore").decimalValue()).isEqualByComparingTo(java.math.BigDecimal.ZERO);
+        assertThat(tree.has("documentNumber")).isTrue();
+        assertThat(tree.get("documentNumber").isNull()).isTrue();
+        assertThat(tree.get("documentDate").asText()).isEqualTo("2026-09-07T00:00:00");
+    }
+
+    @Test
     void capturesExactFingerprintAndPublishesItAfterCommit() {
         FolioProductSnapshotSourceDao sourceDao =
                 mock(FolioProductSnapshotSourceDao.class);

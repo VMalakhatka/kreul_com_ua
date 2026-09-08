@@ -128,6 +128,11 @@ public record FolioProductAnalyticsQueryResponse(
             String configurationRevision,
             BigDecimal knownAvailableForPlanningQuantity,
             List<TransitSourceStock> sources,
+            BigDecimal availableForNetworkPlanningQuantity,
+            BigDecimal supplierInTransitAvailableQuantity,
+            boolean networkPlanningReady,
+            String networkPlanningStatus,
+            FolioProductAnalyticsCapabilitiesResponse.NetworkSnapshotConsistency networkSnapshotConsistency,
             List<String> warnings) {
     }
 
@@ -139,6 +144,9 @@ public record FolioProductAnalyticsQueryResponse(
             List<TransitSupplier> suppliers,
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd") LocalDate asOf,
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS") java.time.LocalDateTime completedAt,
+            BigDecimal availableForNetworkPlanningQuantity,
+            BigDecimal supplierInTransitAvailableQuantity,
+            String supplierOriginStatus,
             List<String> warnings) { }
 
     public record TransitSupplier(

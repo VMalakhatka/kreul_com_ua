@@ -38,12 +38,13 @@ class FolioAvailabilityMariaDbTest {
             for (String name : List.of("V8__folio_product_source_and_economic_snapshots.sql",
                     "V9__folio_product_movement_snapshot.sql", "V10__folio_product_snapshot_bounded_staging.sql",
                     "V11__folio_product_analytics_schema_v3.sql", "V12__folio_product_analytics_schema_v4.sql",
-                    "V13__folio_product_availability_history.sql"))
+                    "V13__folio_product_availability_history.sql", "V14__folio_accounting_price_diagnostic.sql"))
                 ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/wp/migration/" + name));
         }
     }
 
     @BeforeEach void seed() {
+        jdbc.update("DELETE FROM folio_accounting_price_diagnostic");
         jdbc.update("DELETE FROM folio_product_movement_fact");
         for (String table : List.of("folio_product_availability_monthly", "folio_product_availability_monthly_stage",
                 "folio_product_metric_current", "folio_product_metric_current_stage",
@@ -174,6 +175,7 @@ class FolioAvailabilityMariaDbTest {
     }
 
     @Test void configuredTransitSqlUsesCurrentGenerationAndSupplierIdentityNotHistoricReceipts() {
+        jdbc.update("UPDATE folio_product_snapshot_generation SET completed_at=NOW(3) WHERE source_database='Fixture'");
         for (int warehouse : List.of(1,7)) {
             int physical = warehouse == 1 ? 14 : 8;
             int reserve = warehouse == 1 ? 2 : 0;
@@ -203,11 +205,41 @@ class FolioAvailabilityMariaDbTest {
         var cap = org.example.proect.lavka.service.folio.FolioTransitAnalytics.capability(config,
                 dao.activeGenerations("Fixture",List.of(1,7)),List.of(5),5);
         var total = org.example.proect.lavka.service.folio.FolioTransitAnalytics.stock(cap,Map.of(1,first,7,second),"SKU-0");
-        assertThat(total.availableForPlanningQuantity()).isEqualByComparingTo("20");
+        assertThat(total.availableQuantity()).isEqualByComparingTo("20");
+        assertThat(total.availableForPlanningQuantity()).isNull();
+        assertThat(total.availableForNetworkPlanningQuantity()).isNull();
+        assertThat(total.sources().get(0).availableForNetworkPlanningQuantity()).isEqualByComparingTo("12");
         jdbc.update("UPDATE folio_product_movement_fact SET counterparty_short_name='' WHERE warehouse_id=1 AND movement_recno=1");
         assertThat(dao.transitRows("Fixture",1,1,List.of("SKU-0"),List.of("Т","I")).get("SKU-0").supplierInboundCount()).isZero();
         jdbc.update("UPDATE folio_product_metric_current SET generation_id=7 WHERE source_database='Fixture' AND warehouse_id=1 AND sku='SKU-0'");
         assertThat(dao.transitRows("Fixture",1,1,List.of("SKU-0"),List.of("Т","I"))).isEmpty();
+    }
+
+    @Test void arithmeticJournalPersistsCompleteJsonAndPreviewDoesNotChangeVerification() {
+        jdbc.update("""
+                INSERT INTO folio_product_snapshot_item
+                    (source_database,warehouse_id,sku,observed_digest,applied_digest,verification_state,
+                     present_in_folio,first_seen_at,last_seen_at,last_observed_at,last_generation_id)
+                VALUES ('Fixture',1,'ARITHMETIC','same','same','VERIFIED',1,NOW(),NOW(),NOW(),1)
+                """);
+        String json = "{\"sku\":\"ARITHMETIC\",\"rollbackConfirmed\":true,\"detail\":\"" + "x".repeat(2000) + "\"}";
+        snapshots.recordSkuFailureDiagnostic("Fixture",1,"ARITHMETIC","job",true,"ACCOUNTING_PRICE_DIVIDE_BY_ZERO",
+                "rolled back",json,LocalDateTime.now());
+        assertThat(jdbc.queryForObject("SELECT verification_state FROM folio_product_snapshot_item WHERE sku='ARITHMETIC'",String.class))
+                .isEqualTo("VERIFIED");
+        snapshots.recordSkuFailureDiagnostic("Fixture",1,"ARITHMETIC","job",false,"ACCOUNTING_PRICE_DIVIDE_BY_ZERO",
+                "rolled back",json,LocalDateTime.now());
+        snapshots.recordSkuFailureDiagnostic("Fixture",1,"ARITHMETIC","job",false,"NEGATIVE_CHRONOLOGICAL_STOCK",
+                "negative stock",json,LocalDateTime.now());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM folio_accounting_price_diagnostic",Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT error_code FROM folio_accounting_price_diagnostic WHERE preview_only=0",String.class))
+                .isEqualTo("NEGATIVE_CHRONOLOGICAL_STOCK");
+        assertThat(jdbc.queryForObject("SELECT last_error FROM folio_product_snapshot_item WHERE sku='ARITHMETIC'",String.class))
+                .contains("NEGATIVE_CHRONOLOGICAL_STOCK", "jobId=job");
+        assertThat(jdbc.queryForObject("SELECT diagnostics_json FROM folio_accounting_price_diagnostic WHERE preview_only=0",String.class))
+                .isEqualTo(json);
+        assertThat(jdbc.queryForMap("SELECT verification_state,applied_digest FROM folio_product_snapshot_item WHERE sku='ARITHMETIC'"))
+                .containsEntry("verification_state","FAILED").containsEntry("applied_digest",null);
     }
 
     static QuerySpec spec(AvailabilityCalculation options,List<SortSpec> sort) {

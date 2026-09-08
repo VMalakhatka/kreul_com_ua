@@ -226,6 +226,25 @@ public class FolioProductSnapshotDao {
     }
 
     @Transactional(transactionManager = "wpTransactionManager")
+    public void recordSkuFailureDiagnostic(String sourceDatabase, int warehouseId, String sku,
+            String jobId, boolean previewOnly, String code, String message, String diagnosticsJson, LocalDateTime at) {
+        jdbc.update("""
+                INSERT INTO folio_accounting_price_diagnostic
+                    (job_id,source_database,warehouse_id,sku,preview_only,error_code,message,diagnostics_json,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?)
+                ON DUPLICATE KEY UPDATE error_code=VALUES(error_code),
+                    message=VALUES(message),diagnostics_json=VALUES(diagnostics_json)
+                """, jobId, sourceDatabase, warehouseId, sku, previewOnly, code, message, diagnosticsJson, ts(at));
+        if (!previewOnly) {
+            jdbc.update("""
+                    UPDATE folio_product_snapshot_item
+                       SET verification_state='FAILED',applied_digest=NULL,last_error=?
+                     WHERE source_database=? AND warehouse_id=? AND sku=? AND present_in_folio=1
+                    """, truncate(code + ": " + message + "; jobId=" + jobId, 1000), sourceDatabase, warehouseId, sku);
+        }
+    }
+
+    @Transactional(transactionManager = "wpTransactionManager")
     public void publish(Publish publish) {
         saveItems(publish.items());
         saveChanges(publish.changes());

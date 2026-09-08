@@ -470,8 +470,25 @@ public class FolioAccountingPriceDao {
                         transactionCount(connection),
                         resultRowCount
                 );
+            } catch (SQLException error) {
+                boolean arithmetic = NativeProcedureArithmeticException.isolatedDivideByZero(error);
+                boolean lock = NativeLockFailure.lockCode(error) != 0;
+                if (!arithmetic && !lock) throw error;
+                Integer afterError = null;
+                try {
+                    afterError = transactionCount(connection);
+                } catch (SQLException boundaryError) {
+                    error.addSuppressed(boundaryError);
+                }
+                if (lock) throw new NativeLockFailure(error, transactionCountBefore, afterError, false);
+                throw new NativeProcedureArithmeticException(error, transactionCountBefore, afterError);
             }
         });
+    }
+
+    /** Caller must still be inside its Spring transaction; used only after a lock error. */
+    public Integer nativeTransactionCount() {
+        return jdbc.execute((Connection connection) -> transactionCount(connection));
     }
 
     public List<NativeChronologyProblem> findNativeChronologyProblems(
@@ -1077,9 +1094,11 @@ public class FolioAccountingPriceDao {
     }
 
     private static int transactionCount(Connection connection) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("SELECT @@TRANCOUNT");
-             ResultSet resultSet = statement.executeQuery()) {
-            return resultSet.next() ? resultSet.getInt(1) : -1;
+        try (PreparedStatement statement = connection.prepareStatement("SELECT @@TRANCOUNT")) {
+            statement.setQueryTimeout(10);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getInt(1) : -1;
+            }
         }
     }
 

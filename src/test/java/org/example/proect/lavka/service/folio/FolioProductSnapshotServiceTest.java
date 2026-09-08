@@ -68,8 +68,9 @@ class FolioProductSnapshotServiceTest {
         assertThat(response.recommendation()).contains("Start snapshot refresh again");
     }
 
-    @Test
-    void stagesBoundedSourceOutputBeforePublishingGeneration() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void stagesBoundedSourceOutputBeforePublishingGeneration(boolean existingFailure) {
         FolioProductSnapshotSourceDao source = mock(FolioProductSnapshotSourceDao.class);
         FolioProductSnapshotDao snapshot = mock(FolioProductSnapshotDao.class);
         FolioAccountingPriceDao accounting = mock(FolioAccountingPriceDao.class);
@@ -81,7 +82,11 @@ class FolioProductSnapshotServiceTest {
         when(snapshot.renewLease(anyString(), anyString(), anyInt())).thenReturn(true);
         when(snapshot.createGeneration(anyString(), anyInt(), anyInt(), anyString(), any()))
                 .thenReturn(17L);
-        when(snapshot.findExisting("Paint_Ua", 5)).thenReturn(Map.of());
+        when(snapshot.findExisting("Paint_Ua", 5)).thenReturn(existingFailure
+                ? Map.of(product.sku(), new FolioProductSnapshotDao.ExistingItem(product.sku(),
+                product.productName(), null, "UNKNOWN", product.sourceDigest(), null, "FAILED", true,
+                1, 1L, 1L, null, null, 0, LocalDateTime.of(2026, 8, 1, 0, 0),
+                LocalDateTime.of(2026, 8, 1, 0, 0), "NEGATIVE_CHRONOLOGICAL_STOCK; jobId=previous")) : Map.of());
         doAnswer(invocation -> {
             CaptureConsumer consumer = invocation.getArgument(4);
             consumer.acceptMovementBatch(List.of(movement));
@@ -108,6 +113,13 @@ class FolioProductSnapshotServiceTest {
         verify(snapshot).publish(publish.capture());
         assertThat(publish.getValue().movementFactRows()).isEqualTo(1);
         assertThat(publish.getValue().monthlyMetricRows()).isEqualTo(1);
+        if (existingFailure) {
+            assertThat(publish.getValue().items()).singleElement().satisfies(item -> {
+                assertThat(item.state()).isEqualTo("FAILED");
+                assertThat(item.appliedDigest()).isNull();
+                assertThat(item.lastError()).contains("NEGATIVE_CHRONOLOGICAL_STOCK", "jobId=previous");
+            });
+        }
     }
 
     @Test

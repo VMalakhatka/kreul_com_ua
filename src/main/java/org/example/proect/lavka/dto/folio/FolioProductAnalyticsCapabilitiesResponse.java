@@ -71,8 +71,13 @@ public record FolioProductAnalyticsCapabilitiesResponse(
             List<Integer> warehouseIds,
             String configurationRevision,
             List<TransitSourceCapability> sources,
+            NetworkSnapshotConsistency networkSnapshotConsistency,
             List<String> warnings) {
     }
+
+    public record NetworkSnapshotConsistency(String status, boolean confirmed,
+            List<TransitSourceCapability> salesSources, List<TransitSourceCapability> transitSources,
+            String recommendation) { }
 
     public record TransitSourceCapability(int warehouseId, String warehouseName, Long generationId,
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd") LocalDate asOf,
