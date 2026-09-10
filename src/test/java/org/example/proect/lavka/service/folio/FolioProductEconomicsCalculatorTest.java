@@ -16,6 +16,19 @@ class FolioProductEconomicsCalculatorTest {
             new FolioProductEconomicsCalculator();
 
     @Test
+    void folioFreeStockIsPreservedForKr49600IncludingNegativeAvailability() {
+        String[][] samples = {{"19", "-11", "30"}, {"16", "-14", "30"}, {"607", "142", "465"}, {"20", "20", "0"}};
+        for (String[] sample : samples) {
+            BigDecimal reserved = org.example.proect.lavka.dao.folio.FolioProductSnapshotSourceDao
+                    .reservedFromAvailable(bd(sample[0]), bd(sample[1]));
+            var result = calculator.calculate(List.of(card("KR-49600", bd(sample[0]), reserved, bd("1"), 4)),
+                    List.of(), LocalDate.of(2026, 5, 1), LocalDate.of(2026, 9, 10));
+            assertThat(result.current().get(0).availableQuantity()).isEqualByComparingTo(sample[1]);
+            assertThat(result.current().get(0).reservedQuantity()).isEqualByComparingTo(sample[2]);
+        }
+    }
+
+    @Test
     void calculatesCapitalGrossProfitTurnsAndCoverage() {
         LocalDate asOf = LocalDate.of(2026, 8, 19);
         ProductCard card = card("SKU-1", bd("25"), bd("5"), bd("10"), 4);

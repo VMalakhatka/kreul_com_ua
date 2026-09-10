@@ -275,7 +275,7 @@ public class FolioProductSnapshotSourceDao {
                     trim(rs.getString("DOP2_ARTIC")),
                     productDimensions(rs),
                     decimal(rs, "NACH_KOLCH"), decimal(rs, "KON_KOLCH"),
-                    decimal(rs, "REZ_KOLCH"), decimal(rs, "KOL_SUM"),
+                    reservedFromAvailable(decimal(rs, "KON_KOLCH"), decimal(rs, "REZ_KOLCH")), decimal(rs, "KOL_SUM"),
                     decimal(rs, "UCHET_SUM"), decimal(rs, "UCHET_CENA"),
                     decimal(rs, "UCHET_0_C"), decimal(rs, "UCHET_0_VL"),
                     trim(rs.getString("PRODUCT_TYPE_CODE")),
@@ -639,6 +639,12 @@ public class FolioProductSnapshotSourceDao {
 
     public record Warehouse(String databaseName, int warehouseId, String warehouseName,
                             BigDecimal rawAccountingCode, BigDecimal accountingGroup) {
+    }
+
+    // Folio REZ_KOLCH is free stock, not the quantity reserved by accounts.
+    // Preserve over-reservation: free stock can be negative.
+    public static BigDecimal reservedFromAvailable(BigDecimal physical, BigDecimal available) {
+        return physical.subtract(available);
     }
 
     public record ProductCard(

@@ -1,8 +1,14 @@
-# Product analytics schema v5
+# Product analytics schema v6
 
-Обновлено: 2026-09-06.
+Обновлено: 2026-09-11.
 
-Новое в v5: физическое наличие по дням, применимость MIN_TVRZAP и группы
+В v6 исправлена семантика свободного остатка: `availableQuantity=REZ_KOLCH`,
+`reservedQuantity=KON_KOLCH-REZ_KOLCH`. Нужны заново сформированные снимки
+версии 6; query отвергает старые поколения, включая v5. Точный lifecycle:
+[FOLIO_PRODUCT_SNAPSHOT_API.md](FOLIO_PRODUCT_SNAPSHOT_API.md#исправление-свободного-остатка-schema-6).
+Формат availability из v5 сохранён.
+
+Добавленное в v5: физическое наличие по дням, применимость MIN_TVRZAP и группы
 складов. Точный контракт и инструкция фронту:
 [FOLIO_PRODUCT_AVAILABILITY_FRONTEND_V5.md](FOLIO_PRODUCT_AVAILABILITY_FRONTEND_V5.md).
 Остальные экономические формулы, включая `coverageDays`, не менялись.
@@ -21,7 +27,7 @@ API строит отчёты только по активным product snapsho
    `POST /admin/folio/accounting-prices/snapshot/refresh` для каждого склада,
    который должен участвовать в аналитике.
 3. Дождаться `status=ACTIVE`, `phase=COMPLETED` и
-   `analyticsSchemaVersion=5`.
+   `analyticsSchemaVersion=6`.
 
 V12 использует `IF NOT EXISTS`, потому что MariaDB DDL не откатывается вместе
 с Flyway-транзакцией во всех режимах. После прерванного старта migration может

@@ -28,7 +28,7 @@ import java.util.Optional;
 @Repository
 public class FolioProductSnapshotDao {
 
-    public static final int ANALYTICS_SCHEMA_VERSION = 5;
+    public static final int ANALYTICS_SCHEMA_VERSION = 6;
     private static final int BATCH = 300;
     private final JdbcTemplate jdbc;
 

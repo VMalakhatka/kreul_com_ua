@@ -36,14 +36,23 @@ import static org.mockito.Mockito.when;
 class FolioProductAnalyticsServiceTest {
 
     @Test
-    void capabilitiesExposeOnlyConfirmedSchemaV5Fields() {
+    void freeStockFixRequiresRebuiltSnapshotsEvenForSchemaFive() {
+        FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
+        when(dao.activeGenerations("Paint_Ua", List.of(1, 5))).thenReturn(generations(5));
+        assertThatThrownBy(() -> new FolioProductAnalyticsService(dao).query(request(null, null)))
+                .isInstanceOfSatisfying(FolioProductAnalyticsException.class,
+                        error -> assertThat(error.code()).isEqualTo("ANALYTICS_SCHEMA_TOO_OLD"));
+    }
+
+    @Test
+    void capabilitiesExposeOnlyConfirmedSchemaV6Fields() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5)))
-                .thenReturn(generations(5));
+                .thenReturn(generations(6));
         when(dao.activeGenerations("Paint_Ua", List.of(7)))
-                .thenReturn(List.of(generation(107, 7, "Киев ОПТ", 5)));
+                .thenReturn(List.of(generation(107, 7, "Киев ОПТ", 6)));
         when(dao.activeGenerations("Paint_Ua", List.of(9)))
-                .thenReturn(List.of(generation(109, 9, "Транспорт", 5)));
+                .thenReturn(List.of(generation(109, 9, "Транспорт", 6)));
         when(dao.dictionaries("Paint_Ua", List.of(1, 5))).thenReturn(Map.of());
 
         var response = new FolioProductAnalyticsService(dao).capabilities(
@@ -69,7 +78,7 @@ class FolioProductAnalyticsServiceTest {
     void capabilitiesExplainMissingWarehouseSnapshot() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5)))
-                .thenReturn(List.of(generation(101, 1, "Kyiv", 5)));
+                .thenReturn(List.of(generation(101, 1, "Kyiv", 6)));
 
         var response = new FolioProductAnalyticsService(dao).capabilities(
                 new FolioProductAnalyticsCapabilitiesRequest("Paint_Ua", List.of(1, 5)));
@@ -85,10 +94,10 @@ class FolioProductAnalyticsServiceTest {
     void queryRecalculatesMultiWarehouseRatiosFromAggregatedSums() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5)))
-                .thenReturn(generations(5));
+                .thenReturn(generations(6));
         when(dao.dictionaries("Paint_Ua", List.of(1, 5))).thenReturn(Map.of());
         when(dao.activeGenerations("Paint_Ua", List.of(9)))
-                .thenReturn(List.of(generation(109, 9, "Транспорт", 5)));
+                .thenReturn(List.of(generation(109, 9, "Транспорт", 6)));
         MetricRow metrics = metrics("12", "100", "50", "200", "120", "80", "40");
         when(dao.query(any())).thenReturn(new QueryResult(
                 new TotalRow(1, 2, metrics),
@@ -131,9 +140,9 @@ class FolioProductAnalyticsServiceTest {
     void minMaxStockProduceWarehouseAndNetworkOrderPolicies() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5)))
-                .thenReturn(generations(5));
+                .thenReturn(generations(6));
         when(dao.activeGenerations("Paint_Ua", List.of(7)))
-                .thenReturn(List.of(generation(107, 7, "Киев ОПТ", 5)));
+                .thenReturn(List.of(generation(107, 7, "Киев ОПТ", 6)));
         when(dao.dictionaries("Paint_Ua", List.of(1, 5))).thenReturn(Map.of());
         MetricRow metrics = metrics("12", "100", "50", "200", "120", "80", "40");
         when(dao.query(any())).thenReturn(new QueryResult(
@@ -184,9 +193,9 @@ class FolioProductAnalyticsServiceTest {
     void contradictoryNetworkLimitsNeverBecomeOrderPermission() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1)))
-                .thenReturn(List.of(generation(101, 1, "Kyiv", 5)));
+                .thenReturn(List.of(generation(101, 1, "Kyiv", 6)));
         when(dao.activeGenerations("Paint_Ua", List.of(7)))
-                .thenReturn(List.of(generation(107, 7, "Киев ОПТ", 5)));
+                .thenReturn(List.of(generation(107, 7, "Киев ОПТ", 6)));
         when(dao.dictionaries("Paint_Ua", List.of(1))).thenReturn(Map.of());
         MetricRow metrics = metrics("1", "1", "1", "1", "1", "1", "1");
         when(dao.query(any())).thenReturn(new QueryResult(
@@ -220,7 +229,7 @@ class FolioProductAnalyticsServiceTest {
     void unsupportedBrandIsRejectedInsteadOfSilentlyIgnored() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5)))
-                .thenReturn(generations(5));
+                .thenReturn(generations(6));
         var brand = new FolioProductAnalyticsQueryRequest.Selection("INCLUDE", List.of("KREUL"));
         var product = new FolioProductAnalyticsQueryRequest.ProductFilters(
                 null, null, null, null, null, null, null, null, null,
@@ -236,7 +245,7 @@ class FolioProductAnalyticsServiceTest {
     void purchasePlanningInputsAreRejectedUntilSourceDataExists() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5)))
-                .thenReturn(generations(5));
+                .thenReturn(generations(6));
         var calculation = new FolioProductAnalyticsQueryRequest.Calculation(
                 "GROSS_PROFIT", true, 95, null);
 
@@ -262,7 +271,7 @@ class FolioProductAnalyticsServiceTest {
     void unknownSelectedSkuIsRejected() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5)))
-                .thenReturn(generations(5));
+                .thenReturn(generations(6));
         when(dao.dictionaries("Paint_Ua", List.of(1, 5))).thenReturn(Map.of());
         when(dao.existingSkus("Paint_Ua", List.of(1, 5), List.of("MISSING")))
                 .thenReturn(List.of());
@@ -282,7 +291,7 @@ class FolioProductAnalyticsServiceTest {
     void primaryBarcodeFilterIsValidatedAndApplied() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5)))
-                .thenReturn(generations(5));
+                .thenReturn(generations(6));
         when(dao.dictionaries("Paint_Ua", List.of(1, 5))).thenReturn(Map.of());
         when(dao.existingBarcodes("Paint_Ua", List.of(1, 5),
                 List.of("4000798123456"))).thenReturn(List.of("4000798123456"));
@@ -306,9 +315,9 @@ class FolioProductAnalyticsServiceTest {
     void threeWarehouseGroupExclusionIsAppliedServerSide() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         List<ActiveGeneration> generations = List.of(
-                generation(101, 1, "Kyiv", 5),
-                generation(102, 5, "Odesa", 5),
-                generation(103, 7, "Wholesale", 5));
+                generation(101, 1, "Kyiv", 6),
+                generation(102, 5, "Odesa", 6),
+                generation(103, 7, "Wholesale", 6));
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5, 7)))
                 .thenReturn(generations);
         when(dao.dictionaries("Paint_Ua", List.of(1, 5, 7))).thenReturn(Map.of(
@@ -343,7 +352,7 @@ class FolioProductAnalyticsServiceTest {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5)))
                 .thenReturn(List.of(
-                        generation(101, 1, "Kyiv", 5),
+                        generation(101, 1, "Kyiv", 6),
                         generation(102, 5, "Odesa", 2)));
 
         assertThatThrownBy(() -> new FolioProductAnalyticsService(dao)
@@ -356,7 +365,7 @@ class FolioProductAnalyticsServiceTest {
     void responsesSerializeDatesAsIsoStrings() throws Exception {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5)))
-                .thenReturn(generations(5));
+                .thenReturn(generations(6));
         when(dao.dictionaries("Paint_Ua", List.of(1, 5))).thenReturn(Map.of());
         when(dao.query(any())).thenReturn(emptyResult());
 
@@ -372,9 +381,9 @@ class FolioProductAnalyticsServiceTest {
     @Test
     void configurableTransitDoesNotChangeDemandScopeAndBindsEverySourceGenerationToCursor() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
-        when(dao.activeGenerations("Paint_Ua",List.of(1,5))).thenReturn(generations(5));
+        when(dao.activeGenerations("Paint_Ua",List.of(1,5))).thenReturn(generations(6));
         when(dao.activeGenerations("Paint_Ua",List.of(9,10))).thenReturn(List.of(
-                generation(109,9,"Transit A",5),generation(110,10,"Transit B",5)));
+                generation(109,9,"Transit A",6),generation(110,10,"Transit B",6)));
         MetricRow metric = metrics("30","100","90","200","120","80","40");
         when(dao.query(any())).thenReturn(new QueryResult(new TotalRow(2,2,metric),
                 List.of(new AggregateRow("SKU-1","Product","SUP",dimensions(),metric)),
@@ -399,7 +408,7 @@ class FolioProductAnalyticsServiceTest {
         assertThat(spec.getValue().warehouseIds()).containsExactly(1,5);
         service.query(transitRequest(List.of(9,10),response.nextCursor()));
         when(dao.activeGenerations("Paint_Ua",List.of(9,10))).thenReturn(List.of(
-                generation(109,9,"Transit A",5),generation(210,10,"Transit B",5)));
+                generation(109,9,"Transit A",6),generation(210,10,"Transit B",6)));
         assertThatThrownBy(() -> service.query(transitRequest(List.of(9,10),response.nextCursor())))
                 .isInstanceOfSatisfying(FolioProductAnalyticsException.class,
                         e -> assertThat(e.code()).isEqualTo("ANALYTICS_CURSOR_EXPIRED"));
@@ -411,9 +420,9 @@ class FolioProductAnalyticsServiceTest {
     @Test
     void capabilitiesDescribeMissingTransitSourcesIndividually() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
-        when(dao.activeGenerations("Paint_Ua",List.of(1,5))).thenReturn(generations(5));
+        when(dao.activeGenerations("Paint_Ua",List.of(1,5))).thenReturn(generations(6));
         when(dao.activeGenerations("Paint_Ua",List.of(9,10)))
-                .thenReturn(List.of(generation(109,9,"Transit A",5)));
+                .thenReturn(List.of(generation(109,9,"Transit A",6)));
         var service = new FolioProductAnalyticsService(dao);
         var response = service.capabilities(new FolioProductAnalyticsCapabilitiesRequest("Paint_Ua",List.of(1,5),
                 FolioTransitAnalyticsTest.calculation(FolioTransitAnalyticsTest.config(9,10))));
@@ -435,7 +444,7 @@ class FolioProductAnalyticsServiceTest {
     @Test
     void availabilityHasPhysicalDetailsAndDoesNotInventAnOverallUnion() throws Exception {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
-        when(dao.activeGenerations("Paint_Ua", List.of(1, 5))).thenReturn(generations(5));
+        when(dao.activeGenerations("Paint_Ua", List.of(1, 5))).thenReturn(generations(6));
         MetricRow metric = metrics("1", "10", "1", "20", "10", "10", "10");
         when(dao.query(any())).thenReturn(new QueryResult(new TotalRow(1, 1, metric),
                 List.of(new AggregateRow("SKU-1", "Product", "SUP", dimensions(), metric)),
@@ -456,7 +465,7 @@ class FolioProductAnalyticsServiceTest {
     @Test
     void cursorRejectsChangedGroupRevisionOrSnapshotInsteadOfMixingExportRows() throws Exception {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
-        when(dao.activeGenerations("Paint_Ua", List.of(1, 5))).thenReturn(generations(5));
+        when(dao.activeGenerations("Paint_Ua", List.of(1, 5))).thenReturn(generations(6));
         MetricRow metric = metrics("1", "10", "1", "20", "10", "10", "10");
         when(dao.query(any())).thenReturn(new QueryResult(new TotalRow(2, 2, metric),
                 List.of(new AggregateRow("SKU-1", "Product", "SUP", dimensions(), metric)),
@@ -469,7 +478,7 @@ class FolioProductAnalyticsServiceTest {
                 .isInstanceOfSatisfying(FolioProductAnalyticsException.class,
                         e -> assertThat(e.code()).isEqualTo("ANALYTICS_CURSOR_EXPIRED"));
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5))).thenReturn(List.of(
-                generation(201, 1, "Kyiv", 5), generation(102, 5, "Odesa", 5)));
+                generation(201, 1, "Kyiv", 6), generation(102, 5, "Odesa", 6)));
         assertThatThrownBy(() -> service.query(availabilityRequest("a".repeat(64), cursor)))
                 .isInstanceOfSatisfying(FolioProductAnalyticsException.class,
                         e -> assertThat(e.code()).isEqualTo("ANALYTICS_CURSOR_EXPIRED"));
