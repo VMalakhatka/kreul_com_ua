@@ -333,3 +333,33 @@ preview, пересборка существующих schema 6 snapshots не �
 - Один query выполняется в read-only repeatable-read транзакции, поэтому не
   смешивает публикацию поколений посередине ответа.
 - Snapshot остаётся единственной тяжёлой read-only операцией к ФОЛІО.
+
+
+## Stockout demand estimate for purchase scenarios (2026-09-12)
+
+When `calculation.availability` is enabled, each `warehouseGroupBreakdown` now
+includes `stockoutDemand`: `status`, `method`, `salesOnAvailableDays`,
+`estimatedLostSales`. Method is `SALES_ON_AVAILABLE_END_OF_DAY_DAYS_V1`.
+For `MEASURED` history and at least one available day, status is `ESTIMATED` and
+`estimatedLostSales = salesOnAvailableDays * stockoutDays / availableDays` (6 decimals).
+The numerator uses the same group OR mask as the denominator, the exact requested
+period, warehouses and movement selections, and `affects_planning_demand=1`.
+A sale on a day ending out of stock remains in observed sales but is excluded from
+this numerator. This is an end-of-day approximation, not recovered factual sales.
+Do not divide all observed period sales by available days.
+
+`HISTORY_NOT_READY` or `NO_AVAILABLE_DAYS` carries a null estimate, not zero.
+Only current MIN>0 members contribute to availability, consistent with the existing
+availability contract. No alternative movements, one-off classification, prices,
+source documents or snapshot facts are modified. Queries are limited to page SKUs.
+WordPress purchase profile owns the optional cap:
+`observedRegularSales + min(estimatedLostSales, observedRegularSales * (K-1))`.
+K=1 or zero observed sales adds zero without needing a rate. Other unknown estimates
+must be reviewed when the correction is enabled. The estimate is additive to the
+existing response; deploy Java, but no migration or schema 6 snapshot rebuild is
+needed. An insufficient history period still needs corrected dates or fresh data.
+
+Validation: `FolioStockoutDemandTest`, `FolioProductAnalyticsServiceTest`, and
+`FolioAvailabilityMariaDbTest` (isolated loopback database `availability_test`,
+`FOLIO_AVAILABILITY_TEST_PORT`). The latter tests group union, partial dates,
+movement exclusions, and excludes non-planning movements from the numerator.

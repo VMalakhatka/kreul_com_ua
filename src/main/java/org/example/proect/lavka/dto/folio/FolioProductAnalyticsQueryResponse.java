@@ -68,7 +68,10 @@ public record FolioProductAnalyticsQueryResponse(
 
     public record WarehouseGroupBreakdown(String code, String name,
             List<Integer> warehouseIds, String availabilityMode,
-            Availability availability) { }
+            Availability availability, StockoutDemand stockoutDemand) { }
+
+    public record StockoutDemand(String status, String method,
+            BigDecimal salesOnAvailableDays, BigDecimal estimatedLostSales) { }
 
     public record WarehouseOrderPolicy(
             BigDecimal minimumStock,

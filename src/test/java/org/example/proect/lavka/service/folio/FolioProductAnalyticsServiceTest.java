@@ -464,7 +464,25 @@ class FolioProductAnalyticsServiceTest {
         assertThat(row.warehouseBreakdown().get(1).metrics()).isNull();
         assertThat(row.warehouseBreakdown().get(1).availability().status()).isEqualTo("DATA_INCOMPLETE");
         assertThat(row.warehouseGroupBreakdown()).hasSize(1);
+        assertThat(row.warehouseGroupBreakdown().get(0).stockoutDemand().estimatedLostSales()).isNull();
         assertThat(row.metrics().coverageDays()).isEqualByComparingTo("31");
+    }
+
+    @Test
+    void groupResponseExposesAlignedDemandEstimate() throws Exception {
+        FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
+        when(dao.activeGenerations("Paint_Ua", List.of(1, 5))).thenReturn(generations(6));
+        MetricRow metric = metrics("1", "10", "100", "200", "100", "100", "10");
+        when(dao.query(any())).thenReturn(new QueryResult(new TotalRow(1, 1, metric),
+                List.of(new AggregateRow("SKU-1", "Product", "SUP", dimensions(), metric)),
+                List.of(), List.of(new BasisRow("SKU-1", BigDecimal.TEN))));
+        var history = new org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.Availability(
+                "MEASURED", "PHYSICAL_END_OF_DAY", true, null, 31, 31L, 10L, 21L, null, null, List.of());
+        when(dao.availability(any(), any(), any())).thenReturn(Map.of("SKU-1", history));
+        when(dao.salesOnAvailableDays(any(), any(), any())).thenReturn(Map.of("SKU-1", new BigDecimal("100")));
+        var row = new FolioProductAnalyticsService(dao).query(availabilityRequest("a".repeat(64), null)).rows().get(0);
+        assertThat(row.warehouseGroupBreakdown().get(0).stockoutDemand().estimatedLostSales()).isEqualByComparingTo("210");
+        assertThat(row.metrics().regularSoldUnits()).isEqualByComparingTo("100");
     }
 
     @Test

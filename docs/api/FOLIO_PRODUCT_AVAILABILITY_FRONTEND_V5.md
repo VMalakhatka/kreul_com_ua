@@ -253,3 +253,11 @@ Paint_Ua не использовалась. Проверка файла резу
 Для работы фронту подключить `lavka-woo` и `folio-inventory-profit-planning`;
 при проверке источника — `work-with-folio-mssql`. Основной общий контракт:
 [FOLIO_PRODUCT_ANALYTICS_API.md](FOLIO_PRODUCT_ANALYTICS_API.md).
+
+
+### Purchase demand estimate extension (2026-09-12)
+
+Group details now include a separate `stockoutDemand` estimate using sales aligned
+with available end-of-day masks. Availability counts/statuses are unchanged.
+See [analytics contract](FOLIO_PRODUCT_ANALYTICS_API.md#stockout-demand-estimate-for-purchase-scenarios-2026-09-12).
+Unknown history cannot be presented as zero lost demand.

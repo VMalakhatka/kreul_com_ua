@@ -16,6 +16,30 @@ public final class FolioAvailabilitySql {
     public static String summary(FolioProductAnalyticsDao.QuerySpec spec,
                                  List<Integer> members, List<String> skus,
                                  MapSqlParameterSource params) {
+        String monthly = monthly(spec, members, skus, params);
+        String totals = """
+                SELECT sku,CASE
+                  WHEN MAX(missing_snapshot)>0 THEN 'SNAPSHOT_NOT_READY'
+                  WHEN MAX(missing_card)>0 THEN 'DATA_INCOMPLETE'
+                  WHEN MAX(unknown_policy)>0 THEN 'POLICY_NOT_CONFIRMED'
+                  WHEN MAX(eligible)=0 THEN 'NOT_APPLICABLE'
+                  WHEN MAX(outside_horizon)>0 THEN 'PERIOD_OUTSIDE_HORIZON'
+                  WHEN MAX(incomplete)>0 THEN 'DATA_INCOMPLETE'
+                  ELSE 'MEASURED' END availability_status,
+                  SUM(BIT_COUNT(wanted)) period_days,
+                  SUM(BIT_COUNT(available_mask)) available_days,
+                  MAX(negative_stock) negative_stock,MAX(minimum_stock) minimum_stock
+                FROM (
+                """ + monthly + ") months GROUP BY sku";
+        return "SELECT t.*,CASE WHEN availability_status='MEASURED' THEN "
+                + "ROUND(100.0*available_days/period_days,2) END availability_percent,"
+                + "CASE WHEN availability_status='MEASURED' THEN "
+                + "ROUND(100.0*(period_days-available_days)/period_days,2) END stockout_percent "
+                + "FROM (" + totals + ") t";
+    }
+    public static String monthly(FolioProductAnalyticsDao.QuerySpec spec,
+                                 List<Integer> members, List<String> skus,
+                                 MapSqlParameterSource params) {
         params.addValue("avDb", spec.sourceDatabase()).addValue("avScope", spec.warehouseIds());
         params.addValue("avFrom", spec.periodFrom()).addValue("avTo", spec.periodTo());
         String skuFilter = "";
@@ -33,7 +57,7 @@ public final class FolioAvailabilitySql {
         }
         String ids = members.stream().map(id -> "SELECT " + id + " warehouse_id")
                 .collect(java.util.stream.Collectors.joining(" UNION ALL "));
-        String monthly = """
+        return """
                 SELECT s.sku,d.month_start,d.wanted,
                   MAX(g.id IS NULL) missing_snapshot,
                   MAX(c.sku IS NULL) missing_card,
@@ -60,24 +84,6 @@ public final class FolioAvailabilitySql {
                      AND a.month_start=d.month_start
                 GROUP BY s.sku,d.month_start,d.wanted
                 """;
-        String totals = """
-                SELECT sku,CASE
-                  WHEN MAX(missing_snapshot)>0 THEN 'SNAPSHOT_NOT_READY'
-                  WHEN MAX(missing_card)>0 THEN 'DATA_INCOMPLETE'
-                  WHEN MAX(unknown_policy)>0 THEN 'POLICY_NOT_CONFIRMED'
-                  WHEN MAX(eligible)=0 THEN 'NOT_APPLICABLE'
-                  WHEN MAX(outside_horizon)>0 THEN 'PERIOD_OUTSIDE_HORIZON'
-                  WHEN MAX(incomplete)>0 THEN 'DATA_INCOMPLETE'
-                  ELSE 'MEASURED' END availability_status,
-                  SUM(BIT_COUNT(wanted)) period_days,
-                  SUM(BIT_COUNT(available_mask)) available_days,
-                  MAX(negative_stock) negative_stock,MAX(minimum_stock) minimum_stock
-                FROM (
-                """ + monthly + ") months GROUP BY sku";
-        return "SELECT t.*,CASE WHEN availability_status='MEASURED' THEN "
-                + "ROUND(100.0*available_days/period_days,2) END availability_percent,"
-                + "CASE WHEN availability_status='MEASURED' THEN "
-                + "ROUND(100.0*(period_days-available_days)/period_days,2) END stockout_percent "
-                + "FROM (" + totals + ") t";
     }
+
 }

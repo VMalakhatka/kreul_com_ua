@@ -195,7 +195,10 @@ public class FolioProductAnalyticsService {
                         value -> label(value.warehouseName(), value.warehouseId())));
         Map<Integer, Map<String, Availability>> physicalAvailability = new LinkedHashMap<>();
         Map<String, Map<String, Availability>> groupAvailability = new LinkedHashMap<>();
+        Map<String, Map<String, BigDecimal>> groupAvailableSales = new LinkedHashMap<>();
         if (availability != null) {
+            for (var group : availability.warehouseGroups()) groupAvailableSales.put(group.code(),
+                    dao.salesOnAvailableDays(spec, group.warehouseIds(), pageSkus));
             for (int id : scope.warehouseIds()) physicalAvailability.put(id, dao.availability(spec, List.of(id), pageSkus));
             for (var group : availability.warehouseGroups()) groupAvailability.put(group.code(),
                     dao.availability(spec, group.warehouseIds(), pageSkus).entrySet().stream()
@@ -225,7 +228,9 @@ public class FolioProductAnalyticsService {
             }
             List<WarehouseGroupBreakdown> groups = availability == null ? List.of() : availability.warehouseGroups().stream()
                     .map(g -> new WarehouseGroupBreakdown(g.code(), g.name(), g.warehouseIds(), g.availabilityMode(),
-                            availabilityValue(groupAvailability.get(g.code()), value.sku(), period.days()))).toList();
+                            availabilityValue(groupAvailability.get(g.code()), value.sku(), period.days()),
+                            FolioStockoutDemand.estimate(availabilityValue(groupAvailability.get(g.code()), value.sku(), period.days()),
+                                    groupAvailableSales.get(g.code()).getOrDefault(value.sku(), BigDecimal.ZERO)))).toList();
             Availability overall = null;
             if (availability != null) {
                 overall = availabilityContext.isEmpty() ? unavailable("CONTEXT_REQUIRED", period.days())

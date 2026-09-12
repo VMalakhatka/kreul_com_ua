@@ -248,6 +248,26 @@ public class FolioProductAnalyticsDao {
         return Map.copyOf(result);
     }
 
+    /** Align the numerator with the same end-of-day mask used for the denominator.
+     * Sales on a day ending out of stock remain factual sales, but do not inflate this rate. */
+    public Map<String, BigDecimal> salesOnAvailableDays(QuerySpec spec, List<Integer> members, List<String> skus) {
+        if (skus.isEmpty() || members.isEmpty()) return Map.of();
+        SqlParts parts = sqlParts(spec);
+        String monthly = FolioAvailabilitySql.monthly(spec, members, skus, parts.parameters);
+        parts.parameters.addValue("demandMembers", members).addValue("demandSkus", skus);
+        String sql = "SELECT m.sku,SUM(m.quantity) quantity FROM folio_product_movement_fact m "
+                + "JOIN (" + monthly + ") a ON a.sku=m.sku "
+                + "AND m.document_date>=a.month_start AND m.document_date<DATE_ADD(a.month_start, INTERVAL 1 MONTH) "
+                + "WHERE " + parts.movementWhere
+                + " AND m.warehouse_id IN (:demandMembers) AND m.sku IN (:demandSkus) "
+                + "AND m.affects_planning_demand=1 "
+                + "AND (a.available_mask & (1 << (DAYOFMONTH(m.document_date)-1)))<>0 GROUP BY m.sku";
+        Map<String, BigDecimal> result = new LinkedHashMap<>();
+        named.query(sql, parts.parameters, (org.springframework.jdbc.core.RowCallbackHandler) rs ->
+                result.put(rs.getString("sku"), rs.getBigDecimal("quantity")));
+        return Map.copyOf(result);
+    }
+
     public List<String> existingBarcodes(String sourceDatabase, List<Integer> warehouseIds,
                                          List<String> requestedBarcodes) {
         if (requestedBarcodes == null || requestedBarcodes.isEmpty()) return List.of();
@@ -530,7 +550,7 @@ public class FolioProductAnalyticsDao {
                 + "FROM folio_product_metric_monthly WHERE source_database=:db "
                 + "AND warehouse_id IN (:warehouseIds) AND month_start>=:monthFrom "
                 + "AND month_start<=:monthTo GROUP BY source_database,warehouse_id,sku";
-        return new SqlParts(String.join(" AND ", current), flow, inventory, params);
+        return new SqlParts(String.join(" AND ", current), flow, inventory, String.join(" AND ", movement), params);
     }
 
     private static String escapeLike(String value) {
@@ -704,7 +724,7 @@ public class FolioProductAnalyticsDao {
             BigDecimal regularSoldUnits, BigDecimal regularRevenue, BigDecimal regularCogs,
             BigDecimal oneOffSoldUnits, BigDecimal oneOffRevenue, BigDecimal oneOffCogs,
             BigDecimal averageInventoryValue) { }
-    private record SqlParts(String currentWhere, String flowSql, String inventorySql,
+    private record SqlParts(String currentWhere, String flowSql, String inventorySql, String movementWhere,
                             MapSqlParameterSource parameters) { }
     private static final class MutableTransit {
         private final String sku;

@@ -109,6 +109,32 @@ class FolioAvailabilityMariaDbTest {
         }
     }
 
+    @Test void demandNumeratorUsesGroupUnionSelectedDaysAndMovementFilters() {
+        // Warehouse 1 is available days 1..20, warehouse 7 days 21..30.
+        for (int n = 1; n <= 5; n++) {
+            jdbc.update("""
+                INSERT INTO folio_product_movement_fact
+                (source_database,warehouse_id,movement_recno,generation_id,document_date,sku,quantity,signed_quantity,
+                 movement_class,stock_direction,demand_mode,payment_terms,customer_segment,supplier_state,
+                 affects_stock,affects_planning_demand,operation_kind,captured_at)
+                VALUES ('Fixture',1,?,1,?,'SKU-0',?,?,'RETAIL_SALE','OUT','REGULAR','UNKNOWN','UNKNOWN','CURRENT',1,?,?,NOW())
+                """, n, START.plusDays(n == 1 ? 2 : n == 2 ? 22 : 9),
+                n == 1 ? 100 : n == 2 ? 900 : 5000, -1, n == 3 ? 0 : 1, n == 4 ? "EXCLUDED" : "RETAIL");
+        }
+        var base = spec(null, List.of());
+        var filtered = new QuerySpec(base.sourceDatabase(), base.warehouseIds(), START, START.plusDays(29), null,
+                Map.of(), Map.of("operationKinds", new FolioProductAnalyticsDao.Selection("EXCLUDE", List.of("EXCLUDED"))),
+                50, 0, List.of(), "GROSS_PROFIT");
+        assertThat(dao.salesOnAvailableDays(filtered, List.of(1), List.of("SKU-0")).get("SKU-0"))
+                .isEqualByComparingTo("5100"); // Day 23 is excluded from physical in-stock numerator.
+        assertThat(dao.salesOnAvailableDays(filtered, List.of(1,7), List.of("SKU-0")).get("SKU-0"))
+                .isEqualByComparingTo("6000"); // Same date is available in the combined group.
+        var partial = new QuerySpec(base.sourceDatabase(), base.warehouseIds(), START, START.plusDays(4), null,
+                Map.of(), Map.of(), 50, 0, List.of(), "GROSS_PROFIT");
+        assertThat(dao.salesOnAvailableDays(partial, List.of(1,7), List.of("SKU-0")).get("SKU-0"))
+                .isEqualByComparingTo("100");
+    }
+
     @Test void availabilityFiltersAndSortApplyBeforePaginationAndTotals() {
         var options = new AvailabilityCalculation(true,"PHYSICAL_END_OF_DAY","CURRENT_POLICY_GT_ZERO",
                 "WAREHOUSES_AND_GROUPS","a".repeat(64),
