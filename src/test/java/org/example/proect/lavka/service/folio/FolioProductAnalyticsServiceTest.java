@@ -18,6 +18,8 @@ import org.example.proect.lavka.dto.folio.FolioProductAnalyticsCapabilitiesReque
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsCapabilitiesResponse.DictionaryItem;
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryRequest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
@@ -136,8 +138,9 @@ class FolioProductAnalyticsServiceTest {
                 .isEqualByComparingTo("2.000000");
     }
 
-    @Test
-    void minMaxStockProduceWarehouseAndNetworkOrderPolicies() {
+    @ParameterizedTest
+    @ValueSource(strings = {"0.001", "1", "5"})
+    void minMaxStockProduceWarehouseAndNetworkOrderPolicies(String positiveMinimum) {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5)))
                 .thenReturn(generations(6));
@@ -156,7 +159,7 @@ class FolioProductAnalyticsServiceTest {
                         new WarehouseRow(5, "SKU-1", "Product", "SUP", "CURRENT",
                                 new BigDecimal("5"), new BigDecimal("20"), metrics),
                         new WarehouseRow(1, "SKU-2", "Product 2", "SUP", "CURRENT",
-                                BigDecimal.ONE, new BigDecimal("15"), metrics)),
+                                new BigDecimal(positiveMinimum), new BigDecimal("15"), metrics)),
                 List.of(new BasisRow("SKU-1", new BigDecimal("80")),
                         new BasisRow("SKU-2", new BigDecimal("20")))));
         when(dao.networkPolicies("Paint_Ua", 7, List.of("SKU-1", "SKU-2")))
@@ -164,7 +167,7 @@ class FolioProductAnalyticsServiceTest {
                         "SKU-1", new NetworkPolicyRow(
                                 "SKU-1", BigDecimal.ZERO, new BigDecimal("9999")),
                         "SKU-2", new NetworkPolicyRow(
-                                "SKU-2", BigDecimal.ONE, new BigDecimal("9999"))));
+                                "SKU-2", new BigDecimal(positiveMinimum), new BigDecimal("9999"))));
 
         var response = new FolioProductAnalyticsService(dao).query(request(null, null));
 
@@ -181,12 +184,14 @@ class FolioProductAnalyticsServiceTest {
                 .isEqualByComparingTo("5");
         assertThat(row.warehouseBreakdown().get(1).orderPolicy().maximumStockLimit())
                 .isEqualByComparingTo("20");
-        var forecastOnly = response.rows().get(1);
-        assertThat(forecastOnly.networkOrderPolicy().status()).isEqualTo("ALLOWED");
-        assertThat(forecastOnly.warehouseBreakdown().get(0).orderPolicy().replenishmentMode())
-                .isEqualTo("FORECAST_ONLY");
-        assertThat(forecastOnly.warehouseBreakdown().get(0).orderPolicy().reserveAboveForecast())
-                .isEqualByComparingTo("0");
+        var withMinimum = response.rows().get(1);
+        assertThat(withMinimum.networkOrderPolicy().status()).isEqualTo("ALLOWED");
+        assertThat(withMinimum.warehouseBreakdown().get(0).orderPolicy().replenishmentMode())
+                .isEqualTo("FORECAST_PLUS_MINIMUM_STOCK");
+        assertThat(withMinimum.warehouseBreakdown().get(0).orderPolicy().reserveAboveForecast())
+                .isEqualByComparingTo(positiveMinimum);
+        assertThat(withMinimum.networkOrderPolicy().policy().reserveAboveForecast())
+                .isEqualByComparingTo(positiveMinimum);
     }
 
     @Test

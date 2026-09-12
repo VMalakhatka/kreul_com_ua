@@ -350,7 +350,7 @@ public class FolioProductAnalyticsService {
                         : label(generation.warehouseName(), NETWORK_POLICY_WAREHOUSE_ID),
                 ready, generation == null ? null : generation.id(), reason,
                 UNLIMITED_MAXIMUM_THRESHOLD,
-                List.of("DO_NOT_ORDER", "FORECAST_ONLY",
+                List.of("DO_NOT_ORDER",
                         "FORECAST_PLUS_MINIMUM_STOCK", "UNKNOWN"));
     }
 
@@ -367,10 +367,6 @@ public class FolioProductAnalyticsService {
         } else if (minimumStock.signum() == 0) {
             allowed = false;
             mode = "DO_NOT_ORDER";
-            reserve = BigDecimal.ZERO;
-        } else if (minimumStock.compareTo(BigDecimal.ONE) == 0) {
-            allowed = true;
-            mode = "FORECAST_ONLY";
             reserve = BigDecimal.ZERO;
         } else {
             allowed = true;
