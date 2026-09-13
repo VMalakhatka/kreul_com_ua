@@ -1,6 +1,6 @@
 # Product analytics schema v6
 
-Обновлено: 2026-09-11.
+Обновлено: 2026-09-13.
 
 В v6 исправлена семантика свободного остатка: `availableQuantity=REZ_KOLCH`,
 `reservedQuantity=KON_KOLCH-REZ_KOLCH`. Нужны заново сформированные снимки
@@ -363,3 +363,33 @@ Validation: `FolioStockoutDemandTest`, `FolioProductAnalyticsServiceTest`, and
 `FolioAvailabilityMariaDbTest` (isolated loopback database `availability_test`,
 `FOLIO_AVAILABILITY_TEST_PORT`). The latter tests group union, partial dates,
 movement exclusions, and excludes non-planning movements from the numerator.
+
+
+## Warehouse usage in saved scenarios (2026-09-13)
+
+Optional `calculation.stockOnlyWarehouseIds: [15]` is a unique sorted subset of
+`warehouseIds`; invalid, nonpositive or out-of-scope IDs fail with
+`INVALID_WAREHOUSE_USAGE` (400). Omitted/empty means legacy FULL for every member.
+Capabilities advertise `features.warehouseUsage` with `supported: true`, `version: 1`,
+`modes: ["FULL", "STOCK_ONLY"]`. Query echoes the normalized list in
+`appliedFilters.calculation.stockOnlyWarehouseIds`; it participates in cursor scope.
+Clients must verify support and the applied list before accepting stock-only results.
+
+STOCK_ONLY retains physical/reserved/free quantities, but contributes zero movement
+and financial metrics (including inventory value/average), no MIN/MAX, no package/MOQ,
+no physical availability and no per-warehouse order policy. Product identity metadata
+is retained to identify stock rows. Network purchase policy from Kyiv OPT remains an
+independent authorization rule. A missing stock row remains missing, never zero.
+
+Availability groups are validated against the original scope, then stock-only members
+are removed before daily masks, eligibility and lost-sales estimates are calculated.
+Empty demand groups are omitted. A selected availability context that becomes empty
+or points to a stock-only warehouse fails validation. Group breakdown warehouseIds
+are the effective demand members; current stock breakdown keeps the full scope.
+Example: scope [1,5,7,15], stock-only [15], Odesa input group [5,15] produces demand
+breakdown [5]. WordPress combines its demand with current stock of [5,15].
+
+No Folio writes, migration, schema increment or snapshot rebuild is needed; existing
+schema 6 is required as before. Both Products and movement-summary views and exports
+use this query. Tests: FolioWarehouseUsageTest, FolioProductAnalyticsServiceTest and
+FolioAvailabilityMariaDbTest with a disposable availability_test database.

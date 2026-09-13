@@ -395,7 +395,7 @@ public class FolioProductAnalyticsDao {
                 + "MIN(c.current_supplier) current_suppliers,"
                 + dimensions("c") + ",COUNT(*) warehouse_row_count,"
                 + currentSums("c") + "," + flowSums("f") + ","
-                + "SUM(COALESCE(i.average_inventory_value,c.inventory_value)) average_inventory_value "
+                + "SUM(" + contributing("COALESCE(i.average_inventory_value,c.inventory_value)") + ") average_inventory_value "
                 + "FROM folio_product_metric_current c "
                 + "LEFT JOIN (" + parts.flowSql + ") f ON f.source_database=c.source_database "
                 + "AND f.warehouse_id=c.warehouse_id AND f.sku=c.sku "
@@ -407,9 +407,9 @@ public class FolioProductAnalyticsDao {
     private static String warehouseAggregateSql(SqlParts parts) {
         return "SELECT c.warehouse_id,c.sku,MIN(c.product_name) product_name,"
                 + "MIN(c.current_supplier) current_supplier,MIN(c.supplier_state) supplier_state,"
-                + "MAX(c.minimum_stock) minimum_stock,MAX(c.maximum_stock) maximum_stock,"
+                + "MAX(" + contributing("c.minimum_stock") + ") minimum_stock,MAX(" + contributing("c.maximum_stock") + ") maximum_stock,"
                 + "1 warehouse_row_count," + currentSums("c") + "," + flowSums("f") + ","
-                + "SUM(COALESCE(i.average_inventory_value,c.inventory_value)) average_inventory_value "
+                + "SUM(" + contributing("COALESCE(i.average_inventory_value,c.inventory_value)") + ") average_inventory_value "
                 + "FROM folio_product_metric_current c "
                 + "LEFT JOIN (" + parts.flowSql + ") f ON f.source_database=c.source_database "
                 + "AND f.warehouse_id=c.warehouse_id AND f.sku=c.sku "
@@ -430,10 +430,10 @@ public class FolioProductAnalyticsDao {
         values.add("MIN(" + alias + ".product_type_name) product_type_name");
         values.add("MIN(" + alias + ".unit_code) unit_code");
         values.add("MIN(" + alias + ".unit_name) unit_name");
-        values.add("MAX(" + alias + ".package_quantity) package_quantity");
-        values.add("MAX(" + alias + ".minimum_order_quantity) minimum_order_quantity");
-        values.add("SUM(COALESCE(" + alias + ".minimum_stock,0)) minimum_stock");
-        values.add("SUM(COALESCE(" + alias + ".maximum_stock,0)) maximum_stock");
+        values.add("MAX(CASE WHEN c.warehouse_id NOT IN (:stockOnlyWarehouseIds) THEN " + alias + ".package_quantity END) package_quantity");
+        values.add("MAX(CASE WHEN c.warehouse_id NOT IN (:stockOnlyWarehouseIds) THEN " + alias + ".minimum_order_quantity END) minimum_order_quantity");
+        values.add("SUM(" + contributing("COALESCE(" + alias + ".minimum_stock,0)") + ") minimum_stock");
+        values.add("SUM(" + contributing("COALESCE(" + alias + ".maximum_stock,0)") + ") maximum_stock");
         values.add("MIN(" + alias + ".primary_barcode) primary_barcode");
         values.add("MIN(" + alias + ".brand_code) brand_code");
         values.add("MIN(" + alias + ".brand_name) brand_name");
@@ -444,7 +444,11 @@ public class FolioProductAnalyticsDao {
         return "SUM(" + alias + ".physical_quantity) physical_quantity,"
                 + "SUM(" + alias + ".reserved_quantity) reserved_quantity,"
                 + "SUM(" + alias + ".available_quantity) available_quantity,"
-                + "SUM(" + alias + ".inventory_value) inventory_value";
+                + "SUM(" + contributing(alias + ".inventory_value") + ") inventory_value";
+    }
+
+    private static String contributing(String expression) {
+        return "CASE WHEN c.warehouse_id IN (:stockOnlyWarehouseIds) THEN 0 ELSE " + expression + " END";
     }
 
     private static String flowSums(String alias) {
@@ -486,6 +490,7 @@ public class FolioProductAnalyticsDao {
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("db", spec.sourceDatabase())
                 .addValue("warehouseIds", spec.warehouseIds())
+                .addValue("stockOnlyWarehouseIds", spec.stockOnlyWarehouseIds().isEmpty() ? List.of(-1) : spec.stockOnlyWarehouseIds())
                 .addValue("periodFrom", spec.periodFrom())
                 .addValue("periodToExclusive", spec.periodTo().plusDays(1))
                 .addValue("monthFrom", spec.periodFrom().withDayOfMonth(1))
@@ -493,7 +498,7 @@ public class FolioProductAnalyticsDao {
         List<String> current = new ArrayList<>(List.of(
                 "c.source_database=:db", "c.warehouse_id IN (:warehouseIds)"));
         List<String> movement = new ArrayList<>(List.of(
-                "m.source_database=:db", "m.warehouse_id IN (:warehouseIds)",
+                "m.source_database=:db", "m.warehouse_id IN (:warehouseIds)", "m.warehouse_id NOT IN (:stockOnlyWarehouseIds)",
                 "m.document_date>=:periodFrom", "m.document_date<:periodToExclusive"));
 
         addSelection(current, params, spec.productSelections().get("skus"),
@@ -667,7 +672,15 @@ public class FolioProductAnalyticsDao {
                             Map<String, Selection> productSelections,
                             Map<String, Selection> movementSelections,
                             int pageSize, int offset, List<SortSpec> sort,
-                            String abcBasis, AvailabilityCalculation availability) {
+                            String abcBasis, AvailabilityCalculation availability, List<Integer> stockOnlyWarehouseIds) {
+        public QuerySpec {
+            stockOnlyWarehouseIds = stockOnlyWarehouseIds == null ? List.of() : List.copyOf(stockOnlyWarehouseIds);
+        }
+        public QuerySpec(String db, List<Integer> warehouses, LocalDate from, LocalDate to,
+                         String search, Map<String, Selection> product, Map<String, Selection> movement,
+                         int size, int offset, List<SortSpec> sort, String basis, AvailabilityCalculation availability) {
+            this(db, warehouses, from, to, search, product, movement, size, offset, sort, basis, availability, List.of());
+        }
         public QuerySpec(String db, List<Integer> warehouses, LocalDate from, LocalDate to,
                          String search, Map<String, Selection> product, Map<String, Selection> movement,
                          int size, int offset, List<SortSpec> sort, String basis) {

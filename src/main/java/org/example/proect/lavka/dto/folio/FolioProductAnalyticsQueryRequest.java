@@ -65,7 +65,12 @@ public record FolioProductAnalyticsQueryRequest(
             Integer serviceLevelPercent,
             Integer demandHorizonDays,
             AvailabilityCalculation availability,
-            TransitCalculation transit) {
+            TransitCalculation transit,
+            List<Integer> stockOnlyWarehouseIds) {
+        public Calculation(String abcBasis, Boolean includeReturns, Integer serviceLevelPercent,
+                           Integer demandHorizonDays, AvailabilityCalculation availability, TransitCalculation transit) {
+            this(abcBasis, includeReturns, serviceLevelPercent, demandHorizonDays, availability, transit, null);
+        }
         public Calculation(String abcBasis, Boolean includeReturns, Integer serviceLevelPercent,
                            Integer demandHorizonDays) {
             this(abcBasis, includeReturns, serviceLevelPercent, demandHorizonDays, null, null);

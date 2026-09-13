@@ -135,6 +135,35 @@ class FolioAvailabilityMariaDbTest {
                 .isEqualByComparingTo("100");
     }
 
+    @Test void stockOnlyKeepsQuantitiesAndExcludesSalesMoneyAndOrderInputs() {
+        jdbc.update("UPDATE folio_product_metric_current SET physical_quantity=10,available_quantity=8,reserved_quantity=2,inventory_value=5,minimum_stock=1,maximum_stock=9999,package_quantity=6,minimum_order_quantity=0 WHERE sku='SKU-0' AND warehouse_id=1");
+        jdbc.update("UPDATE folio_product_metric_current SET physical_quantity=40,available_quantity=35,reserved_quantity=5,inventory_value=1000,minimum_stock=900,maximum_stock=0,package_quantity=1000,minimum_order_quantity=500 WHERE sku='SKU-0' AND warehouse_id=7");
+        for (int id : List.of(1,7)) jdbc.update("""
+            INSERT INTO folio_product_movement_fact
+            (source_database,warehouse_id,movement_recno,generation_id,document_date,sku,quantity,signed_quantity,
+             movement_class,stock_direction,demand_mode,payment_terms,customer_segment,supplier_state,
+             affects_stock,affects_financial_sales,affects_planning_demand,sale_amount,accounting_value,captured_at)
+            VALUES ('Fixture',?,1,?,?,'SKU-0',?,-1,'RETAIL_SALE','OUT','REGULAR','UNKNOWN','UNKNOWN','CURRENT',1,1,1,100,40,NOW())
+            """,id,id,START.plusDays(1),id==1?10:1000);
+        var spec = new QuerySpec("Fixture",List.of(1,7),START,START.plusDays(29),null,
+                Map.of("skus",new FolioProductAnalyticsDao.Selection("INCLUDE",List.of("SKU-0"))),Map.of(),
+                50,0,List.of(),"SOLD_UNITS",null,List.of(7));
+        var result=dao.query(spec);
+        var row=result.rows().get(0);
+        assertThat(row.metrics().physicalQuantity()).isEqualByComparingTo("50");
+        assertThat(row.metrics().availableQuantity()).isEqualByComparingTo("43");
+        assertThat(row.metrics().reservedQuantity()).isEqualByComparingTo("7");
+        assertThat(row.metrics().regularSoldUnits()).isEqualByComparingTo("10");
+        assertThat(row.metrics().salesRevenue()).isEqualByComparingTo("100");
+        assertThat(row.metrics().inventoryValue()).isEqualByComparingTo("5");
+        assertThat(row.metrics().averageInventoryValue()).isEqualByComparingTo("5");
+        assertThat(row.dimensions().minimumStock()).isEqualByComparingTo("1");
+        assertThat(row.dimensions().packageQuantity()).isEqualByComparingTo("6");
+        assertThat(row.dimensions().minimumOrderQuantity()).isEqualByComparingTo("0");
+        assertThat(result.total().metrics().regularSoldUnits()).isEqualByComparingTo("10");
+        assertThat(result.warehouseRows().stream().filter(w->w.warehouseId()==7).findFirst().orElseThrow().metrics().salesRevenue()).isEqualByComparingTo("0");
+    }
+
     @Test void availabilityFiltersAndSortApplyBeforePaginationAndTotals() {
         var options = new AvailabilityCalculation(true,"PHYSICAL_END_OF_DAY","CURRENT_POLICY_GT_ZERO",
                 "WAREHOUSES_AND_GROUPS","a".repeat(64),

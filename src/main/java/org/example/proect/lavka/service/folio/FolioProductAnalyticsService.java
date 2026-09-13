@@ -126,7 +126,9 @@ public class FolioProductAnalyticsService {
                 capabilitiesMap(compatible, unavailableReason),
                 dictionaries, purchasePolicyCapability(networkGeneration),
                 transit,
-                Map.of("availability", Map.of("supported", compatible,
+                Map.of("warehouseUsage", Map.of("supported", true, "version", 1,
+                                "modes", List.of("FULL", "STOCK_ONLY")),
+                        "availability", Map.of("supported", compatible,
                         "basis", List.of("PHYSICAL_END_OF_DAY"),
                         "groupModes", List.of("ANY_ELIGIBLE_MEMBER"),
                         "minimumStockEligibility", List.of("CURRENT_POLICY_GT_ZERO")),
@@ -154,8 +156,10 @@ public class FolioProductAnalyticsService {
                 || !Boolean.FALSE.equals(request.calculation().includeReturns());
         int pageSize = pageSize(request.page());
         List<SortSpec> sort = sort(request.sort());
-        AvailabilityCalculation availability = FolioAvailabilityOptions.normalize(request.calculation(), scope.warehouseIds());
-        List<Integer> availabilityContext = FolioAvailabilityOptions.context(availability, scope.warehouseIds());
+        List<Integer> stockOnly = FolioWarehouseUsage.stockOnly(request.calculation(), scope.warehouseIds());
+        List<Integer> demandWarehouses = scope.warehouseIds().stream().filter(id -> !stockOnly.contains(id)).toList();
+        AvailabilityCalculation availability = FolioWarehouseUsage.availability(request.calculation(), scope.warehouseIds(), stockOnly);
+        List<Integer> availabilityContext = FolioAvailabilityOptions.context(availability, demandWarehouses);
         if (sort.stream().anyMatch(s -> s.field().startsWith("availability") || s.field().equals("stockoutPercent"))
                 && availabilityContext.isEmpty()) {
             throw error("INVALID_AVAILABILITY", "Availability sorting requires enabled availability and a warehouse/group context");
@@ -167,7 +171,7 @@ public class FolioProductAnalyticsService {
                 transitGenerations, scope.warehouseIds(), scope.generations(), SCHEMA_VERSION);
         Object applied = new AppliedFilters(scope.sourceDatabase(), scope.warehouseIds(),
                 new AppliedPeriod(period.from(), period.to()), search, product, movement,
-                new AppliedCalculation(abcBasis, includeReturns, availability, transitConfig));
+                new AppliedCalculation(abcBasis, includeReturns, availability, transitConfig, stockOnly));
         String cursorScope = cursorScope(applied, sort, scope.generations(), networkGeneration, transitGenerations);
         int offset = decodeOffset(request.page() == null ? null : request.page().cursor(), cursorScope);
 
@@ -176,7 +180,7 @@ public class FolioProductAnalyticsService {
         validateSelections(scope, product, movement, dictionaries);
         QuerySpec spec = new QuerySpec(scope.sourceDatabase(), scope.warehouseIds(),
                 period.from(), period.to(), search, product, movement,
-                pageSize, offset, sort, abcBasis, availability);
+                pageSize, offset, sort, abcBasis, availability, stockOnly);
         var result = dao.query(spec);
         Map<String, String> abc = abcClasses(result.basisRows());
         List<String> pageSkus = result.rows().stream().map(AggregateRow::sku).toList();
@@ -199,7 +203,7 @@ public class FolioProductAnalyticsService {
         if (availability != null) {
             for (var group : availability.warehouseGroups()) groupAvailableSales.put(group.code(),
                     dao.salesOnAvailableDays(spec, group.warehouseIds(), pageSkus));
-            for (int id : scope.warehouseIds()) physicalAvailability.put(id, dao.availability(spec, List.of(id), pageSkus));
+            for (int id : demandWarehouses) physicalAvailability.put(id, dao.availability(spec, List.of(id), pageSkus));
             for (var group : availability.warehouseGroups()) groupAvailability.put(group.code(),
                     dao.availability(spec, group.warehouseIds(), pageSkus).entrySet().stream()
                             .collect(Collectors.toMap(Map.Entry::getKey, entry -> groupAvailability(entry.getValue()))));
@@ -209,10 +213,10 @@ public class FolioProductAnalyticsService {
                         Collectors.mapping(value -> new WarehouseBreakdown(
                                 value.warehouseId(), warehouseNames.get(value.warehouseId()),
                                 value.currentSupplier(), value.supplierState(),
-                                warehouseOrderPolicy(
+                                stockOnly.contains(value.warehouseId()) ? null : warehouseOrderPolicy(
                                         value.minimumStock(), value.maximumStock()),
                                 metrics(value.metrics(), period.days(), includeReturns),
-                                availability == null ? null : availabilityValue(physicalAvailability.get(value.warehouseId()), value.sku(), period.days())),
+                                availability == null || stockOnly.contains(value.warehouseId()) ? null : availabilityValue(physicalAvailability.get(value.warehouseId()), value.sku(), period.days())),
                                 Collectors.toList())));
         List<Row> rows = result.rows().stream().map(value -> {
             List<WarehouseBreakdown> warehouseRows = new ArrayList<>(
@@ -222,7 +226,7 @@ public class FolioProductAnalyticsService {
                 for (int id : scope.warehouseIds()) {
                     if (warehouseRows.stream().noneMatch(w -> w.warehouseId() == id))
                         warehouseRows.add(new WarehouseBreakdown(id, warehouseNames.get(id), null, null,
-                                null, null, availabilityValue(physicalAvailability.get(id), value.sku(), period.days())));
+                                null, null, stockOnly.contains(id) ? null : availabilityValue(physicalAvailability.get(id), value.sku(), period.days())));
                 }
                 warehouseRows.sort(Comparator.comparingInt(WarehouseBreakdown::warehouseId));
             }
@@ -854,7 +858,8 @@ public class FolioProductAnalyticsService {
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
             LocalDate to) { }
     private record AppliedCalculation(String abcBasis, boolean includeReturns,
-                                      AvailabilityCalculation availability, TransitCalculation transit) { }
+                                      AvailabilityCalculation availability, TransitCalculation transit,
+                                      List<Integer> stockOnlyWarehouseIds) { }
     private record AppliedFilters(String sourceDatabase, List<Integer> warehouseIds,
                                   AppliedPeriod period,
                                   String search,

@@ -469,6 +469,32 @@ class FolioProductAnalyticsServiceTest {
     }
 
     @Test
+    void stockOnlyModeFiltersHistoryAndPoliciesAndIsEchoedInAppliedFilters() throws Exception {
+        FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
+        when(dao.activeGenerations("Paint_Ua", List.of(1, 5))).thenReturn(generations(6));
+        MetricRow metric = metrics("1", "10", "1", "20", "10", "10", "10");
+        when(dao.query(any())).thenReturn(new QueryResult(new TotalRow(1, 2, metric),
+                List.of(new AggregateRow("SKU-1", "Product", "SUP", dimensions(), metric)),
+                List.of(new WarehouseRow(1, "SKU-1", "Product", "SUP", "CURRENT", metric),
+                        new WarehouseRow(5, "SKU-1", "Product", "SUP", "CURRENT", metric)),
+                List.of(new BasisRow("SKU-1", BigDecimal.TEN))));
+        var base = availabilityRequest("a".repeat(64), null);
+        var calculation = new FolioProductAnalyticsQueryRequest.Calculation("GROSS_PROFIT", true,
+                null, null, base.calculation().availability(), null, List.of(5));
+        var response = new FolioProductAnalyticsService(dao).query(request(null, calculation));
+        var storage = response.rows().get(0).warehouseBreakdown().get(1);
+        assertThat(storage.orderPolicy()).isNull();
+        assertThat(storage.availability()).isNull();
+        assertThat(response.rows().get(0).warehouseGroupBreakdown().get(0).warehouseIds()).containsExactly(1);
+        var mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        assertThat(mapper.valueToTree(response).at("/appliedFilters/calculation/stockOnlyWarehouseIds/0").asInt()).isEqualTo(5);
+        var spec = ArgumentCaptor.forClass(FolioProductAnalyticsDao.QuerySpec.class);
+        verify(dao).query(spec.capture());
+        assertThat(spec.getValue().stockOnlyWarehouseIds()).containsExactly(5);
+        org.mockito.Mockito.verify(dao, org.mockito.Mockito.never()).availability(any(), org.mockito.ArgumentMatchers.eq(List.of(5)), any());
+    }
+
+    @Test
     void groupResponseExposesAlignedDemandEstimate() throws Exception {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
         when(dao.activeGenerations("Paint_Ua", List.of(1, 5))).thenReturn(generations(6));
