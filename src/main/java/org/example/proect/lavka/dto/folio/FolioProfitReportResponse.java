@@ -42,8 +42,21 @@ public record FolioProfitReportResponse(
             List<Integer> kyivStockWarehouseIds,
             List<Integer> odesaStockWarehouseIds,
             @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal kyivAdditionalSalary,
-            String kyivAdditionalSalarySource
+            String kyivAdditionalSalarySource,
+            Integer kyivEmployeeCount,
+            Integer odesaEmployeeCount,
+            Long totalEmployeeCount,
+            String allocationMode,
+            @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal kyivTaxShare
     ) {
+        public Inputs(BigDecimal odesaTaxShare, String taxAllocationMethod, BigDecimal rubToUahRate,
+                BigDecimal mkIncome, BigDecimal mkReturn, BigDecimal odesaSalary, String odesaSalarySource,
+                List<Integer> kyivWarehouses, List<Integer> odesaWarehouses,
+                List<Integer> kyivStock, List<Integer> odesaStock, BigDecimal kyivSalary, String kyivSalarySource) {
+            this(odesaTaxShare, taxAllocationMethod, rubToUahRate, mkIncome, mkReturn, odesaSalary, odesaSalarySource,
+                    kyivWarehouses, odesaWarehouses, kyivStock, odesaStock, kyivSalary, kyivSalarySource,
+                    null, null, null, null, null);
+        }
     }
 
     public record InventoryResult(

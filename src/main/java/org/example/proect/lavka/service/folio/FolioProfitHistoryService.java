@@ -48,7 +48,8 @@ public class FolioProfitHistoryService {
         try {
             report=calculator.calculate(new FolioProfitReportService.Request(month,request.odesaTaxShare(),request.rubToUahRate(),
                     request.odesaMasterClassIncome(),request.odesaMasterClassReturn(),request.odesaAdditionalSalary(),
-                    request.kyivStockWarehouseIds(),request.odesaStockWarehouseIds(),request.kyivAdditionalSalary()),true);
+                    request.kyivStockWarehouseIds(),request.odesaStockWarehouseIds(),request.kyivAdditionalSalary(),
+                    request.kyivEmployeeCount(),request.odesaEmployeeCount()),true);
             payload=write(Objects.requireNonNull(report));
         } catch(RuntimeException failed) {
             String code=failed instanceof FolioAccountValidationException validation ? validation.getCode() : "PROFIT_SAVED_CALCULATION_FAILED";

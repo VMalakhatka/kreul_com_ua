@@ -125,5 +125,35 @@ class FolioProfitHistoryServiceTest {
                 new Controls(0,z,z,z,z,z,0,truncated,Map.of(),0,0,0,z,z),List.of(),List.of(),null,List.of(),false,
                 Map.of("EXPENSES",new SectionStatus("AVAILABLE",null,null,null)));
     }
+    @Test void employeeCountsPersistAndParticipateInIdempotency() {
+        when(calculator.calculate(any(),eq(true))).thenReturn(report("2025-07",false));
+        var counted=new CalculateRequest(request.requestId(),null,null,null,null,BigDecimal.ZERO,null,null,null,0,7);
+        var saved=service.calculate("2025-07",counted);
+        assertThat(saved.request().kyivEmployeeCount()).isZero();
+        assertThat(saved.request().odesaEmployeeCount()).isEqualTo(7);
+        assertThat(service.calculate("2025-07",counted).revisionId()).isEqualTo(saved.revisionId());
+        verify(calculator).calculate(argThat(r->r.kyivEmployeeCount()==0&&r.odesaEmployeeCount()==7),eq(true));
+        assertThatThrownBy(()->service.calculate("2025-07",new CalculateRequest(request.requestId(),null,null,null,null,
+                BigDecimal.ZERO,null,null,null,4,3))).isInstanceOf(FolioAccountConflictException.class);
+        verify(calculator,times(1)).calculate(any(),eq(true));
+    }
+    @Test void oldStoredRequestHashReplaysAndOldInputsStayUnknown() throws Exception {
+        String raw="{\"requestId\":\"386cc2b2-cb52-4c21-89d1-c72e3c834290\",\"odesaTaxShare\":null,\"rubToUahRate\":null,"
+                +"\"odesaMasterClassIncome\":null,\"odesaMasterClassReturn\":null,\"odesaAdditionalSalary\":\"0\","
+                +"\"kyivStockWarehouseIds\":null,\"odesaStockWarehouseIds\":null,\"kyivAdditionalSalary\":null}";
+        assertThat(json.writeValueAsString(request)).isEqualTo(raw);
+        String hash=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest(("2025-07\n"+raw).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        var tree=json.valueToTree(report("2025-07",false));
+        ((com.fasterxml.jackson.databind.node.ObjectNode)tree.get("inputs")).remove(List.of(
+                "kyivEmployeeCount","odesaEmployeeCount","totalEmployeeCount","allocationMode","kyivTaxShare"));
+        rows.put(1L,new FolioProfitHistoryDao.Row(1,"Paint_Ua","2025-07",request.requestId(),hash,raw,"COMPLETED",
+                json.writeValueAsString(tree),true,null,Instant.now(),Instant.now())); published=1L;
+        var replay=service.calculate("2025-07",request);
+        assertThat(replay.report().inputs().kyivEmployeeCount()).isNull();
+        assertThat(replay.report().inputs().allocationMode()).isNull();
+        assertThat(replay.report().inputs().odesaTaxShare()).isEqualByComparingTo("0.4285714286");
+        verifyNoInteractions(calculator);
+    }
     private CalculateRequest withId(String id) { return new CalculateRequest(id,null,null,null,null,BigDecimal.ZERO,null,null,null); }
 }

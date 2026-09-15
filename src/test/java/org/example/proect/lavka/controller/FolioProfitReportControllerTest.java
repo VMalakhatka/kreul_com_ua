@@ -14,15 +14,27 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class FolioProfitReportControllerTest {
     @ParameterizedTest @ValueSource(strings = {"", "/audit"})
+    void fractionalCountsAreRejectedBeforeCalculation(String suffix) throws Exception {
+        var service=mock(FolioProfitReportService.class);
+        var mvc=MockMvcBuilders.standaloneSetup(new FolioProfitReportController(service)).build();
+        mvc.perform(get("/admin/folio/profit-report"+suffix).param("month","2026-07")
+                .param("kyivEmployeeCount","1.5").param("odesaEmployeeCount","3"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(service);
+    }
+    @ParameterizedTest @ValueSource(strings = {"", "/audit"})
     void bothRoutesAcceptIdenticalKyivAndOdesaOverrides(String suffix) throws Exception {
         var service = mock(FolioProfitReportService.class);
         var mvc = MockMvcBuilders.standaloneSetup(new FolioProfitReportController(service)).build();
         mvc.perform(get("/admin/folio/profit-report" + suffix).param("month", "2026-07")
-                .param("kyivAdditionalSalary","123.45").param("odesaAdditionalSalary","0"))
+                .param("kyivAdditionalSalary","123.45").param("odesaAdditionalSalary","0")
+                .param("kyivEmployeeCount","4").param("odesaEmployeeCount","3"))
                 .andExpect(status().isOk());
         var request = ArgumentCaptor.forClass(FolioProfitReportService.Request.class);
         verify(service).calculate(request.capture(),eq(!suffix.isEmpty()));
         assertThat(request.getValue().kyivAdditionalSalary()).isEqualByComparingTo(new BigDecimal("123.45"));
         assertThat(request.getValue().odesaAdditionalSalary()).isZero();
+        assertThat(request.getValue().kyivEmployeeCount()).isEqualTo(4);
+        assertThat(request.getValue().odesaEmployeeCount()).isEqualTo(3);
     }
 }

@@ -49,7 +49,7 @@ import java.util.Set;
 @Service
 public class FolioProfitReportService {
 
-    private static final String RULE_VERSION = "2026-09-08.2";
+    private static final String RULE_VERSION = "2026-09-15.1";
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(FolioProfitReportService.class);
     private static final String REPORT_CURRENCY = "UAH";
     private static final String MASTER_CLASS_SOURCE = "FOLIO_SCL_NAKL_SCL_MOVE";
@@ -107,7 +107,7 @@ public class FolioProfitReportService {
         List<Warning> warnings = new ArrayList<>();
         Map<String, SectionStatus> sections = new LinkedHashMap<>();
         ExpenseInputs expenseInputs = readSection("EXPENSE_INPUTS", sections, warnings, () -> expenseInputs(request));
-        BigDecimal taxShare = expenseInputs == null ? null : expenseInputs.taxShare();
+        FolioProfitTaxAllocation taxShare = expenseInputs == null ? null : expenseInputs.taxShare();
         BigDecimal rubRate = expenseInputs == null ? null : expenseInputs.rubRate();
         BigDecimal additionalSalary = expenseInputs == null ? null : expenseInputs.odesaSalary();
         BigDecimal kyivAdditionalSalary = expenseInputs == null ? null : expenseInputs.kyivSalary();
@@ -262,10 +262,15 @@ public class FolioProfitReportService {
                 OffsetDateTime.now(REPORT_ZONE),
                 complete,
                 RULE_VERSION,
-                new Inputs(taxShare, "REGISTERED_EMPLOYEE_SHARE", rubRate,
+                new Inputs(taxShare == null ? null : taxShare.odesaShare(),
+                        taxShare == null ? "UNAVAILABLE" : taxShare.mode().equals("EMPLOYEE_COUNTS")
+                                ? "REGISTERED_EMPLOYEE_SHARE" : "EXPLICIT_LEGACY_SHARE", rubRate,
                         null, null, additionalSalary, additionalSalarySource,
                         List.copyOf(properties.getKyivWarehouseIds()), List.of(properties.getOdesaWarehouseId()),
-                        kyivStockWarehouseIds, odesaStockWarehouseIds, kyivAdditionalSalary, kyivSalarySource),
+                        kyivStockWarehouseIds, odesaStockWarehouseIds, kyivAdditionalSalary, kyivSalarySource,
+                        taxShare == null ? null : taxShare.kyivCount(), taxShare == null ? null : taxShare.odesaCount(),
+                        taxShare == null ? null : taxShare.totalCount(), taxShare == null ? "UNAVAILABLE" : taxShare.mode(),
+                        taxShare == null ? null : taxShare.kyivShare()),
                 cities,
                 inventory.results(),
                 expenseRows,
@@ -551,7 +556,7 @@ public class FolioProfitReportService {
         }
     }
 
-    private PaymentResolution resolvePayments(YearMonth target, BigDecimal rubRate, BigDecimal taxShare,
+    private PaymentResolution resolvePayments(YearMonth target, BigDecimal rubRate, FolioProfitTaxAllocation taxShare,
             List<PeriodDiagnostic> diagnostics) {
         List<PaymentRow> candidates = dao.findPaymentCandidates(
                 target.minusMonths(1).atDay(1), target.plusMonths(2).atDay(1), target.format(FOLIO_PERIOD));
@@ -580,7 +585,7 @@ public class FolioProfitReportService {
 
     private boolean allocateTax(
             ClassifiedPayment classified,
-            BigDecimal odesaShare,
+            FolioProfitTaxAllocation odesaShare,
             Map<SummaryKey, SummaryAccumulator> summaries,
             Map<String, BigDecimal> pools,
             List<Warning> warnings) {
@@ -589,7 +594,7 @@ public class FolioProfitReportService {
                 + upper(row.name()) + " " + upper(row.documentClass());
         BigDecimal amount = classified.reportAmount();
         if (containsAny(identifiers, "МАЛАФОП", "MALAFOP")) {
-            BigDecimal odesa = money(amount.multiply(odesaShare));
+            BigDecimal odesa = odesaShare.odesaAmount(amount);
             BigDecimal kyiv = money(amount.subtract(odesa));
             addSummary(summaries, City.KYIV, Category.TAXES, Treatment.OPERATING_EXPENSE, kyiv, kyiv, 1);
             addSummary(summaries, City.ODESA, Category.TAXES, Treatment.OPERATING_EXPENSE, odesa, odesa, 1);
@@ -639,7 +644,7 @@ public class FolioProfitReportService {
                 key.treatment().name(), money(value.amount), money(value.profitImpact), value.documentCount);
     }
 
-    private DocumentLine toDocumentLine(ResolvedPayment resolved, BigDecimal taxShare, BigDecimal rubRate,
+    private DocumentLine toDocumentLine(ResolvedPayment resolved, FolioProfitTaxAllocation taxShare, BigDecimal rubRate,
             boolean includedInTotals) {
         PaymentRow row = resolved.source();
         ClassifiedPayment classified = resolved.classified();
@@ -689,8 +694,7 @@ public class FolioProfitReportService {
 
     private ExpenseInputs expenseInputs(Request request) {
         return new ExpenseInputs(
-                fractionOrDefault(request.odesaTaxShare(), properties.getDefaultOdesaTaxShare(),
-                        "ODESA_TAX_SHARE_INVALID", "Доля налогов Одессы должна быть от 0 до 1"),
+                FolioProfitTaxAllocation.resolve(request.kyivEmployeeCount(), request.odesaEmployeeCount(), request.odesaTaxShare()),
                 positiveOrDefault(request.rubToUahRate(), properties.getDefaultRubToUahRate(),
                         "RUB_RATE_INVALID", "Курс RUB/UAH должен быть больше нуля"),
                 optionalNonNegative(request.odesaAdditionalSalary() == null
@@ -744,7 +748,7 @@ public class FolioProfitReportService {
         }
     }
 
-    private record ExpenseInputs(BigDecimal taxShare, BigDecimal rubRate,
+    private record ExpenseInputs(FolioProfitTaxAllocation taxShare, BigDecimal rubRate,
             BigDecimal odesaSalary, BigDecimal kyivSalary) {}
 
     private static YearMonth parseMonth(String value) {
@@ -753,15 +757,6 @@ public class FolioProfitReportService {
         } catch (DateTimeParseException | NullPointerException e) {
             throw validation("MONTH_INVALID", "Параметр month обязателен в формате YYYY-MM");
         }
-    }
-
-    private static BigDecimal fractionOrDefault(
-            BigDecimal requested, BigDecimal fallback, String code, String message) {
-        BigDecimal value = requested == null ? fallback : requested;
-        if (value == null || value.compareTo(BigDecimal.ZERO) < 0 || value.compareTo(BigDecimal.ONE) > 0) {
-            throw validation(code, message);
-        }
-        return value;
     }
 
     private static BigDecimal positiveOrDefault(
@@ -821,8 +816,15 @@ public class FolioProfitReportService {
             BigDecimal odesaAdditionalSalary,
             List<Integer> kyivStockWarehouseIds,
             List<Integer> odesaStockWarehouseIds,
-            BigDecimal kyivAdditionalSalary
+            BigDecimal kyivAdditionalSalary,
+            Integer kyivEmployeeCount,
+            Integer odesaEmployeeCount
     ) {
+        public Request(String month, BigDecimal taxShare, BigDecimal rubRate, BigDecimal mkIncome,
+                BigDecimal mkReturn, BigDecimal odesaSalary, List<Integer> kyivStock, List<Integer> odesaStock,
+                BigDecimal kyivSalary) {
+            this(month, taxShare, rubRate, mkIncome, mkReturn, odesaSalary, kyivStock, odesaStock, kyivSalary, null, null);
+        }
         public Request(String month, BigDecimal taxShare, BigDecimal rubRate, BigDecimal mkIncome,
                 BigDecimal mkReturn, BigDecimal odesaSalary, List<Integer> kyivStock, List<Integer> odesaStock) {
             this(month, taxShare, rubRate, mkIncome, mkReturn, odesaSalary, kyivStock, odesaStock, null);

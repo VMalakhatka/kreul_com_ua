@@ -32,10 +32,12 @@ public class FolioProfitReportController {
             @RequestParam(required = false) BigDecimal odesaMasterClassReturn,
             @RequestParam(required = false) BigDecimal odesaAdditionalSalary,
             @RequestParam(required = false) List<Integer> kyivStockWarehouseIds,
-            @RequestParam(required = false) List<Integer> odesaStockWarehouseIds) {
+            @RequestParam(required = false) List<Integer> odesaStockWarehouseIds,
+            @RequestParam(required = false) Integer kyivEmployeeCount,
+            @RequestParam(required = false) Integer odesaEmployeeCount) {
         return ResponseEntity.ok(service.calculate(request(month, kyivAdditionalSalary, odesaTaxShare, rubToUahRate,
                 odesaMasterClassIncome, odesaMasterClassReturn, odesaAdditionalSalary,
-                kyivStockWarehouseIds, odesaStockWarehouseIds), false));
+                kyivStockWarehouseIds, odesaStockWarehouseIds, kyivEmployeeCount, odesaEmployeeCount), false));
     }
 
     @GetMapping("/audit")
@@ -48,10 +50,12 @@ public class FolioProfitReportController {
             @RequestParam(required = false) BigDecimal odesaMasterClassReturn,
             @RequestParam(required = false) BigDecimal odesaAdditionalSalary,
             @RequestParam(required = false) List<Integer> kyivStockWarehouseIds,
-            @RequestParam(required = false) List<Integer> odesaStockWarehouseIds) {
+            @RequestParam(required = false) List<Integer> odesaStockWarehouseIds,
+            @RequestParam(required = false) Integer kyivEmployeeCount,
+            @RequestParam(required = false) Integer odesaEmployeeCount) {
         return ResponseEntity.ok(service.calculate(request(month, kyivAdditionalSalary, odesaTaxShare, rubToUahRate,
                 odesaMasterClassIncome, odesaMasterClassReturn, odesaAdditionalSalary,
-                kyivStockWarehouseIds, odesaStockWarehouseIds), true));
+                kyivStockWarehouseIds, odesaStockWarehouseIds, kyivEmployeeCount, odesaEmployeeCount), true));
     }
 
     private static Request request(
@@ -63,9 +67,11 @@ public class FolioProfitReportController {
             BigDecimal odesaMasterClassReturn,
             BigDecimal odesaAdditionalSalary,
             List<Integer> kyivStockWarehouseIds,
-            List<Integer> odesaStockWarehouseIds) {
+            List<Integer> odesaStockWarehouseIds,
+            Integer kyivEmployeeCount,
+            Integer odesaEmployeeCount) {
         return new Request(month, odesaTaxShare, rubToUahRate,
                 odesaMasterClassIncome, odesaMasterClassReturn, odesaAdditionalSalary,
-                kyivStockWarehouseIds, odesaStockWarehouseIds, kyivAdditionalSalary);
+                kyivStockWarehouseIds, odesaStockWarehouseIds, kyivAdditionalSalary, kyivEmployeeCount, odesaEmployeeCount);
     }
 }
