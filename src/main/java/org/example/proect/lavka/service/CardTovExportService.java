@@ -45,6 +45,18 @@ public class CardTovExportService {
 
     // ====== Публичные методы ======
 
+    /** Read units for the current sync window only, without category mapping or hash changes. */
+    public Map<String, String> findUnitsForSync(Collection<String> skus) {
+        if (skus.isEmpty()) return Map.of();
+        if (skus.size() > 1000) throw new IllegalArgumentException("Unit lookup exceeds sync window");
+        Map<String, String> units = new LinkedHashMap<>();
+        for (CardTovExportDto dto : dao.findBySkus(skus)) {
+            if (dto.getEDIN_IZMER() != null && !dto.getEDIN_IZMER().isBlank())
+                units.put(nz(dto.getSku()), dto.getEDIN_IZMER().trim());
+        }
+        return units;
+    }
+
     /** Старая страничная выдача — без изменений (только добавьте hash в out DTO) */
     public PageResult page(String afterSku, int limit) {
         long t0 = System.currentTimeMillis();

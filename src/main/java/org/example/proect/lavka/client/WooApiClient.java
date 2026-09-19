@@ -243,6 +243,59 @@ public class WooApiClient {
             int deletedCount
     ) {}
 
+    /** Resolve the existing global attribute in this target Woo, never a local hardcoded ID. */
+    public long requireUnitAttributeId() {
+        Map[] attributes = rex.execSafe("woo.unitAttribute", () -> restTemplate.getForObject(
+                props.getBaseUrl() + "/products/attributes", Map[].class));
+        if (attributes == null) throw new IllegalStateException("WOO_UNIT_ATTRIBUTE_LOOKUP_FAILED");
+        Long found = null;
+        for (Map<?, ?> attribute : attributes) {
+            if (!"pa_edin_izmer".equals(attribute.get("slug")) && !"edin_izmer".equals(attribute.get("slug"))) continue;
+            if (!(attribute.get("id") instanceof Number id) || id.longValue() <= 0 || found != null)
+                throw new IllegalStateException("WOO_UNIT_ATTRIBUTE_INVALID: expected one global pa_edin_izmer");
+            found = id.longValue();
+        }
+        if (found == null) throw new IllegalStateException(
+                "WOO_UNIT_ATTRIBUTE_MISSING: create the global attribute edin_izmer (taxonomy pa_edin_izmer) in the target Woo before full sync");
+        return found;
+    }
+
+    /** Bounded REST reads; an unavailable/malformed collection must never become an empty replacement. */
+    public Map<Long, List<Map<String, Object>>> readProductAttributes(Collection<Long> productIds) {
+        var ids = productIds.stream().distinct().toList();
+        var result = new LinkedHashMap<Long, List<Map<String, Object>>>();
+        for (int from = 0; from < ids.size(); from += 100) {
+            var batch = ids.subList(from, Math.min(from + 100, ids.size()));
+            if (batch.stream().anyMatch(id -> id == null || id <= 0))
+                throw new IllegalStateException("WOO_PRODUCT_ATTRIBUTE_ID_INVALID");
+            String url = UriComponentsBuilder.fromHttpUrl(props.getBaseUrl() + "/products")
+                    .queryParam("include", batch.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(",")))
+                    .queryParam("per_page", 100).queryParam("_fields", "id,attributes").toUriString();
+            Map[] products = rex.execSafe("woo.productAttributes", () -> restTemplate.getForObject(url, Map[].class));
+            if (products == null) throw new IllegalStateException("WOO_PRODUCT_ATTRIBUTES_UNAVAILABLE");
+            for (Map<?, ?> product : products) {
+                if (!(product.get("id") instanceof Number id) || !batch.contains(id.longValue())
+                        || !(product.get("attributes") instanceof List<?> attrs))
+                    throw new IllegalStateException("WOO_PRODUCT_ATTRIBUTES_INVALID");
+                var copy = new ArrayList<Map<String, Object>>();
+                for (Object value : attrs) {
+                    if (!(value instanceof Map<?, ?> attr) || !(attr.get("id") instanceof Number)
+                            || !(attr.get("name") instanceof String) || !(attr.get("position") instanceof Number)
+                            || !(attr.get("visible") instanceof Boolean) || !(attr.get("variation") instanceof Boolean)
+                            || !(attr.get("options") instanceof List<?> options)
+                            || options.stream().anyMatch(option -> !(option instanceof String)))
+                        throw new IllegalStateException("WOO_PRODUCT_ATTRIBUTES_INVALID");
+                    var a = new LinkedHashMap<String, Object>();
+                    attr.forEach((key, item) -> a.put(String.valueOf(key), item));
+                    copy.add(a);
+                }
+                result.put(id.longValue(), copy);
+            }
+            if (!result.keySet().containsAll(batch)) throw new IllegalStateException("WOO_PRODUCT_ATTRIBUTES_INCOMPLETE");
+        }
+        return result;
+    }
+
     public WooBatchResult upsertProductsBatch(Map<String,Object> payload) {
 
         if (payload == null || payload.isEmpty()) {

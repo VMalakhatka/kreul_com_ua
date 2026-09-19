@@ -84,6 +84,7 @@ public class SyncServiceImpl implements SyncService {
         final boolean isDry = (dryRun != null && dryRun);
         MDC.put("dry", String.valueOf(isDry));
         Map<Long, String> categoryDescMap = new HashMap<>();
+        Long unitAttributeId = null; // run-local: never reuse a target Woo ID across environments/runs
 
         // === 1. Счётчики результата ===
         int totalProcessed = 0;
@@ -115,6 +116,9 @@ public class SyncServiceImpl implements SyncService {
                 if (windowRaw.isEmpty()) {
                     break;
                 }
+                if (unitAttributeId == null) unitAttributeId = wooApiClient.requireUnitAttributeId();
+                Map<Long, List<Map<String, Object>>> attributeSnapshot = wooApiClient.readProductAttributes(
+                        windowRaw.stream().limit(wooWindowSize).map(SeenItem::postId).toList());
 
                 // есть ли "хвост" дальше этого окна?
                 boolean wooAlmostAtEnd = (windowRaw.size() <= wooWindowSize);
@@ -160,12 +164,15 @@ public class SyncServiceImpl implements SyncService {
                     List<String> toDelete = firstIterationForThisWindow ? nzList(diff.toDelete()): List.of();
                     List<CardTovExportOutDto> toUpdateFull = firstIterationForThisWindow ? nzList(diff.toUpdateFull()):List.of();
                     List<CardTovExportOutDto> toCreateFull = nzList(diff.toCreateFull());
+                    List<Map<String, Object>> unitOnly = firstIterationForThisWindow && !forceRefresh
+                            ? unitOnlyUpdates(windowRaw.stream().limit(wooWindowSize).toList(), toUpdateFull,
+                                    toDelete, attributeSnapshot, unitAttributeId) : List.of();
 
                     // считаем, сколько всего штук в этой порции
                     int batchDel = firstIterationForThisWindow ? toDelete.size() : 0;
                     int batchUpd = firstIterationForThisWindow ? toUpdateFull.size() : 0;
                     int batchAdd = toCreateFull.size();
-                    int batchProcessed = batchDel + batchUpd + batchAdd;
+                    int batchProcessed = batchDel + batchUpd + batchAdd + unitOnly.size();
 
                     if (batchProcessed != 0) {
                         if (!isDry) {
@@ -178,8 +185,15 @@ public class SyncServiceImpl implements SyncService {
                         }
 
                         Map<String, Object> batchPayload = buildWooBatchPayload(
-                                toUpdateFull, toCreateFull, toDelete, existingIdsBySku
+                                toUpdateFull, toCreateFull, toDelete, existingIdsBySku, attributeSnapshot, unitAttributeId
                         );
+                        if (!unitOnly.isEmpty()) {
+                            @SuppressWarnings("unchecked")
+                            var updates = new ArrayList<>((List<Map<String, Object>>) batchPayload.getOrDefault("update", List.of()));
+                            updates.addAll(unitOnly);
+                            batchPayload.put("update", updates);
+                            totalUpdated += unitOnly.size();
+                        }
                         List<Map<String, Object>> subPayloads = splitBatchPayload(batchPayload, props.getMaxBatchSize());
                         if (firstIterationForThisWindow) {
                             totalDrafted += batchDel;  // намерение заdraftить
@@ -334,7 +348,9 @@ public class SyncServiceImpl implements SyncService {
             List<CardTovExportOutDto> toUpd,
             List<CardTovExportOutDto> toAdd,
             List<String> toDelete,
-            Map<String, Long> existingIdsBySku
+            Map<String, Long> existingIdsBySku,
+            Map<Long, List<Map<String, Object>>> attributeSnapshot,
+            long unitAttributeId
     ) {
 
         toUpd    = (toUpd    == null) ? List.of() : toUpd;
@@ -350,6 +366,7 @@ public class SyncServiceImpl implements SyncService {
             Long knownId = null; // новых товаров в Woo ещё нет => id нет
             java.util.Map<String,Object> prod =
                     mapDtoToWooProduct(dto, /*forceDraft=*/false, /*forUpdate=*/false, knownId);
+            addUnitAttribute(prod, dto.edinIzmer(), List.of(), unitAttributeId);
 
             // для create не указываем "id", Woo сам создаст
             createList.add(prod);
@@ -369,6 +386,11 @@ public class SyncServiceImpl implements SyncService {
 
             java.util.Map<String,Object> prod =
                     mapDtoToWooProduct(dto, /*forceDraft=*/false, /*forUpdate=*/true, knownId);
+            if (dto.edinIzmer() != null && !dto.edinIzmer().isBlank()) {
+                var attributes = attributeSnapshot.get(knownId);
+                if (attributes == null) throw new IllegalStateException("WOO_PRODUCT_ATTRIBUTES_UNAVAILABLE_FOR_UPDATE");
+                addUnitAttribute(prod, dto.edinIzmer(), attributes, unitAttributeId);
+            }
 
             updateList.add(prod);
         }
@@ -400,6 +422,35 @@ public class SyncServiceImpl implements SyncService {
         if (!deleteList.isEmpty()) payload.put("delete", deleteList);
 
         return payload;
+    }
+
+    private List<Map<String, Object>> unitOnlyUpdates(List<SeenItem> window, List<CardTovExportOutDto> fullUpdates,
+            List<String> deletes, Map<Long, List<Map<String, Object>>> attributes, long attributeId) {
+        Set<String> handled = fullUpdates.stream().map(dto -> unitSkuKey(dto.sku())).collect(Collectors.toSet());
+        deletes.forEach(sku -> handled.add(unitSkuKey(sku)));
+        var candidates = window.stream().filter(item -> !handled.contains(unitSkuKey(item.sku())))
+                .filter(item -> !WooUnitAttribute.hasValue(Objects.requireNonNull(attributes.get(item.postId()),
+                        "WOO_PRODUCT_ATTRIBUTES_UNAVAILABLE"), attributeId)).toList();
+        if (candidates.isEmpty()) return List.of();
+        var units = cardTovExportService.findUnitsForSync(candidates.stream().map(SeenItem::sku).toList());
+        var result = new ArrayList<Map<String, Object>>();
+        for (var item : candidates) {
+            String unit = units.get(unitSkuKey(item.sku()));
+            if (unit == null || unit.isBlank()) continue;
+            Map<String, Object> update = new LinkedHashMap<>();
+            update.put("id", item.postId());
+            addUnitAttribute(update, unit, attributes.get(item.postId()), attributeId);
+            update.put("meta_data", List.of(Map.of("key", "_edin_izmer", "value", unit.trim())));
+            result.add(update);
+        }
+        return result;
+    }
+
+    private static String unitSkuKey(String sku) { return sku == null ? "" : sku.replace('\u00a0', ' ').trim(); }
+    private static void addUnitAttribute(Map<String, Object> product, String unit,
+            List<Map<String, Object>> attributes, long attributeId) {
+        if (unit != null && !unit.isBlank())
+            product.put("attributes", WooUnitAttribute.merge(attributes, attributeId, unit.trim()));
     }
 
     /**
