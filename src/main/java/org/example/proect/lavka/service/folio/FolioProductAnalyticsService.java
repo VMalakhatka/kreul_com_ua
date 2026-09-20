@@ -103,7 +103,7 @@ public class FolioProductAnalyticsService {
         } else if (!compatible) {
             unavailableReason = "ANALYTICS_SCHEMA_TOO_OLD";
             warnings.add(new AnalyticsWarning("ANALYTICS_SCHEMA_TOO_OLD",
-                    "Refresh every selected warehouse with snapshot schema v5"));
+                    "Refresh every selected warehouse with snapshot schema v7"));
         }
         Map<String, List<DictionaryItem>> dictionaries = compatible
                 ? dao.dictionaries(scope.sourceDatabase(), scope.warehouseIds()) : Map.of();
@@ -111,7 +111,7 @@ public class FolioProductAnalyticsService {
         if (networkGeneration == null
                 || networkGeneration.analyticsSchemaVersion() != SCHEMA_VERSION) {
             warnings.add(new AnalyticsWarning("NETWORK_ORDER_POLICY_NOT_READY",
-                    "Refresh warehouse 7 (Киев ОПТ) with snapshot schema v5 before purchase planning"));
+                    "Refresh warehouse 7 (Киев ОПТ) with snapshot schema v7 before purchase planning"));
         }
         TransitCalculation transitConfig = FolioTransitAnalytics.normalize(request.calculation());
         TransitCapability transit = FolioTransitAnalytics.capability(transitConfig,
@@ -184,6 +184,7 @@ public class FolioProductAnalyticsService {
         var result = dao.query(spec);
         Map<String, String> abc = abcClasses(result.basisRows());
         List<String> pageSkus = result.rows().stream().map(AggregateRow::sku).toList();
+        var internalReservations = dao.internalTransferReservations(scope.sourceDatabase(), scope.warehouseIds(), pageSkus);
         boolean networkPolicyReady = networkGeneration != null
                 && networkGeneration.analyticsSchemaVersion() == SCHEMA_VERSION;
         Map<String, NetworkPolicyRow> networkPolicies = networkPolicyReady
@@ -249,7 +250,9 @@ public class FolioProductAnalyticsService {
                     FolioTransitAnalytics.stock(transit, transitRows, value.sku()),
                     networkOrderPolicy(networkGeneration,
                             networkPolicies.get(value.sku())),
-                    List.copyOf(warehouseRows), overall, groups);
+                    List.copyOf(warehouseRows), overall, groups,
+                    new FolioProductAnalyticsQueryResponse.InternalTransferReservations(1, "CAPTURED",
+                            internalReservations.getOrDefault(value.sku(), List.of())));
         }).toList();
         String nextCursor = offset + rows.size() < result.total().productCount()
                 ? encodeOffset(offset + rows.size(), cursorScope) : null;
@@ -264,7 +267,7 @@ public class FolioProductAnalyticsService {
         }
         if (!networkPolicyReady) {
             warnings.add(new AnalyticsWarning("NETWORK_ORDER_POLICY_NOT_READY",
-                    "Warehouse 7 (Киев ОПТ) has no active snapshot schema v5; network order permission is unknown"));
+                    "Warehouse 7 (Киев ОПТ) has no active snapshot schema v7; network order permission is unknown"));
         }
         if (!transit.ready()) {
             warnings.add(new AnalyticsWarning("IN_TRANSIT_STOCK_NOT_READY",
@@ -315,7 +318,7 @@ public class FolioProductAnalyticsService {
             if (!versions.contains(SCHEMA_VERSION)) {
                 throw new FolioProductAnalyticsException("ANALYTICS_SCHEMA_TOO_OLD",
                         HttpStatus.CONFLICT,
-                        "Refresh every selected warehouse with product snapshot schema v5");
+                        "Refresh every selected warehouse with product snapshot schema v7");
             }
         }
         return new Scope(db, warehouseIds, generations);

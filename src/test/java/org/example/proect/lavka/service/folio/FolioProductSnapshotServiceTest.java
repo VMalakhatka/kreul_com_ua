@@ -211,7 +211,7 @@ class FolioProductSnapshotServiceTest {
                 new BigDecimal("10"), "П", "П", "", true, false,
                 "RECEIPT", "IN", "NOT_APPLICABLE", "NOT_SPECIFIED",
                 "NOT_APPLICABLE", "SUP", "Supplier", "П", "Supplier",
-                "CURRENT", true, false, false);
+                "CURRENT", true, false, false, null, false);
     }
 
     private static MonthlyActivity activity() {

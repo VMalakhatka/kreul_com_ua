@@ -48,8 +48,15 @@ public record FolioProductAnalyticsQueryResponse(
             NetworkOrderPolicy networkOrderPolicy,
             List<WarehouseBreakdown> warehouseBreakdown,
             Availability availability,
-            List<WarehouseGroupBreakdown> warehouseGroupBreakdown) {
+            List<WarehouseGroupBreakdown> warehouseGroupBreakdown,
+            InternalTransferReservations internalTransferReservations) {
     }
+
+    public record InternalTransferReservations(int calculationVersion, String status,
+            List<InternalTransferAccount> accounts) { }
+
+    public record InternalTransferAccount(int sourceWarehouseId, long generationId,
+            long documentId, BigDecimal documentNumber, String sourceInfo, BigDecimal quantity) { }
 
     public record WarehouseBreakdown(
             int warehouseId,

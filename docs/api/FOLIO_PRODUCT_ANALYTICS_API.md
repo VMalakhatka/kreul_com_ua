@@ -1,10 +1,10 @@
-# Product analytics schema v6
+# Product analytics schema v7
 
-Обновлено: 2026-09-13.
+Обновлено: 2026-09-20.
 
 В v6 исправлена семантика свободного остатка: `availableQuantity=REZ_KOLCH`,
 `reservedQuantity=KON_KOLCH-REZ_KOLCH`. Нужны заново сформированные снимки
-версии 6; query отвергает старые поколения, включая v5. Точный lifecycle:
+версии 7; query отвергает старые поколения, включая v6. Точный lifecycle:
 [FOLIO_PRODUCT_SNAPSHOT_API.md](FOLIO_PRODUCT_SNAPSHOT_API.md#исправление-свободного-остатка-schema-6).
 Формат availability из v5 сохранён.
 
@@ -17,12 +17,41 @@ API строит отчёты только по активным product snapsho
 `capabilities` и `query` не обращаются к ФОЛІО/MS SQL и ничего в ФОЛІО не
 изменяют.
 
+## Внутренние резервы: schema 7
+
+`rows[].internalTransferReservations` содержит `calculationVersion: 1`,
+`status: CAPTURED`, `accounts: []`. Пустой массив означает подтверждённое отсутствие
+подходящих счетов в выбранных снимках; отсутствующее поле — старый контракт, не ноль.
+Элемент accounts: `sourceWarehouseId`, `generationId`, технический `documentId`,
+видимый `documentNumber`, точное `sourceInfo` (SCL_NAKL.L_CP1_PLAT), `quantity`.
+Строки одного SKU/склада/счёта суммируются. Поле не содержит клиентских данных.
+
+Java классифицирует только строки текущих SCL_MOVE, где движение и шапка имеют
+тип `С`, оба STND_UCHET=1, операция ровно `*ПЕРЕМЕЩЕНИЕ` (нормализация регистра
+и краевых пробелов), VOZVRAT_PR=false, количество >0. Расходные/приходные документы,
+неучитываемые и клиентские счета не включаются. Частичный остаток счёта берётся
+из текущих строк; архив не читается. Для счетов нет ограничения горизонтом истории.
+Выборка MariaDB не зависит от периода продаж или movementFilters: только selected
+warehouses и SKU текущей страницы, generation ACTIVE/schema 7. Готовность самого
+снимка не является подтверждением общей согласованности сети.
+
+Назначение нельзя вывести из одного VID_DOC. WordPress хранит явные соответствия
+`sourceWarehouseId + exact sourceInfo → destinationWarehouseId` в сценарии. Внутри
+группы резерв возвращается в planning stock один раз; между группами — только
+во входящий запас получателя. Свободный остаток источника не увеличивается второй раз.
+Неизвестный маршрут требует проверки, выход из сети не увеличивает плановый запас.
+Клиентские резервы остаются вычтенными; regularSoldUnits/stockoutDemand не меняются.
+Потребитель проверяет поколения и сумму внутреннего резерва <= physical−available.
+Нельзя выводить готовую закупку без подтверждённой networkSnapshotConsistency:
+независимые снимки могут одновременно содержать исходный резерв и уже полученный товар.
+
 ## Подготовка данных
 
 1. Применить Flyway migrations
    `V11__folio_product_analytics_schema_v3.sql` и
    `V12__folio_product_analytics_schema_v4.sql` и
-   `V13__folio_product_availability_history.sql`.
+   `V13__folio_product_availability_history.sql` и
+   `V16__folio_internal_transfer_reservations.sql`.
 2. После деплоя заново выполнить
    `POST /admin/folio/accounting-prices/snapshot/refresh` для каждого склада,
    который должен участвовать в аналитике.

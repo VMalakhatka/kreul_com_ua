@@ -43,7 +43,8 @@ public class FolioProductSnapshotSourceDao {
             SELECT m.RECNO, m.UNICUM_NUM, m.NUMDOCM_PR, m.DATE_PREDM,
                    ISNULL(a.COD_ARTIC,m.NAME_PREDM) AS NAME_PREDM,
                    m.KOLC_PREDM, m.SUM_PREDM, m.SUM_UCHET,
-                   m.TYPDOCM_PR, n.TYPE_DOC,
+                   m.TYPDOCM_PR, n.TYPE_DOC, n.L_CP1_PLAT AS SOURCE_INFO,
+                   n.STND_UCHET AS HEADER_ACCOUNTED,
                    CASE WHEN ISNULL(n.VID_DOC,'')<>'' THEN n.VID_DOC
                         ELSE m.VID_DOC END AS OPERATION_KIND,
                    m.STND_UCHET, m.VOZVRAT_PR,
@@ -61,7 +62,8 @@ public class FolioProductSnapshotSourceDao {
               LEFT JOIN dbo.SCL_ARTC a WITH (HOLDLOCK)
                 ON a.ID_SCLAD=m.ID_SCLAD AND a.COD_ARTIC=m.NAME_PREDM
              WHERE m.ID_SCLAD=? AND m.TYPDOCM_PR IN (?,?,?)
-               AND m.DATE_PREDM>=? AND m.DATE_PREDM<?
+               AND ((m.DATE_PREDM>=? AND m.DATE_PREDM<?)
+                    OR (m.TYPDOCM_PR='С' AND m.STND_UCHET=1))
              ORDER BY ISNULL(a.COD_ARTIC,m.NAME_PREDM), m.DATE_PREDM, m.RECNO
             """;
 
@@ -511,7 +513,11 @@ public class FolioProductSnapshotSourceDao {
                 supplierState(currentSupplier),
                 classification.affectsStock(),
                 classification.affectsFinancialSales(),
-                classification.affectsPlanningDemand()
+                classification.affectsPlanningDemand(),
+                trim(rs.getString("SOURCE_INFO")),
+                FolioProductMovementClassifier.isInternalTransferReservation(
+                        movementType, documentType, operationKind, accounted,
+                        rs.getBoolean("HEADER_ACCOUNTED"), returnFlag, quantity)
         );
     }
 
@@ -755,7 +761,9 @@ public class FolioProductSnapshotSourceDao {
             String supplierState,
             boolean affectsStock,
             boolean affectsFinancialSales,
-            boolean affectsPlanningDemand) {
+            boolean affectsPlanningDemand,
+            String sourceInfo,
+            boolean internalTransferReservation) {
     }
 
     private static final class MutableCard {

@@ -62,6 +62,16 @@ public final class FolioProductMovementClassifier {
         );
     }
 
+    /** Current account lines reserve stock; dispatched expense lines never do. */
+    public static boolean isInternalTransferReservation(String movementType, String documentType,
+            String operationKind, boolean lineAccounted, boolean headerAccounted,
+            boolean returnFlag, java.math.BigDecimal quantity) {
+        return ACCOUNT.equals(normalize(movementType)) && ACCOUNT.equals(normalize(documentType))
+                && "*ПЕРЕМЕЩЕНИЕ".equals(normalize(operationKind))
+                && lineAccounted && headerAccounted && !returnFlag
+                && quantity != null && quantity.signum() > 0;
+    }
+
     private static String direction(String movement, String document) {
         if (ACCOUNT.equals(movement) || ACCOUNT.equals(document)) return "NONE";
         if (RECEIPT.equals(movement)) return "IN";

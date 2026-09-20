@@ -154,7 +154,7 @@ class FolioProductSnapshotSourceDaoTest {
                 base.customerSegment(), base.counterpartyShortName(),
                 base.counterpartyName(), base.organizationType(), base.currentSupplier(),
                 base.supplierState(), base.affectsStock(), base.affectsFinancialSales(),
-                base.affectsPlanningDemand());
+                base.affectsPlanningDemand(), null, false);
     }
 
     private static FolioProductSnapshotSourceDao.MovementFact movement(
@@ -171,7 +171,7 @@ class FolioProductSnapshotSourceDaoTest {
                 "\u0420", "\u0420", operation, true, false, movementClass,
                 "OUT", demandMode, "NOT_SPECIFIED", "NON_RETAIL",
                 "CLIENT", "Client", "\u0414", "Supplier", "CURRENT",
-                true, sale, planning);
+                true, sale, planning, null, false);
     }
 
     private static FolioProductSnapshotSourceDao.Warehouse warehouse(String rawCode) {

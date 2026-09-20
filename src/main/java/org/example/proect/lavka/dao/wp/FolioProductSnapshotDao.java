@@ -28,7 +28,7 @@ import java.util.Optional;
 @Repository
 public class FolioProductSnapshotDao {
 
-    public static final int ANALYTICS_SCHEMA_VERSION = 6;
+    public static final int ANALYTICS_SCHEMA_VERSION = 7;
     private static final int BATCH = 300;
     private final JdbcTemplate jdbc;
 
@@ -436,8 +436,8 @@ public class FolioProductSnapshotDao {
                      stock_direction,demand_mode,payment_terms,customer_segment,
                      counterparty_short_name,counterparty_name,organization_type,
                      current_supplier,supplier_state,affects_stock,affects_financial_sales,
-                     affects_planning_demand,captured_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     affects_planning_demand,captured_at,source_info,internal_transfer_reservation)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """.formatted(table), rows, BATCH, (ps, row) -> {
             int p = 1;
             ps.setString(p++, db); ps.setInt(p++, warehouseId);
@@ -458,7 +458,8 @@ public class FolioProductSnapshotDao {
             ps.setString(p++, row.organizationType()); ps.setString(p++, row.currentSupplier());
             ps.setString(p++, row.supplierState()); ps.setBoolean(p++, row.affectsStock());
             ps.setBoolean(p++, row.affectsFinancialSales());
-            ps.setBoolean(p++, row.affectsPlanningDemand()); ps.setTimestamp(p, ts(at));
+            ps.setBoolean(p++, row.affectsPlanningDemand()); ps.setTimestamp(p++, ts(at));
+            ps.setString(p++, row.sourceInfo()); ps.setBoolean(p, row.internalTransferReservation());
         });
     }
 

@@ -10,6 +10,8 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.InternalTransferAccount;
+
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -72,6 +74,31 @@ public class FolioProductAnalyticsDao {
 
     public FolioProductAnalyticsDao(@Qualifier("wpJdbcTemplate") JdbcTemplate jdbc) {
         this.named = new NamedParameterJdbcTemplate(jdbc);
+    }
+
+    // Current reservations are independent of the sales period and movement filters.
+    public Map<String, List<InternalTransferAccount>> internalTransferReservations(
+            String db, List<Integer> warehouses, List<String> skus) {
+        Map<String, List<InternalTransferAccount>> result = new LinkedHashMap<>();
+        if (skus.isEmpty()) return result;
+        named.query("""
+                SELECT f.sku,f.warehouse_id,f.generation_id,f.document_id,
+                       f.document_number,f.source_info,SUM(f.quantity) AS quantity
+                  FROM folio_product_movement_fact f
+                  JOIN folio_product_snapshot_generation g ON g.id=f.generation_id
+                   AND g.status='ACTIVE' AND g.analytics_schema_version=:schema
+                 WHERE f.source_database=:db AND f.warehouse_id IN (:warehouses)
+                   AND f.sku IN (:skus) AND f.internal_transfer_reservation=1
+                 GROUP BY f.sku,f.warehouse_id,f.generation_id,f.document_id,
+                          f.document_number,f.source_info
+                 ORDER BY f.sku,f.warehouse_id,f.document_id
+                """, new MapSqlParameterSource("db", db).addValue("warehouses", warehouses)
+                .addValue("skus", skus).addValue("schema", FolioProductSnapshotDao.ANALYTICS_SCHEMA_VERSION), (org.springframework.jdbc.core.RowCallbackHandler) rs ->
+                result.computeIfAbsent(rs.getString("sku"), ignored -> new ArrayList<>()).add(
+                        new InternalTransferAccount(
+                                rs.getInt("warehouse_id"), rs.getLong("generation_id"), rs.getLong("document_id"),
+                                rs.getBigDecimal("document_number"), rs.getString("source_info"), rs.getBigDecimal("quantity"))));
+        return result;
     }
 
     public List<ActiveGeneration> activeGenerations(String sourceDatabase,
