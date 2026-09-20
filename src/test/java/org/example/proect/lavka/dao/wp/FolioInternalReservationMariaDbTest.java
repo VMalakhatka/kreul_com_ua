@@ -27,9 +27,18 @@ class FolioInternalReservationMariaDbTest {
             for (String name : List.of("V8__folio_product_source_and_economic_snapshots.sql",
                     "V9__folio_product_movement_snapshot.sql", "V10__folio_product_snapshot_bounded_staging.sql",
                     "V11__folio_product_analytics_schema_v3.sql", "V12__folio_product_analytics_schema_v4.sql",
-                    "V13__folio_product_availability_history.sql", "V14__folio_accounting_price_diagnostic.sql",
-                    "V16__folio_internal_transfer_reservations.sql"))
+                    "V13__folio_product_availability_history.sql", "V14__folio_accounting_price_diagnostic.sql"))
                 ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/wp/migration/" + name));
+            // MariaDB DDL may survive an interrupted migration. Reproduce live-only columns.
+            jdbc.execute("ALTER TABLE folio_product_movement_fact ADD COLUMN source_info VARCHAR(255) NULL, "
+                    + "ADD COLUMN internal_transfer_reservation TINYINT(1) NOT NULL DEFAULT 0");
+            var migration = new ClassPathResource("db/wp/migration/V16__folio_internal_transfer_reservations.sql");
+            ScriptUtils.executeSqlScript(connection, migration);
+            ScriptUtils.executeSqlScript(connection, migration);
+            var columns = "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                    + "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? ORDER BY ORDINAL_POSITION";
+            assertThat(jdbc.queryForList(columns, String.class, "folio_product_movement_fact_stage"))
+                    .containsExactlyElementsOf(jdbc.queryForList(columns, String.class, "folio_product_movement_fact"));
         }
         var snapshots = new FolioProductSnapshotDao(jdbc);
         var analytics = new FolioProductAnalyticsDao(jdbc);
