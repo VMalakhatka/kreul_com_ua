@@ -118,11 +118,54 @@ public class FolioProfitHistoryService {
     }
     private String source() { return sourceFromUrl(database.getUrl()); }
     static String sourceFromUrl(String url) {
-        if(url!=null) {
-            var matcher=java.util.regex.Pattern.compile("(?i)^jdbc:jtds:sqlserver://[^/]+/([^;?]+)").matcher(url);
-            if(matcher.find()&&matcher.group(1).matches("[\\p{L}0-9_-]{1,64}")) return matcher.group(1);
+        if(url==null) throw sourceUnavailable();
+        // Split only real property boundaries: jTDS permits [quoted;values] in options.
+        List<String> parts=new ArrayList<>();
+        boolean quoted=false;
+        int start=0;
+        for(int i=0;i<url.length();i++) {
+            char ch=url.charAt(i);
+            if(ch=='[') {
+                if(quoted) throw sourceUnavailable();
+                quoted=true;
+            } else if(ch==']') {
+                if(!quoted) throw sourceUnavailable();
+                quoted=false;
+            } else if(ch==';'&&!quoted) {
+                parts.add(url.substring(start,i)); start=i+1;
+            }
         }
-        throw invalid("PROFIT_SOURCE_NAMESPACE_UNAVAILABLE","Не удалось определить базу источника из конфигурации; история не смешивается между базами");
+        if(quoted) throw sourceUnavailable();
+        parts.add(url.substring(start));
+        var address=java.util.regex.Pattern.compile(
+                "(?i)^jdbc:jtds:sqlserver://[^/;?\\s#]+(?:/([\\p{L}0-9_-]{1,64}))?$").matcher(parts.get(0));
+        if(!address.matches()) throw sourceUnavailable();
+        Set<String> names=new LinkedHashSet<>();
+        if(address.group(1)!=null) names.add(address.group(1));
+        for(int i=1;i<parts.size();i++) {
+            String property=parts.get(i);
+            int equals=property.indexOf('=');
+            String key=equals<0?property:property.substring(0,equals);
+            if("databaseName".equalsIgnoreCase(key)) {
+                String name=equals<0?"":property.substring(equals+1);
+                if(!name.matches("[\\p{L}0-9_-]{1,64}")) throw sourceUnavailable();
+                names.add(name);
+            }
+        }
+        // Never guess a default or silently choose between conflicting URL declarations.
+        if(names.size()!=1) throw sourceUnavailable();
+        String source=names.iterator().next();
+        try {
+            // Pure driver parsing (no connection): guard against options the driver interprets differently.
+            for(var property:new net.sourceforge.jtds.jdbc.Driver().getPropertyInfo(url,new Properties()))
+                if("databaseName".equalsIgnoreCase(property.name)&&source.equals(property.value)) return source;
+        } catch(java.sql.SQLException|RuntimeException ignored) {
+            // Driver parse errors can contain credentials in the URL; do not expose the cause.
+        }
+        throw sourceUnavailable();
+    }
+    private static FolioAccountValidationException sourceUnavailable() {
+        return invalid("PROFIT_SOURCE_NAMESPACE_UNAVAILABLE","Не удалось определить базу источника из конфигурации; история не смешивается между базами");
     }
     private static YearMonth month(String value) {
         try { if(value==null||!value.matches("[0-9]{4}-[0-9]{2}")) throw new IllegalArgumentException();

@@ -18,13 +18,14 @@ class FolioProfitHistoryServiceTest {
     private FolioProfitHistoryDao dao;
     private FolioProfitReportService calculator;
     private FolioProfitHistoryService service;
+    private DatabaseProperties database;
     private final ObjectMapper json=new ObjectMapper().findAndRegisterModules();
     private final CalculateRequest request=new CalculateRequest("386cc2b2-cb52-4c21-89d1-c72e3c834290",null,null,null,null,BigDecimal.ZERO,null,null,null);
     private final Map<Long,FolioProfitHistoryDao.Row> rows=new LinkedHashMap<>();
     private Long published=null;
     @BeforeEach void setup() {
         dao=mock(FolioProfitHistoryDao.class); calculator=mock(FolioProfitReportService.class);
-        DatabaseProperties database=new DatabaseProperties(); database.setUrl("jdbc:jtds:sqlserver:"+"//example.invalid/Paint_Ua");
+        database=new DatabaseProperties(); database.setUrl("jdbc:jtds:sqlserver:"+"//example.invalid/Paint_Ua");
         service=new FolioProfitHistoryService(dao,calculator,json,database);
         when(calculator.resolveTaxSettings(any())).thenReturn(org.example.proect.lavka.dto.folio.FolioProfitTaxSettings.defaults());
         when(dao.byRequest(anyString(),anyString())).thenAnswer(a->rows.values().stream().filter(r->r.requestId().equals(a.getArgument(1))).findFirst());
@@ -87,6 +88,23 @@ class FolioProfitHistoryServiceTest {
         assertThat(range.totals()).allSatisfy(t->assertThat(t.profit()).isNull());
         assertThat(service.get("2025-07",null).status()).isEqualTo("MISSING");
         service.revisions("2025-07",20,null);
+        verifyNoInteractions(calculator);
+    }
+    @Test void productionUrlPropertyReadsExistingHistoryAndReplaysSameRequestWithoutFolio() {
+        when(calculator.calculate(any(),eq(true),any())).thenReturn(report("2025-07",false));
+        var original=service.calculate("2025-07",request);
+        database.setUrl("jdbc:jtds:sqlserver://example.invalid:1433;databaseName=Paint_Ua;loginTimeout=10");
+        when(dao.revisions("Paint_Ua","2025-07",21,Long.MAX_VALUE)).thenReturn(List.of(rows.get(original.revisionId())));
+        clearInvocations(dao,calculator);
+        assertThat(service.get("2025-07",original.revisionId()).report()).isEqualTo(original.report());
+        assertThat(service.revisions("2025-07",20,null).revisions()).hasSize(1);
+        assertThat(service.range("2025-07","2025-07").months().get(0).revisionId()).isEqualTo(original.revisionId());
+        var replay=service.calculate("2025-07",request);
+        assertThat(replay.revisionId()).isEqualTo(original.revisionId());
+        assertThat(replay.sourceDatabase()).isEqualTo("Paint_Ua");
+        verify(dao,atLeastOnce()).byId(eq("Paint_Ua"),eq("2025-07"),eq(original.revisionId()));
+        verify(dao,never()).reserve(any(),any(),any(),any(),any());
+        verify(dao,never()).finish(any(),any(),anyLong(),any(),any(),anyBoolean(),any());
         verifyNoInteractions(calculator);
     }
     @Test void reusedKeyWithOtherParametersOrMonthIsConflict() {
