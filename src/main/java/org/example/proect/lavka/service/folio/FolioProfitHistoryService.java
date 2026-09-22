@@ -39,6 +39,8 @@ public class FolioProfitHistoryService {
         String requestId=request.requestId().toLowerCase(Locale.ROOT);
         var existing=dao.byRequest(source,requestId);
         if(existing.isPresent()) return replay(existing.get(),month,hash);
+        // Pin once, before reserving a new revision; a historical replay never reads current settings.
+        var taxSettings=calculator.resolveTaxSettings(request.taxSettingsVersion());
         Row reserved;
         try { reserved=dao.reserve(source,month,requestId,hash,raw); }
         catch(DuplicateKeyException concurrent) { return replay(dao.byRequest(source,requestId).orElseThrow(),month,hash); }
@@ -49,7 +51,7 @@ public class FolioProfitHistoryService {
             report=calculator.calculate(new FolioProfitReportService.Request(month,request.odesaTaxShare(),request.rubToUahRate(),
                     request.odesaMasterClassIncome(),request.odesaMasterClassReturn(),request.odesaAdditionalSalary(),
                     request.kyivStockWarehouseIds(),request.odesaStockWarehouseIds(),request.kyivAdditionalSalary(),
-                    request.kyivEmployeeCount(),request.odesaEmployeeCount()),true);
+                    request.kyivEmployeeCount(),request.odesaEmployeeCount()),true,taxSettings);
             payload=write(Objects.requireNonNull(report));
         } catch(RuntimeException failed) {
             String code=failed instanceof FolioAccountValidationException validation ? validation.getCode() : "PROFIT_SAVED_CALCULATION_FAILED";

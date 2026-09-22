@@ -2,6 +2,7 @@ package org.example.proect.lavka.service.folio;
 
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.ExpenseFilters;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.ExpenseLine;
+import org.example.proect.lavka.dto.folio.FolioProfitTaxSettings;
 import org.example.proect.lavka.service.folio.FolioProfitClassifier.*;
 
 import java.math.BigDecimal;
@@ -31,8 +32,8 @@ final class FolioProfitExpenseLines {
             d("KYIV_SALARY_RUB", City.KYIV, Category.SALARY, "Зарплата RUB → UAH", "РАСХОДЫ СЕТИ", false, "Полное имя содержит ДОНЕЦК; перевод по принятому rubToUahRate", "З/П", "Z/P RUB", "З/П RUB"),
             d("KYIV_ADDITIONAL_SALARY", City.KYIV, Category.SALARY, "Дополнительные работы", "", false, "Ручной параметр kyivAdditionalSalary; документов нет"),
             d("KYIV_BANK_SERVICES", City.KYIV, Category.BANK_SERVICES, "Услуги банка", "РАСХОДЫ СЕТИ", false, "Кроме склада 5; неизвестный склад исторически относится к Киеву", "БАНКОВСК"),
-            d("KYIV_TAX_MALAFOP", City.KYIV, Category.TAXES, "Налоги Розн", "НАЛОГИ", false, "Пул MALAFOP/МАЛАФОП ищется в назначении, коде, имени или операции; остаток после округления доли Одессы", "НАЛОГИ"),
-            d("KYIV_TAX_KONDFOP", City.KYIV, Category.TAXES, "Налоги ОПТ", "НАЛОГИ", false, "Пул KONDFOP/КОНДФОП; полностью Киев", "НАЛОГИ"),
+            d("KYIV_TAX_MALAFOP", City.KYIV, Category.TAXES, "Налоги Розн", "НАЛОГИ", false, "Фирмы розницы из сохранённых настроек; остаток после округления доли Одессы", "НАЛОГИ"),
+            d("KYIV_TAX_KONDFOP", City.KYIV, Category.TAXES, "Налоги ОПТ", "НАЛОГИ", false, "Фирмы опта из сохранённых настроек; полностью Киев", "НАЛОГИ"),
             d("KYIV_IRREGULAR", City.KYIV, Category.IRREGULAR, "Нерегулярные ЧП", "", false, "", "НЕРЕГ КИ"),
             d("KYIV_ACCOUNTING", City.KYIV, Category.ACCOUNTING_SERVICES, "Бухгалтер", "ОПЛАТА ПОСТАВЩИКУ", false, "Примечание содержит БУХГАЛТЕР; специальное правило до исключения поставщиков", "ВЫХОДЦЕВ"),
             d("KYIV_HOUSEHOLD", City.KYIV, Category.HOUSEHOLD, "Хозяйственные", "РАСХОДЫ КИЕВА", true, "Фактически операция содержит КИЕВ, не точное равенство", "НЕРЕГУЛ"),
@@ -47,8 +48,8 @@ final class FolioProfitExpenseLines {
             d("ODESA_SALARY_DOCUMENTS", City.ODESA, Category.SALARY, "Зарплата по документам", "РАСХОДЫ ОДЕССЫ", false, "Источник информации зп — контрольный признак, не обязательный фильтр", "З/П ОДЕС"),
             d("ODESA_ADDITIONAL_SALARY", City.ODESA, Category.SALARY, "Доплата зарплаты", "", false, "Ручной параметр odesaAdditionalSalary; документов нет"),
             d("ODESA_BANK_SERVICES", City.ODESA, Category.BANK_SERVICES, "Услуги банка", "РАСХОДЫ СЕТИ", false, "Только склад 5", "БАНКОВСК"),
-            d("ODESA_TAX_MALAFOP", City.ODESA, Category.TAXES, "Налоги Розн", "НАЛОГИ", false, "Пул MALAFOP/МАЛАФОП; каждый документ распределяется по работникам (или явной legacy доле), HALF_UP 2", "НАЛОГИ"),
-            d("ODESA_TAX_KONDFOP", City.ODESA, Category.TAXES, "Налоги ОПТ", "НАЛОГИ", false, "Пул KONDFOP/КОНДФОП полностью относится на Киев; здесь 0", "НАЛОГИ"),
+            d("ODESA_TAX_MALAFOP", City.ODESA, Category.TAXES, "Налоги Розн", "НАЛОГИ", false, "Фирмы розницы из сохранённых настроек; каждый документ по работникам (или legacy доле), HALF_UP 2", "НАЛОГИ"),
+            d("ODESA_TAX_KONDFOP", City.ODESA, Category.TAXES, "Налоги ОПТ", "НАЛОГИ", false, "Фирмы опта из сохранённых настроек; полностью Киев, здесь 0", "НАЛОГИ"),
             d("ODESA_IRREGULAR_MIH", City.ODESA, Category.IRREGULAR, "Нерегулярные НЕРЕГМИХ", "", false, "", "НЕРЕГМИХ"),
             d("ODESA_IRREGULAR_DON", City.ODESA, Category.IRREGULAR, "Нерегулярные НЕРЕГДОН", "", false, "", "НЕРЕГДОН"),
             d("ODESA_HOUSEHOLD", City.ODESA, Category.HOUSEHOLD, "Хозяйственные", "РАСХОДЫ ОДЕССЫ", true, "Фактически операция содержит ОДЕСС; при двух городах Одесса имеет приоритет", "НЕРЕГУЛ"),
@@ -66,32 +67,32 @@ final class FolioProfitExpenseLines {
     }
     private final Map<String, Total> totals = new LinkedHashMap<>();
     private final Map<String, Definition> definitions = new LinkedHashMap<>();
-    FolioProfitExpenseLines() { DEFINITIONS.forEach(d -> { definitions.put(d.id(), d); totals.put(d.id(), new Total()); }); }
+    private final FolioProfitTaxSettings settings;
+    FolioProfitExpenseLines(FolioProfitTaxSettings settings) {
+        this.settings = settings;
+        DEFINITIONS.forEach(d -> { definitions.put(d.id(), d); totals.put(d.id(), new Total()); });
+    }
 
-    static String taxPool(ClassifiedPayment p) {
-        var r = p.source();
-        String ids = upper(r.purposeCode()) + " " + upper(r.expenseCode()) + " " + upper(r.name()) + " " + upper(r.documentClass());
-        if (ids.contains("MALAFOP") || ids.contains("МАЛАФОП")) return "MALAFOP";
-        if (ids.contains("KONDFOP") || ids.contains("КОНДФОП")) return "KONDFOP";
-        return "UNKNOWN";
+    static String taxPool(ClassifiedPayment p, FolioProfitTaxAllocation share) {
+        return share.pool(p.source());
     }
     record Allocation(BigDecimal kyiv, BigDecimal odesa, boolean operating) {}
     static Allocation allocation(ClassifiedPayment p, FolioProfitTaxAllocation share) {
         BigDecimal zero = money(BigDecimal.ZERO), amount = p.reportAmount();
         if (p.treatment() == Treatment.TAX_POOL) {
-            if (taxPool(p).equals("MALAFOP")) {
+            if (taxPool(p, share).equals("MALAFOP")) {
                 BigDecimal odesa = share.odesaAmount(amount);
                 return new Allocation(money(amount.subtract(odesa)), odesa, true);
             }
-            if (taxPool(p).equals("KONDFOP")) return new Allocation(amount, zero, true);
+            if (taxPool(p, share).equals("KONDFOP")) return new Allocation(amount, zero, true);
         }
         if (p.treatment() == Treatment.OPERATING_EXPENSE)
             return new Allocation(p.city() == City.KYIV ? amount : zero, p.city() == City.ODESA ? amount : zero, true);
         return new Allocation(zero, zero, false);
     }
 
-    static String documentLineId(ClassifiedPayment p) {
-        if (p.treatment() == Treatment.TAX_POOL) return "SHARED_TAX_" + taxPool(p);
+    static String documentLineId(ClassifiedPayment p, FolioProfitTaxAllocation share) {
+        if (p.treatment() == Treatment.TAX_POOL) return "SHARED_TAX_" + taxPool(p, share);
         // Category/city have already been chosen by the authoritative classifier.
         // Definition order only resolves two aliases within that same category.
         for (Definition d : DEFINITIONS) {
@@ -100,17 +101,17 @@ final class FolioProfitExpenseLines {
         }
         return p.city().name() + "_" + p.category().name();
     }
-    static List<String> lineIds(ClassifiedPayment p) {
+    static List<String> lineIds(ClassifiedPayment p, FolioProfitTaxAllocation share) {
         if (p.treatment() == Treatment.TAX_POOL) {
-            if (taxPool(p).equals("MALAFOP")) return List.of("KYIV_TAX_MALAFOP", "ODESA_TAX_MALAFOP");
-            if (taxPool(p).equals("KONDFOP")) return List.of("KYIV_TAX_KONDFOP");
+            if (taxPool(p, share).equals("MALAFOP")) return List.of("KYIV_TAX_MALAFOP", "ODESA_TAX_MALAFOP");
+            if (taxPool(p, share).equals("KONDFOP")) return List.of("KYIV_TAX_KONDFOP");
         }
-        return List.of(documentLineId(p));
+        return List.of(documentLineId(p, share));
     }
 
     void add(ClassifiedPayment p, FolioProfitTaxAllocation share) {
         Allocation a = allocation(p, share);
-        for (String id : lineIds(p)) {
+        for (String id : lineIds(p, share)) {
             definitions.computeIfAbsent(id, k -> new Definition(k, p.city(), p.category(), p.reason(),
                     p.treatment(), List.of(), "", false, "См. классификацию документа"));
             Total total = totals.computeIfAbsent(id, k -> new Total());
@@ -132,17 +133,18 @@ final class FolioProfitExpenseLines {
             boolean bank = d.category() == Category.BANK_SERVICES;
             String mode = bank ? d.city() == City.ODESA ? "INCLUDE" : "EXCLUDE" : "ALL";
             List<Integer> warehouses = bank ? List.of(5) : List.of();
-            List<String> purposes = d.id().endsWith("_TAX_MALAFOP") ? List.of("МАЛАФОП")
-                    : d.id().endsWith("_TAX_KONDFOP") ? List.of("КОНДФОП") : List.of();
+            List<String> purposes = d.id().endsWith("_TAX_MALAFOP") ? settings.retailFirmCodes()
+                    : d.id().endsWith("_TAX_KONDFOP") ? settings.wholesaleFirmCodes() : List.of();
             ExpenseFilters filters = new ExpenseFilters(d.codes(), d.operation().isEmpty() ? List.of() : List.of(d.operation()),
                     purposes, warehouses, warehouses, mode, mode, d.required(),
                     "Точный код после trim/upper: expenseCode ИЛИ purposeCode; не AND. "
                     + "Классификатор выбирает первое совпавшее правило. Тип операции — контрольный, если operationRequired=false. "
-                    + (purposes.isEmpty() ? "" : "purposeCodes — контрольный отбор, не обязательное точное условие классификатора. ") + d.note());
+                    + (d.category() == Category.TAXES ? "purposeCodes — фактические коды фирм из снимка настроек; ищутся целыми токенами в purposeCode/expenseCode/name/documentClass. Пустой список отключает распределение этого пула. " : "") + d.note());
             int index = DEFINITIONS.indexOf(d);
             int order = index >= 0 ? index * 10 + 10 : 1000 + d.city().ordinal() * 100 + d.category().ordinal();
             result.add(new ExpenseLine(d.id(), order, d.city().name(), d.category().name(), d.label(),
-                    t.count, money(t.amount), money(t.impact), d.treatment().name(), t.source, filters));
+                    t.count, money(t.amount), money(t.impact), "SHARED_TAX_UNALLOCATED".equals(d.id())
+                            ? "UNALLOCATED" : d.treatment().name(), t.source, filters));
         }
         return result.stream().sorted(java.util.Comparator.comparingInt(ExpenseLine::sortOrder)
                 .thenComparing(ExpenseLine::lineId)).toList();

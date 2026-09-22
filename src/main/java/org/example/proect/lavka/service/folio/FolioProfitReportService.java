@@ -9,6 +9,7 @@ import org.example.proect.lavka.dao.folio.FolioProfitReportDao.InventoryOpeningR
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.MasterClassMovementRow;
 import org.example.proect.lavka.dao.folio.FolioProfitReportDao.PaymentRow;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse;
+import org.example.proect.lavka.dto.folio.FolioProfitTaxSettings;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.CityResult;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.Controls;
 import org.example.proect.lavka.dto.folio.FolioProfitReportResponse.DocumentLine;
@@ -49,7 +50,7 @@ import java.util.Set;
 @Service
 public class FolioProfitReportService {
 
-    private static final String RULE_VERSION = "2026-09-15.1";
+    private static final String RULE_VERSION = "2026-09-22.1";
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(FolioProfitReportService.class);
     private static final String REPORT_CURRENCY = "UAH";
     private static final String MASTER_CLASS_SOURCE = "FOLIO_SCL_NAKL_SCL_MOVE";
@@ -79,14 +80,32 @@ public class FolioProfitReportService {
     private final FolioProfitReportDao dao;
     private final FolioProfitClassifier classifier;
     private final FolioProfitReportProperties properties;
+    private final FolioProfitTaxSettingsService taxSettingsService;
 
     public FolioProfitReportService(
             FolioProfitReportDao dao,
             FolioProfitClassifier classifier,
             FolioProfitReportProperties properties) {
+        this(dao,classifier,properties,null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public FolioProfitReportService(FolioProfitReportDao dao, FolioProfitClassifier classifier,
+            FolioProfitReportProperties properties, FolioProfitTaxSettingsService taxSettingsService) {
         this.dao = dao;
         this.classifier = classifier;
         this.properties = properties;
+        this.taxSettingsService = taxSettingsService;
+    }
+
+    public FolioProfitTaxSettings resolveTaxSettings(Long expectedVersion) {
+        if (expectedVersion != null && (expectedVersion < 0 || expectedVersion == Long.MAX_VALUE))
+            throw validation("PROFIT_TAX_SETTINGS_INVALID", "Tax settings version must be a non-negative integer");
+        var settings = taxSettingsService == null ? FolioProfitTaxSettings.defaults() : taxSettingsService.get();
+        if (expectedVersion != null && !expectedVersion.equals(settings.version()))
+            throw new FolioAccountConflictException("PROFIT_TAX_SETTINGS_VERSION_CONFLICT",
+                    "Tax settings changed; reload settings before starting another calculation");
+        return settings;
     }
 
     @Transactional(transactionManager = "mssqlTransactionManager", propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
@@ -94,11 +113,20 @@ public class FolioProfitReportService {
         // SELECT/NOLOCK report: no shared transaction can poison later independent reads
         // or fail its commit after a partial response has already been assembled.
         try (var budget = new FolioProfitReadBudget(90, 30)) {
-            return calculateWithinBudget(request, includeDocuments);
+            return calculateWithinBudget(request, includeDocuments, () -> resolveTaxSettings(null));
         }
     }
 
-    private FolioProfitReportResponse calculateWithinBudget(Request request, boolean includeDocuments) {
+    @Transactional(transactionManager = "mssqlTransactionManager", propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public FolioProfitReportResponse calculate(Request request, boolean includeDocuments, FolioProfitTaxSettings settings) {
+        var captured = FolioProfitTaxSettingsService.validate(settings);
+        try (var budget = new FolioProfitReadBudget(90, 30)) {
+            return calculateWithinBudget(request, includeDocuments, () -> captured);
+        }
+    }
+
+    private FolioProfitReportResponse calculateWithinBudget(Request request, boolean includeDocuments,
+            java.util.function.Supplier<FolioProfitTaxSettings> settingsReader) {
         if (!properties.isEnabled()) {
             throw validation("PROFIT_REPORT_DISABLED", "Отчёт прибыли отключён настройкой сервиса");
         }
@@ -106,7 +134,11 @@ public class FolioProfitReportService {
         YearMonth month = parseMonth(request.month());
         List<Warning> warnings = new ArrayList<>();
         Map<String, SectionStatus> sections = new LinkedHashMap<>();
-        ExpenseInputs expenseInputs = readSection("EXPENSE_INPUTS", sections, warnings, () -> expenseInputs(request));
+        FolioProfitTaxSettings taxSettings = readSection("TAX_SETTINGS", sections, warnings, settingsReader);
+        ExpenseInputs expenseInputs = readSection("EXPENSE_INPUTS", sections, warnings, () -> {
+            if (taxSettings == null) throw validation("PROFIT_TAX_SETTINGS_UNAVAILABLE", "Tax settings could not be read");
+            return expenseInputs(request, taxSettings);
+        });
         FolioProfitTaxAllocation taxShare = expenseInputs == null ? null : expenseInputs.taxShare();
         BigDecimal rubRate = expenseInputs == null ? null : expenseInputs.rubRate();
         BigDecimal additionalSalary = expenseInputs == null ? null : expenseInputs.odesaSalary();
@@ -153,7 +185,7 @@ public class FolioProfitReportService {
 
         Map<SummaryKey, SummaryAccumulator> summaries = new LinkedHashMap<>();
         Map<String, BigDecimal> taxPools = new LinkedHashMap<>();
-        FolioProfitExpenseLines lines = new FolioProfitExpenseLines();
+        FolioProfitExpenseLines lines = new FolioProfitExpenseLines(taxSettings);
         BigDecimal selectedAmount = BigDecimal.ZERO;
         BigDecimal capitalizedTotal = BigDecimal.ZERO;
         BigDecimal excludedTotal = BigDecimal.ZERO;
@@ -294,7 +326,14 @@ public class FolioProfitReportService {
                         + "прежнее влияние сохранено как предварительное, без распределения смешанных сумм."),
                 List.copyOf(periodDiagnostics),
                 paymentResolution.diagnosticCount() > periodDiagnostics.size(),
-                Map.copyOf(sections)
+                Map.copyOf(sections),
+                new FolioProfitReportResponse.TaxDetails(taxSettings,
+                        expensesAvailable ? money(taxPools.getOrDefault("MALAFOP", BigDecimal.ZERO)) : null,
+                        expensesAvailable ? money(taxPools.getOrDefault("KONDFOP", BigDecimal.ZERO)) : null,
+                        expensesAvailable ? money(taxPools.getOrDefault("UNKNOWN", BigDecimal.ZERO)) : null,
+                        resolved.stream().filter(p -> p.classified().treatment() == Treatment.TAX_POOL
+                                        && "UNALLOCATED".equals(taxShare.pool(p.source())))
+                                .map(p -> toDocumentLine(p, taxShare, rubRate, true)).toList())
         );
     }
 
@@ -563,7 +602,14 @@ public class FolioProfitReportService {
         List<ResolvedPayment> result = new ArrayList<>();
         int problemCount = 0;
         int diagnosticCount = 0;
+        Map<Long, PaymentRow> seen = new LinkedHashMap<>();
         for (PaymentRow row : candidates) {
+            PaymentRow previous = seen.putIfAbsent(row.paymentId(), row);
+            if (previous != null) {
+                if (!previous.equals(row)) throw validation("PROFIT_PAYMENT_DUPLICATE_CONFLICT",
+                        "Conflicting copies of the same payment; repeat the report after source verification");
+                continue;
+            }
             Resolution period = FolioExpensePeriod.resolve(row.note(), row.documentDate());
             ResolvedPayment payment = new ResolvedPayment(row, classifier.classify(row, rubRate), period);
             boolean included = !period.excluded() && target.equals(period.month());
@@ -590,10 +636,9 @@ public class FolioProfitReportService {
             Map<String, BigDecimal> pools,
             List<Warning> warnings) {
         PaymentRow row = classified.source();
-        String identifiers = upper(row.purposeCode()) + " " + upper(row.expenseCode()) + " "
-                + upper(row.name()) + " " + upper(row.documentClass());
+        String pool = odesaShare.pool(row);
         BigDecimal amount = classified.reportAmount();
-        if (containsAny(identifiers, "МАЛАФОП", "MALAFOP")) {
+        if ("MALAFOP".equals(pool)) {
             BigDecimal odesa = odesaShare.odesaAmount(amount);
             BigDecimal kyiv = money(amount.subtract(odesa));
             addSummary(summaries, City.KYIV, Category.TAXES, Treatment.OPERATING_EXPENSE, kyiv, kyiv, 1);
@@ -601,7 +646,7 @@ public class FolioProfitReportService {
             pools.merge("MALAFOP", amount, BigDecimal::add);
             return true;
         }
-        if (containsAny(identifiers, "КОНДФОП", "KONDFOP")) {
+        if ("KONDFOP".equals(pool)) {
             addSummary(summaries, City.KYIV, Category.TAXES, Treatment.OPERATING_EXPENSE, amount, amount, 1);
             pools.merge("KONDFOP", amount, BigDecimal::add);
             return true;
@@ -610,8 +655,9 @@ public class FolioProfitReportService {
                 amount, BigDecimal.ZERO, 1);
         pools.merge("UNKNOWN", amount, BigDecimal::add);
         warnings.add(warning("UNKNOWN_TAX_POOL",
-                "Налоговый документ не удалось связать с ФОП; он не уменьшает прибыль",
-                Map.of("paymentId", row.paymentId(), "amount", amount)));
+                "Налоговая фирма неизвестна или определена неоднозначно; документ UNALLOCATED не уменьшает прибыль",
+                Map.of("paymentId", row.paymentId(), "amount", amount, "allocationStatus", "UNALLOCATED",
+                        "taxSettingsVersion", odesaShare.settings().version())));
         return false;
     }
 
@@ -650,15 +696,16 @@ public class FolioProfitReportService {
         ClassifiedPayment classified = resolved.classified();
         var allocation = FolioProfitExpenseLines.allocation(classified, taxShare);
         BigDecimal impact = includedInTotals ? allocation.kyiv().add(allocation.odesa()) : money(BigDecimal.ZERO);
-        List<String> ids = FolioProfitExpenseLines.lineIds(classified);
+        List<String> ids = FolioProfitExpenseLines.lineIds(classified, taxShare);
+        boolean unallocatedTax = classified.treatment() == Treatment.TAX_POOL && !allocation.operating();
         return new DocumentLine(
                 row.paymentId(), row.documentNumber(), row.documentDate(), resolved.period().month().toString(),
                 resolved.period().source(), row.bank() ? "BANK" : "CASH", row.warehouseId(),
                 row.purposeCode(), row.expenseCode(), row.name(), row.documentClass(), money(row.amount()),
                 classified.sourceCurrency(), classified.reportAmount(), REPORT_CURRENCY, classified.city().name(),
-                classified.category().name(), classified.treatment().name(),
+                classified.category().name(), unallocatedTax ? "UNALLOCATED" : classified.treatment().name(),
                 includedInTotals && allocation.operating(),
-                classified.reason(), FolioProfitExpenseLines.documentLineId(classified), ids, safeSourceInfo(row.sourceInfo()),
+                classified.reason(), FolioProfitExpenseLines.documentLineId(classified, taxShare), ids, safeSourceInfo(row.sourceInfo()),
                 resolved.period().evidence(), resolved.period().status(),
                 resolved.period().problem() ? List.of(resolved.period().status()) : List.of(),
                 money(impact), includedInTotals ? allocation.kyiv() : money(BigDecimal.ZERO),
@@ -692,9 +739,9 @@ public class FolioProfitReportService {
         accumulator.documentCount += documentCount;
     }
 
-    private ExpenseInputs expenseInputs(Request request) {
+    private ExpenseInputs expenseInputs(Request request, FolioProfitTaxSettings settings) {
         return new ExpenseInputs(
-                FolioProfitTaxAllocation.resolve(request.kyivEmployeeCount(), request.odesaEmployeeCount(), request.odesaTaxShare()),
+                FolioProfitTaxAllocation.resolve(request.kyivEmployeeCount(), request.odesaEmployeeCount(), request.odesaTaxShare()).withSettings(settings),
                 positiveOrDefault(request.rubToUahRate(), properties.getDefaultRubToUahRate(),
                         "RUB_RATE_INVALID", "Курс RUB/UAH должен быть больше нуля"),
                 optionalNonNegative(request.odesaAdditionalSalary() == null

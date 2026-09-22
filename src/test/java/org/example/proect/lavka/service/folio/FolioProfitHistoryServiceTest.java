@@ -26,6 +26,7 @@ class FolioProfitHistoryServiceTest {
         dao=mock(FolioProfitHistoryDao.class); calculator=mock(FolioProfitReportService.class);
         DatabaseProperties database=new DatabaseProperties(); database.setUrl("jdbc:jtds:sqlserver:"+"//example.invalid/Paint_Ua");
         service=new FolioProfitHistoryService(dao,calculator,json,database);
+        when(calculator.resolveTaxSettings(any())).thenReturn(org.example.proect.lavka.dto.folio.FolioProfitTaxSettings.defaults());
         when(dao.byRequest(anyString(),anyString())).thenAnswer(a->rows.values().stream().filter(r->r.requestId().equals(a.getArgument(1))).findFirst());
         when(dao.byId(anyString(),anyString(),anyLong())).thenAnswer(a->Optional.ofNullable(rows.get(a.getArgument(2))));
         when(dao.state(anyString(),anyString())).thenAnswer(a->rows.isEmpty()?Optional.empty():Optional.of(
@@ -45,7 +46,7 @@ class FolioProfitHistoryServiceTest {
     }
     @Test void oneAuditCalculationIsSavedAndReplayNeverRecalculates() throws Exception {
         var full=report("2025-07",false);
-        when(calculator.calculate(any(),eq(true))).thenReturn(full);
+        when(calculator.calculate(any(),eq(true),any())).thenReturn(full);
         var saved=service.calculate("2025-07",request);
         assertThat(saved.status()).isEqualTo("COMPLETED");
         assertThat(saved.request().odesaAdditionalSalary()).isZero();
@@ -53,25 +54,25 @@ class FolioProfitHistoryServiceTest {
         assertThat(saved.report()).isEqualTo(full);
         var replay=service.calculate("2025-07",request);
         assertThat(replay.revisionId()).isEqualTo(saved.revisionId());
-        verify(calculator,times(1)).calculate(any(),eq(true));
+        verify(calculator,times(1)).calculate(any(),eq(true),any());
         var arg=org.mockito.ArgumentCaptor.forClass(FolioProfitReportService.Request.class);
-        verify(calculator).calculate(arg.capture(),eq(true));
+        verify(calculator).calculate(arg.capture(),eq(true),any());
         assertThat(arg.getValue().month()).isEqualTo("2025-07");
         assertThat(arg.getValue().odesaAdditionalSalary()).isZero();
         String fixture=System.getProperty("folio.profit.saved.fixture.output");
         if(fixture!=null) java.nio.file.Files.writeString(java.nio.file.Path.of(fixture),json.writeValueAsString(saved));
     }
     @Test void partialAndFailedRevisionsNeverReplacePublishedReport() {
-        when(calculator.calculate(any(),eq(true))).thenReturn(report("2025-07",false));
+        when(calculator.calculate(any(),eq(true),any())).thenReturn(report("2025-07",false));
         service.calculate("2025-07",request);
-        when(calculator.calculate(any(),eq(true))).thenReturn(report("2025-07",true));
+        when(calculator.calculate(any(),eq(true),any())).thenReturn(report("2025-07",true));
         var partial=service.calculate("2025-07",withId(UUID.randomUUID().toString()));
         assertThat(partial.status()).isEqualTo("PROVISIONAL");
         assertThat(partial.auditComplete()).isFalse();
         assertThat(partial.published()).isFalse();
         assertThat(service.get("2025-07",null).revisionId()).isEqualTo(1);
         assertThat(service.get("2025-07",null).latestRevisionId()).isEqualTo(2);
-        when(calculator.calculate(any(),eq(true))).thenThrow(new IllegalStateException("private connection details"));
+        when(calculator.calculate(any(),eq(true),any())).thenThrow(new IllegalStateException("private connection details"));
         var failed=service.calculate("2025-07",withId(UUID.randomUUID().toString()));
         assertThat(failed.status()).isEqualTo("FAILED");
         assertThat(failed.report()).isNull();
@@ -89,15 +90,15 @@ class FolioProfitHistoryServiceTest {
         verifyNoInteractions(calculator);
     }
     @Test void reusedKeyWithOtherParametersOrMonthIsConflict() {
-        when(calculator.calculate(any(),eq(true))).thenReturn(report("2025-07",false));
+        when(calculator.calculate(any(),eq(true),any())).thenReturn(report("2025-07",false));
         service.calculate("2025-07",request);
         assertThatThrownBy(()->service.calculate("2025-08",request)).isInstanceOf(FolioAccountConflictException.class);
         var changed=new CalculateRequest(request.requestId(),null,null,null,null,null,null,null,null);
         assertThatThrownBy(()->service.calculate("2025-07",changed)).isInstanceOf(FolioAccountConflictException.class);
-        verify(calculator,times(1)).calculate(any(),eq(true));
+        verify(calculator,times(1)).calculate(any(),eq(true),any());
     }
     @Test void runningRequestReturnsStateInsteadOfStartingAgain() {
-        when(calculator.calculate(any(),eq(true))).thenReturn(report("2025-07",false));
+        when(calculator.calculate(any(),eq(true),any())).thenReturn(report("2025-07",false));
         service.calculate("2025-07",request);
         var old=rows.get(1L);
         rows.put(1L,new FolioProfitHistoryDao.Row(1,old.source(),old.month(),old.requestId(),old.requestHash(),old.requestJson(),"RUNNING",null,false,null,old.createdAt(),null));
@@ -126,16 +127,16 @@ class FolioProfitHistoryServiceTest {
                 Map.of("EXPENSES",new SectionStatus("AVAILABLE",null,null,null)));
     }
     @Test void employeeCountsPersistAndParticipateInIdempotency() {
-        when(calculator.calculate(any(),eq(true))).thenReturn(report("2025-07",false));
+        when(calculator.calculate(any(),eq(true),any())).thenReturn(report("2025-07",false));
         var counted=new CalculateRequest(request.requestId(),null,null,null,null,BigDecimal.ZERO,null,null,null,0,7);
         var saved=service.calculate("2025-07",counted);
         assertThat(saved.request().kyivEmployeeCount()).isZero();
         assertThat(saved.request().odesaEmployeeCount()).isEqualTo(7);
         assertThat(service.calculate("2025-07",counted).revisionId()).isEqualTo(saved.revisionId());
-        verify(calculator).calculate(argThat(r->r.kyivEmployeeCount()==0&&r.odesaEmployeeCount()==7),eq(true));
+        verify(calculator).calculate(argThat(r->r.kyivEmployeeCount()==0&&r.odesaEmployeeCount()==7),eq(true),any());
         assertThatThrownBy(()->service.calculate("2025-07",new CalculateRequest(request.requestId(),null,null,null,null,
                 BigDecimal.ZERO,null,null,null,4,3))).isInstanceOf(FolioAccountConflictException.class);
-        verify(calculator,times(1)).calculate(any(),eq(true));
+        verify(calculator,times(1)).calculate(any(),eq(true),any());
     }
     @Test void oldStoredRequestHashReplaysAndOldInputsStayUnknown() throws Exception {
         String raw="{\"requestId\":\"386cc2b2-cb52-4c21-89d1-c72e3c834290\",\"odesaTaxShare\":null,\"rubToUahRate\":null,"
@@ -147,12 +148,48 @@ class FolioProfitHistoryServiceTest {
         var tree=json.valueToTree(report("2025-07",false));
         ((com.fasterxml.jackson.databind.node.ObjectNode)tree.get("inputs")).remove(List.of(
                 "kyivEmployeeCount","odesaEmployeeCount","totalEmployeeCount","allocationMode","kyivTaxShare"));
+        ((com.fasterxml.jackson.databind.node.ObjectNode)tree).remove("taxDetails");
         rows.put(1L,new FolioProfitHistoryDao.Row(1,"Paint_Ua","2025-07",request.requestId(),hash,raw,"COMPLETED",
                 json.writeValueAsString(tree),true,null,Instant.now(),Instant.now())); published=1L;
         var replay=service.calculate("2025-07",request);
         assertThat(replay.report().inputs().kyivEmployeeCount()).isNull();
         assertThat(replay.report().inputs().allocationMode()).isNull();
         assertThat(replay.report().inputs().odesaTaxShare()).isEqualByComparingTo("0.4285714286");
+        assertThat(replay.report().taxDetails()).isNull();
+        verifyNoInteractions(calculator);
+    }
+    @Test void pinnedVersionConflictIsBeforeReserveAndDoesNotCreateFailedRevision() {
+        var pinned=new CalculateRequest(request.requestId(),null,null,null,null,BigDecimal.ZERO,null,null,null,null,null,3L);
+        when(calculator.resolveTaxSettings(3L)).thenThrow(new FolioAccountConflictException(
+                "PROFIT_TAX_SETTINGS_VERSION_CONFLICT","Changed"));
+        assertThatThrownBy(()->service.calculate("2025-07",pinned)).isInstanceOfSatisfying(FolioAccountConflictException.class,
+                e->assertThat(e.getCode()).isEqualTo("PROFIT_TAX_SETTINGS_VERSION_CONFLICT"));
+        verify(dao,never()).reserve(any(),any(),any(),any(),any());
+        verify(dao,never()).finish(any(),any(),anyLong(),any(),any(),anyBoolean(),any());
+        verify(calculator,never()).calculate(any(),anyBoolean(),any());
+    }
+    @Test void capturedVersionAndListsPersistAndReplayIgnoresLaterSettingsChanges() {
+        var captured=new org.example.proect.lavka.dto.folio.FolioProfitTaxSettings(3L,List.of("ФОП1"),List.of("ФОП2"));
+        when(calculator.resolveTaxSettings(3L)).thenReturn(captured);
+        var base=report("2025-07",false);
+        var withTax=new FolioProfitReportResponse(base.ok(),base.month(),base.calculatedAt(),base.complete(),base.ruleVersion(),
+                base.inputs(),base.cities(),base.inventory(),base.expenses(),base.documents(),base.masterClass(),base.masterClassDocuments(),
+                base.controls(),base.warnings(),base.expenseLines(),base.periodPolicy(),base.periodDiagnostics(),base.periodDiagnosticsTruncated(),
+                base.sections(),new TaxDetails(captured,new BigDecimal("10"),new BigDecimal("20"),BigDecimal.ZERO,List.of()));
+        when(calculator.calculate(any(),eq(true),same(captured))).thenReturn(withTax);
+        var pinned=new CalculateRequest(request.requestId(),null,null,null,null,BigDecimal.ZERO,null,null,null,null,null,3L);
+        var saved=service.calculate("2025-07",pinned);
+        assertThat(saved.request().taxSettingsVersion()).isEqualTo(3);
+        assertThat(saved.report().taxDetails().settings()).isEqualTo(captured);
+        var order=inOrder(calculator,dao);
+        order.verify(calculator).resolveTaxSettings(3L);
+        order.verify(dao).reserve(any(),any(),any(),any(),any());
+        order.verify(calculator).calculate(any(),eq(true),same(captured));
+        when(calculator.resolveTaxSettings(3L)).thenThrow(new FolioAccountConflictException("PROFIT_TAX_SETTINGS_VERSION_CONFLICT","Changed"));
+        clearInvocations(calculator);
+        assertThat(service.calculate("2025-07",pinned).report().taxDetails()).isEqualTo(saved.report().taxDetails());
+        assertThat(service.get("2025-07",saved.revisionId()).report().taxDetails()).isEqualTo(saved.report().taxDetails());
+        service.revisions("2025-07",20,null);
         verifyNoInteractions(calculator);
     }
     private CalculateRequest withId(String id) { return new CalculateRequest(id,null,null,null,null,BigDecimal.ZERO,null,null,null); }

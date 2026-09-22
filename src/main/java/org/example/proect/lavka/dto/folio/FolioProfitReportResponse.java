@@ -27,8 +27,24 @@ public record FolioProfitReportResponse(
         PeriodPolicy periodPolicy,
         List<PeriodDiagnostic> periodDiagnostics,
         boolean periodDiagnosticsTruncated,
-        Map<String, SectionStatus> sections
+        Map<String, SectionStatus> sections,
+        TaxDetails taxDetails
 ) {
+    /** Compatibility for historic payloads and existing producers; never invent settings for old reports. */
+    public FolioProfitReportResponse(boolean ok, String month, OffsetDateTime calculatedAt, boolean complete,
+            String ruleVersion, Inputs inputs, List<CityResult> cities, List<InventoryResult> inventory,
+            List<ExpenseSummary> expenses, List<DocumentLine> documents, MasterClassSummary masterClass,
+            List<MasterClassDocumentLine> masterClassDocuments, Controls controls, List<Warning> warnings,
+            List<ExpenseLine> expenseLines, PeriodPolicy periodPolicy, List<PeriodDiagnostic> periodDiagnostics,
+            boolean periodDiagnosticsTruncated, Map<String, SectionStatus> sections) {
+        this(ok,month,calculatedAt,complete,ruleVersion,inputs,cities,inventory,expenses,documents,masterClass,
+                masterClassDocuments,controls,warnings,expenseLines,periodPolicy,periodDiagnostics,periodDiagnosticsTruncated,sections,null);
+    }
+    public record TaxDetails(FolioProfitTaxSettings settings,
+            @JsonFormat(shape=JsonFormat.Shape.STRING) BigDecimal retailAmount,
+            @JsonFormat(shape=JsonFormat.Shape.STRING) BigDecimal wholesaleAmount,
+            @JsonFormat(shape=JsonFormat.Shape.STRING) BigDecimal unallocatedAmount,
+            List<DocumentLine> unallocatedDocuments) {}
     public record Inputs(
             @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal odesaTaxShare,
             String taxAllocationMethod,

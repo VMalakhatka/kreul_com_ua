@@ -18,7 +18,14 @@ public final class FolioProfitSavedReports {
             @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
             @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using=EmployeeCountDeserializer.class) Integer kyivEmployeeCount,
             @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
-            @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using=EmployeeCountDeserializer.class) Integer odesaEmployeeCount) {
+            @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using=EmployeeCountDeserializer.class) Integer odesaEmployeeCount,
+            @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+            @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using=FolioProfitTaxSettings.VersionDeserializer.class) Long taxSettingsVersion) {
+        public CalculateRequest(String id, BigDecimal share, BigDecimal rate, BigDecimal mkIncome, BigDecimal mkReturn,
+                BigDecimal odesaSalary, List<Integer> kyivStock, List<Integer> odesaStock, BigDecimal kyivSalary,
+                Integer kyivCount, Integer odesaCount) {
+            this(id, share, rate, mkIncome, mkReturn, odesaSalary, kyivStock, odesaStock, kyivSalary, kyivCount, odesaCount, null);
+        }
         public CalculateRequest(String id, BigDecimal share, BigDecimal rate, BigDecimal mkIncome, BigDecimal mkReturn,
                 BigDecimal odesaSalary, List<Integer> kyivStock, List<Integer> odesaStock, BigDecimal kyivSalary) {
             this(id, share, rate, mkIncome, mkReturn, odesaSalary, kyivStock, odesaStock, kyivSalary, null, null);

@@ -67,11 +67,11 @@ class FolioProfitEmployeeCountsTest {
         assertThat(report.inputs().totalEmployeeCount()).isEqualTo(2);
         var retail=report.expenseLines().stream().filter(l->l.lineId().equals("ODESA_TAX_MALAFOP")).findFirst().orElseThrow();
         assertThat(retail.label()).isEqualTo("Налоги Розн");
-        assertThat(retail.filters().purposeCodes()).containsExactly("МАЛАФОП");
+        assertThat(retail.filters().purposeCodes()).containsExactly("МИХНФОП", "МАЛАФОП");
         assertThat(retail.amount()).isEqualByComparingTo("0.02"); // not rounded pool 0.01
         var wholesale=report.expenseLines().stream().filter(l->l.lineId().equals("KYIV_TAX_KONDFOP")).findFirst().orElseThrow();
         assertThat(wholesale.label()).isEqualTo("Налоги ОПТ");
-        assertThat(wholesale.filters().purposeCodes()).containsExactly("КОНДФОП");
+        assertThat(wholesale.filters().purposeCodes()).containsExactly("КУЗНФОП", "КОНДФОП");
         assertThat(wholesale.amount()).isEqualByComparingTo("2.00");
         assertThat(report.documents().stream().map(FolioProfitReportResponse.DocumentLine::odesaAllocation).reduce(BigDecimal.ZERO,BigDecimal::add))
                 .isEqualByComparingTo("0.02");
