@@ -539,9 +539,9 @@ GET /admin/folio/customer-balance?partnerShortName=БОНД%20АНН
 | `lavka.folio.balance-snapshot.scheduled-enabled` | `true` | включает ежедневный запуск |
 | `lavka.folio.balance-snapshot.cron` | `0 10 0 * * *` | cron полной пересборки |
 | `lavka.folio.balance-snapshot.zone` | `Europe/Kyiv` | бизнес-дата и зона расписания |
-| `lavka.folio.balance-snapshot.lease-seconds` | `7200` | срок межсерверной lease; во время расчёта она продлевается |
+| `lavka.folio.balance-snapshot.lease-seconds` | `120` | срок межсерверной lease (минимум 60 секунд); отдельный heartbeat продлевает её каждые 15 секунд, независимо от SQL/progress |
 | `lavka.folio.balance-snapshot.recovery-enabled` | `true` | включает watchdog прерванных генераций |
-| `lavka.folio.balance-snapshot.recovery-check-ms` | `300000` | период проверки recovery, 5 минут |
+| `lavka.folio.balance-snapshot.recovery-check-ms` | `30000` | период проверки recovery, 30 секунд |
 | `lavka.folio.balance-snapshot.recovery-initial-delay-ms` | `30000` | первая проверка через 30 секунд после старта приложения |
 | `lavka.folio.balance-snapshot.max-recovery-attempts-per-day` | `2` | защита от бесконечного автоматического перезапуска |
 

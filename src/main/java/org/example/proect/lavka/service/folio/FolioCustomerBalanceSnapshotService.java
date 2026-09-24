@@ -1,6 +1,8 @@
 package org.example.proect.lavka.service.folio;
 
 import lombok.extern.slf4j.Slf4j;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.example.proect.lavka.dao.folio.FolioCustomerBalanceDao;
 import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao;
 import org.example.proect.lavka.dao.wp.FolioCustomerBalanceSnapshotDao.SnapshotClient;
@@ -21,6 +23,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
@@ -42,6 +48,14 @@ public class FolioCustomerBalanceSnapshotService {
     private final int leaseSeconds;
     private final int maxRecoveryAttemptsPerDay;
     private final AtomicBoolean localRefreshRunning = new AtomicBoolean(false);
+    private final AtomicReference<String> activeLeaseOwner = new AtomicReference<>();
+    // Separate from SQL work and the shared Spring scheduler: a slow Folio query
+    // must not prevent a live worker from renewing its short lease.
+    private final ScheduledExecutorService leaseHeartbeat = Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "folio-balance-lease-heartbeat");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     public FolioCustomerBalanceSnapshotService(
             FolioCustomerBalanceDao balanceDao,
@@ -49,7 +63,7 @@ public class FolioCustomerBalanceSnapshotService {
             @Qualifier("folioBalanceSnapshotExecutor") TaskExecutor executor,
             @Qualifier("folioBalanceClock") Clock clock,
             @Value("${lavka.folio.balance-snapshot.scheduled-enabled:true}") boolean scheduledEnabled,
-            @Value("${lavka.folio.balance-snapshot.lease-seconds:7200}") int leaseSeconds,
+            @Value("${lavka.folio.balance-snapshot.lease-seconds:120}") int leaseSeconds,
             @Value("${lavka.folio.balance-snapshot.recovery-enabled:true}") boolean recoveryEnabled,
             @Value("${lavka.folio.balance-snapshot.max-recovery-attempts-per-day:2}")
             int maxRecoveryAttemptsPerDay) {
@@ -58,9 +72,38 @@ public class FolioCustomerBalanceSnapshotService {
         this.executor = executor;
         this.clock = clock;
         this.scheduledEnabled = scheduledEnabled;
-        this.leaseSeconds = Math.max(300, leaseSeconds);
+        this.leaseSeconds = Math.max(60, leaseSeconds);
         this.recoveryEnabled = recoveryEnabled;
         this.maxRecoveryAttemptsPerDay = Math.max(1, maxRecoveryAttemptsPerDay);
+    }
+
+    @PostConstruct
+    void startLeaseHeartbeat() {
+        leaseHeartbeat.scheduleWithFixedDelay(this::renewActiveLease, 15, 15, TimeUnit.SECONDS);
+    }
+
+    @PreDestroy
+    void stopLeaseHeartbeat() {
+        // Do not release while the worker might still be executing SQL.
+        // A terminated process loses its lease automatically after its short TTL.
+        leaseHeartbeat.shutdownNow();
+    }
+
+    void renewActiveLease() {
+        String owner = activeLeaseOwner.get();
+        if (owner == null) {
+            return;
+        }
+        try {
+            if (!snapshotDao.renewLease(owner, leaseSeconds)) {
+                activeLeaseOwner.compareAndSet(owner, null);
+                log.warn("[folio.balance.snapshot] heartbeat lease lost; worker cannot publish");
+            }
+        } catch (RuntimeException e) {
+            // Keep the heartbeat scheduled after transient DB failure. The DAO
+            // refuses to revive an expired lease; the worker also checks before publishing.
+            log.warn("[folio.balance.snapshot] lease heartbeat failed: {}", e.getClass().getSimpleName());
+        }
     }
 
     @Scheduled(
@@ -74,7 +117,7 @@ public class FolioCustomerBalanceSnapshotService {
     }
 
     @Scheduled(
-            fixedDelayString = "${lavka.folio.balance-snapshot.recovery-check-ms:300000}",
+            fixedDelayString = "${lavka.folio.balance-snapshot.recovery-check-ms:30000}",
             initialDelayString = "${lavka.folio.balance-snapshot.recovery-initial-delay-ms:30000}"
     )
     public void recoverInterruptedRefresh() {
@@ -192,6 +235,7 @@ public class FolioCustomerBalanceSnapshotService {
                 return;
             }
 
+            activeLeaseOwner.set(ownerId);
             LocalDate asOfDate = LocalDate.now(clock);
             LocalDateTime startedAt = LocalDateTime.now(clock);
             var generationStart = snapshotDao.createGenerationReplacingAbandoned(
@@ -272,6 +316,7 @@ public class FolioCustomerBalanceSnapshotService {
                 }
             }
         } finally {
+            activeLeaseOwner.compareAndSet(ownerId, null);
             try {
                 snapshotDao.releaseLease(ownerId);
             } catch (Exception releaseError) {

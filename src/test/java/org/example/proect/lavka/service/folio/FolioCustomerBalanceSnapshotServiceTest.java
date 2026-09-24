@@ -262,12 +262,63 @@ class FolioCustomerBalanceSnapshotServiceTest {
         verify(snapshotDao, never()).publishGeneration(any(Long.class), anyInt(), any());
     }
 
+    @Test
+    void heartbeatRenewsLeaseWhileFolioQueryHasNotProducedAnyClients() {
+        var balanceDao = mock(FolioCustomerBalanceDao.class);
+        var snapshotDao = mock(FolioCustomerBalanceSnapshotDao.class);
+        when(snapshotDao.tryAcquireLease(any(), eq(120))).thenReturn(true);
+        when(snapshotDao.renewLease(any(), eq(120))).thenReturn(true);
+        when(snapshotDao.createGenerationReplacingAbandoned(any(), any(), any(), any()))
+                .thenReturn(new GenerationStart(90L, 0));
+        var service = service(balanceDao, snapshotDao);
+        doAnswer(invocation -> {
+            // Model time spent waiting for the first long-running SQL result.
+            service.renewActiveLease();
+            service.renewActiveLease();
+            verify(snapshotDao, org.mockito.Mockito.times(2)).renewLease(any(), eq(120));
+            verify(snapshotDao, never()).recordProgress(any(Long.class), anyInt(), any());
+            return 1;
+        }).when(balanceDao).forEachPartnerBalance(any(), anyList(), any(), any(), eq(true), any());
+
+        service.requestRefresh("MANUAL");
+        service.renewActiveLease(); // Completed workers no longer renew their lease.
+
+        verify(snapshotDao, org.mockito.Mockito.times(3)).renewLease(any(), eq(120));
+        verify(snapshotDao).publishGeneration(eq(90L), eq(1), any());
+    }
+
+    @Test
+    void heartbeatFailureDoesNotPreventNextAttemptAndLostLeasePreventsPublishing() {
+        var balanceDao = mock(FolioCustomerBalanceDao.class);
+        var snapshotDao = mock(FolioCustomerBalanceSnapshotDao.class);
+        when(snapshotDao.tryAcquireLease(any(), anyInt())).thenReturn(true);
+        when(snapshotDao.createGenerationReplacingAbandoned(any(), any(), any(), any()))
+                .thenReturn(new GenerationStart(91L, 0));
+        when(snapshotDao.renewLease(any(), anyInt()))
+                .thenThrow(new IllegalStateException("temporary database failure"))
+                .thenReturn(false);
+        var service = service(balanceDao, snapshotDao);
+        doAnswer(invocation -> {
+            service.renewActiveLease();
+            service.renewActiveLease();
+            service.renewActiveLease(); // Lost owner is no longer renewed.
+            verify(snapshotDao, org.mockito.Mockito.times(2)).renewLease(any(), anyInt());
+            return 1;
+        }).when(balanceDao).forEachPartnerBalance(any(), anyList(), any(), any(), eq(true), any());
+
+        service.requestRefresh("MANUAL");
+
+        verify(snapshotDao, never()).publishGeneration(any(Long.class), anyInt(), any());
+        verify(snapshotDao).failGeneration(eq(91L),
+                eq("Balance snapshot lease was lost during generation"), any());
+    }
+
     private static FolioCustomerBalanceSnapshotService service(
             FolioCustomerBalanceDao balanceDao,
             FolioCustomerBalanceSnapshotDao snapshotDao) {
         return new FolioCustomerBalanceSnapshotService(
                 balanceDao, snapshotDao, DIRECT_EXECUTOR, CLOCK,
-                true, 7200, true, 2
+                true, 120, true, 2
         );
     }
 
