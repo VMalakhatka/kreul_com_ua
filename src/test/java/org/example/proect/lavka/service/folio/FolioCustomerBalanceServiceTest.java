@@ -23,6 +23,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.doThrow;
 
 class FolioCustomerBalanceServiceTest {
 
@@ -167,6 +170,87 @@ class FolioCustomerBalanceServiceTest {
         verify(snapshotService).updateActiveClient(
                 eq(AS_OF), eq("A"), eq("Client"), eq(response.summary())
         );
+        verify(dao, times(1)).load(any(), any(), any(), anyList(), anyBoolean());
+    }
+
+    @Test
+    void monthlyReportRefreshesCanonicalTotalsWithoutCopyingPeriodPrdOrTurnover() {
+        var dao = mock(FolioCustomerBalanceDao.class);
+        var snapshot = mock(FolioCustomerBalanceSnapshotService.class);
+        var month = new ProcedureResult("A", "Client", bd("-763.20"), BigDecimal.ZERO, null,
+                List.of(row(0, "Р", "SALE", "", "30816.88", "0", "0", "2026-08-01", null),
+                        row(1, "ПБ", "146", "", "-30816.88", "0", "30816.88", "2026-08-13", null)));
+        var full = new ProcedureResult("A", "Client", bd("236.80"), BigDecimal.ZERO, null,
+                List.of(row(0, "ПБ", "OLD", "ПРД old", "-1000", "0", "1000", "2026-07-01", null),
+                        month.rows().get(0), month.rows().get(1)));
+        when(dao.load("A", LocalDate.of(2026, 8, 1), AS_OF, List.of(), true)).thenReturn(month);
+        when(dao.load("A", FolioCustomerBalanceService.FOLIO_MIN_DATE, AS_OF, List.of(), true)).thenReturn(full);
+        when(snapshot.updateActiveClient(any(), any(), any(), any())).thenReturn(1);
+        var service = new FolioCustomerBalanceService(dao, snapshot, CLOCK);
+        var response = service.get("A", LocalDate.of(2026, 8, 1), List.of(), true);
+        var canonical = FolioCustomerBalanceCalculator.calculate(full, AS_OF, false).summary();
+        assertThat(response.summary().commonDebt()).isEqualByComparingTo("-763.20");
+        assertThat(response.summary().payableNow()).isEqualByComparingTo(canonical.payableNow());
+        assertThat(response.summary().prepaymentAmount()).isZero();
+        assertThat(response.summary().bankPaymentTotal()).isEqualByComparingTo("30816.88");
+        assertThat(canonical.prepaymentAmount()).isEqualByComparingTo("1000");
+        assertThat(canonical.bankPaymentTotal()).isEqualByComparingTo("31816.88");
+        assertThat(response.rows()).hasSize(3);
+        verify(snapshot).updateActiveClient(AS_OF, "A", "Client", canonical);
+        assertThat(service.get("A", null, List.of(), true).summary()).isEqualTo(canonical);
+        verify(snapshot, times(2)).updateActiveClient(AS_OF, "A", "Client", canonical);
+    }
+
+    @Test
+    void canonicalReadFailureReturnsRequestedReportWithWarningAndNoSnapshotWrite() {
+        var dao = mock(FolioCustomerBalanceDao.class);
+        var snapshot = mock(FolioCustomerBalanceSnapshotService.class);
+        when(dao.load("A", LocalDate.of(2026, 8, 1), AS_OF, List.of(), true))
+                .thenReturn(new ProcedureResult("A", "Client", bd("26974.79"), BigDecimal.ZERO, null, List.of()));
+        when(dao.load("A", FolioCustomerBalanceService.FOLIO_MIN_DATE, AS_OF, List.of(), true))
+                .thenThrow(new IllegalStateException("synthetic read failure"));
+        var response = new FolioCustomerBalanceService(dao, snapshot, CLOCK)
+                .get("A", LocalDate.of(2026, 8, 1), null, true);
+        assertThat(response.ok()).isTrue();
+        assertThat(response.summary().commonDebt()).isEqualByComparingTo("26974.79");
+        assertThat(response.warnings()).extracting(w -> w.code())
+                .contains("BALANCE_SNAPSHOT_CLIENT_REFRESH_FAILED");
+        verifyNoMoreInteractions(snapshot);
+    }
+
+    @Test
+    void persistenceFailureDoesNotDiscardFullHistoryReport() {
+        var dao = mock(FolioCustomerBalanceDao.class);
+        var snapshot = mock(FolioCustomerBalanceSnapshotService.class);
+        when(dao.load("A", FolioCustomerBalanceService.FOLIO_MIN_DATE, AS_OF, List.of(), true))
+                .thenReturn(new ProcedureResult("A", "Client", bd("26974.79"), BigDecimal.ZERO, null, List.of()));
+        doThrow(new IllegalStateException("synthetic persistence failure")).when(snapshot)
+                .updateActiveClient(any(), any(), any(), any());
+        var response = new FolioCustomerBalanceService(dao, snapshot, CLOCK).get("A", null, null, null);
+        assertThat(response.ok()).isTrue();
+        assertThat(response.summary().commonDebt()).isEqualByComparingTo("26974.79");
+        assertThat(response.warnings()).extracting(w -> w.code()).contains("BALANCE_SNAPSHOT_CLIENT_REFRESH_FAILED");
+    }
+
+    @Test
+    void noMatchingCurrentDayRowReportsDeferredRefresh() {
+        var dao = mock(FolioCustomerBalanceDao.class);
+        var snapshot = mock(FolioCustomerBalanceSnapshotService.class);
+        when(dao.load("A", FolioCustomerBalanceService.FOLIO_MIN_DATE, AS_OF, List.of(), true))
+                .thenReturn(new ProcedureResult("A", "Client", BigDecimal.ZERO, BigDecimal.ZERO, null, List.of()));
+        var response = new FolioCustomerBalanceService(dao, snapshot, CLOCK).get("A", null, null, null);
+        assertThat(response.warnings()).extracting(w -> w.code()).contains("BALANCE_SNAPSHOT_CLIENT_REFRESH_DEFERRED");
+    }
+
+    @Test
+    void excludedServicePaymentsDoNotRefreshCanonicalSnapshotOrLoadItAgain() {
+        var dao = mock(FolioCustomerBalanceDao.class);
+        var snapshot = mock(FolioCustomerBalanceSnapshotService.class);
+        when(dao.load("A", LocalDate.of(2026, 8, 1), AS_OF, List.of(), false))
+                .thenReturn(new ProcedureResult("A", "Client", BigDecimal.ZERO, BigDecimal.ZERO, null, List.of()));
+        new FolioCustomerBalanceService(dao, snapshot, CLOCK).get("A", LocalDate.of(2026, 8, 1), null, false);
+        verify(dao).load("A", LocalDate.of(2026, 8, 1), AS_OF, List.of(), false);
+        verifyNoMoreInteractions(dao, snapshot);
     }
 
     @Test
@@ -182,6 +266,7 @@ class FolioCustomerBalanceServiceTest {
                 .get("A", LocalDate.of(2026, 8, 1), List.of(7), true);
 
         verify(snapshotService, never()).updateActiveClient(any(), any(), any(), any());
+        verify(dao, times(1)).load(any(), any(), any(), anyList(), anyBoolean());
     }
 
     @Test

@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -68,7 +69,11 @@ public class FolioCustomerBalanceService {
                 ? "ALL_WAREHOUSES"
                 : "ALL_DOCUMENT_LINES_IN_SELECTED_WAREHOUSES";
 
-        FolioCustomerBalanceResponse response = new FolioCustomerBalanceResponse(
+        var warnings = new ArrayList<FolioCustomerBalanceResponse.Warning>();
+        refreshCanonicalSnapshot(normalizedDateFrom, normalizedWarehouseIds,
+                normalizedShowServicePayments, currentDate, procedure, calculation.summary(), warnings);
+
+        return new FolioCustomerBalanceResponse(
                 true,
                 new FolioCustomerBalanceResponse.Partner(procedure.partnerId(), procedure.partnerName()),
                 new FolioCustomerBalanceResponse.Filters(
@@ -81,7 +86,13 @@ public class FolioCustomerBalanceService {
                 ),
                 calculation.summary(),
                 calculation.rows(),
-                List.of(
+                standardWarnings(currentDate, warnings)
+        );
+    }
+
+    private static List<FolioCustomerBalanceResponse.Warning> standardWarnings(
+            LocalDate currentDate, List<FolioCustomerBalanceResponse.Warning> refreshWarnings) {
+        var warnings = new ArrayList<>(List.of(
                         new FolioCustomerBalanceResponse.Warning(
                                 "FOLIO_NOLOCK_READ",
                                 "I_DOLG_DOC uses NOLOCK; concurrent Folio edits can make one response internally non-snapshot",
@@ -97,28 +108,52 @@ public class FolioCustomerBalanceService {
                                 "I_DOLG_DOC treats dateTo as an inclusive midnight boundary",
                                 Map.of("dateTo", currentDate.toString())
                         )
-                )
-        );
+                ));
+        warnings.addAll(refreshWarnings);
+        return List.copyOf(warnings);
+    }
 
+    private void refreshCanonicalSnapshot(LocalDate dateFrom, List<Integer> warehouseIds,
+                                          boolean includeServicePayments, LocalDate asOfDate,
+                                          FolioCustomerBalanceDao.ProcedureResult procedure,
+                                          FolioCustomerBalanceResponse.Summary summary,
+                                          List<FolioCustomerBalanceResponse.Warning> warnings) {
         if (snapshotService != null
-                && normalizedDateFrom.equals(FOLIO_MIN_DATE)
-                && normalizedWarehouseIds.isEmpty()
-                && normalizedShowServicePayments) {
+                && warehouseIds.isEmpty()
+                && includeServicePayments) {
             try {
-                snapshotService.updateActiveClient(
-                        currentDate,
-                        procedure.partnerId(),
-                        procedure.partnerName(),
-                        calculation.summary()
+                // Period totals (especially deferred amounts and PRD payments) cannot be
+                // copied into the full-history projection. Read only this client's canonical ledger.
+                var canonical = dateFrom.equals(FOLIO_MIN_DATE) ? procedure
+                        : dao.load(procedure.partnerId(), FOLIO_MIN_DATE, asOfDate, List.of(), true);
+                var canonicalSummary = dateFrom.equals(FOLIO_MIN_DATE) ? summary
+                        : FolioCustomerBalanceCalculator.calculate(canonical, asOfDate, false).summary();
+                int updated = snapshotService.updateActiveClient(
+                        asOfDate,
+                        canonical.partnerId(),
+                        canonical.partnerName(),
+                        canonicalSummary
                 );
+                if (updated == 0) {
+                    warnings.add(new FolioCustomerBalanceResponse.Warning(
+                            "BALANCE_SNAPSHOT_CLIENT_REFRESH_DEFERRED",
+                            "Canonical balance saved, but no matching current-day snapshot row was updated",
+                            Map.of("partnerShortName", procedure.partnerId(), "asOfDate", asOfDate.toString(),
+                                    "recommendation", "Check snapshot status; a full snapshot refresh may be required")
+                    ));
+                }
             } catch (RuntimeException e) {
-                // Snapshot persistence must not turn a successful canonical Folio report into an API error.
+                // Neither a second Folio read nor projection persistence may discard the requested report.
                 log.warn("[folio.balance.snapshot] cannot refresh partner={} after live report: {}",
                         procedure.partnerId(), e.getMessage());
+                warnings.add(new FolioCustomerBalanceResponse.Warning(
+                        "BALANCE_SNAPSHOT_CLIENT_REFRESH_FAILED",
+                        "The requested report is available, but the debtors snapshot could not be refreshed",
+                        Map.of("partnerShortName", procedure.partnerId(), "asOfDate", asOfDate.toString(),
+                                "recommendation", "Retry the individual report or refresh the full snapshot")
+                ));
             }
         }
-
-        return response;
     }
 
     private static String normalizePartnerShortName(String partnerShortName) {

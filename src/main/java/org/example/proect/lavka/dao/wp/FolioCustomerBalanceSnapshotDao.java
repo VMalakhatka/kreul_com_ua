@@ -306,6 +306,14 @@ public class FolioCustomerBalanceSnapshotDao {
                                   String partnerName,
                                   FolioCustomerBalanceResponse.Summary summary,
                                   LocalDateTime calculatedAt) {
+        // Serialize with publishGeneration before touching the live override/client rows.
+        // Publication must either see this override or finish before we update its new ACTIVE row.
+        jdbc.queryForObject("""
+                SELECT active_generation_id
+                FROM folio_balance_snapshot_state
+                WHERE id = 1
+                FOR UPDATE
+                """, Long.class);
         jdbc.update("""
                 INSERT INTO folio_balance_snapshot_live_client (
                     partner_short_name, as_of_date, partner_name,
