@@ -63,11 +63,11 @@ class FolioCustomerBalanceServiceTest {
         assertThat(response.summary().receiptTotal()).isEqualByComparingTo("50");
         assertThat(response.summary().bankPaymentTotal()).isEqualByComparingTo("200");
         assertThat(response.summary().cashPaymentTotal()).isEqualByComparingTo("300");
-        assertThat(response.summary().commonDebt()).isEqualByComparingTo("1450");
+        assertThat(response.summary().commonDebt()).isEqualByComparingTo("950");
         assertThat(response.summary().deferredAmount()).isEqualByComparingTo("1000");
         assertThat(response.summary().overdueDeferredAmount()).isEqualByComparingTo("400");
         assertThat(response.summary().prepaymentAmount()).isEqualByComparingTo("500");
-        assertThat(response.summary().payableNow()).isEqualByComparingTo("450");
+        assertThat(response.summary().payableNow()).isEqualByComparingTo("-50");
 
         assertThat(response.rows()).hasSize(6);
         assertThat(response.rows().get(0).openingBalanceRow()).isTrue();
@@ -78,6 +78,26 @@ class FolioCustomerBalanceServiceTest {
         assertThat(response.rows().get(5).prepayment()).isTrue();
         assertThat(response.rows().get(5).prepaymentAmount()).isEqualByComparingTo("200");
         assertThat(response.rows().get(5).balanceAfter()).isEqualByComparingTo("950");
+    }
+
+    @Test
+    void historicalPrepaymentsDoNotChangeDebtWhenMovedIntoOpeningBalance() {
+        var payment = row(0, "ПБ", "OLD", "ПРД Historical payment", "-169892", "0", "169892", "2026-08-01", null);
+        var expense = row(1, "Р", "SALE", "", "217229.49", "0", "0", "2026-09-02", null);
+        var currentPayment = row(2, "ПБ", "PAID", "", "-33614.26", "0", "33614.26", "2026-09-03", null);
+        var full = new ProcedureResult("TEST", "Test customer", bd("-10273.94"), BigDecimal.ZERO, null,
+                List.of(payment, expense, currentPayment));
+        var month = new ProcedureResult("TEST", "Test customer", bd("-180165.94"), BigDecimal.ZERO, null,
+                List.of(expense, currentPayment));
+        LocalDate asOf = LocalDate.of(2026, 9, 24);
+        var snapshot = FolioCustomerBalanceCalculator.calculate(full, asOf, false).summary();
+        var detail = FolioCustomerBalanceCalculator.calculate(month, asOf, true);
+        assertThat(snapshot.commonDebt()).isEqualByComparingTo("3449.29");
+        assertThat(snapshot.payableNow()).isEqualByComparingTo(detail.summary().payableNow());
+        assertThat(detail.summary().commonDebt()).isEqualByComparingTo("3449.29");
+        assertThat(snapshot.prepaymentAmount()).isEqualByComparingTo("169892");
+        assertThat(detail.summary().prepaymentAmount()).isEqualByComparingTo("0");
+        assertThat(detail.rows().get(detail.rows().size() - 1).balanceAfter()).isEqualByComparingTo(snapshot.commonDebt());
     }
 
     @Test

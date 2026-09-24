@@ -117,9 +117,9 @@ final class FolioCustomerBalanceCalculator {
                 .subtract(receiptTotal)
                 .subtract(bankPaymentTotal)
                 .subtract(cashPaymentTotal);
-        // A marked prepayment is reserved for a future delivery and must not pay
-        // existing debt. Keep it as a separate amount and exclude its effect from debt.
-        BigDecimal commonDebt = accountingBalance.add(prepaymentTotal);
+        // PRD classifies received payments; it does not reverse their ledger effect.
+        // Adding historical PRD totals back makes debt depend on dateFrom.
+        BigDecimal commonDebt = accountingBalance;
         BigDecimal payableNow = commonDebt.subtract(deferredTotal);
 
         var summary = new FolioCustomerBalanceResponse.Summary(
