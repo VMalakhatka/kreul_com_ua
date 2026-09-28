@@ -44,7 +44,7 @@ Java и предыдущая ревизия профиля; исходные fac
 
 ## Проверки
 
-`FolioSelectedOperationDemandMariaDbTest` на disposable loopback MariaDB
+`FolioAvailabilityMariaDbTest.selectedConsumptionChangesDemandAndLostDemandButNotFinancialSales` на disposable loopback MariaDB
 проверяет добавление расходников/мультисборки, оба вида предоплаты, единый числитель
 для дней наличия, неизменность финансовых показателей, ANY/EXCLUDE,
 REGULAR-only, stock-only и исключение счетов, прихода, неучётных и разовых операций.
