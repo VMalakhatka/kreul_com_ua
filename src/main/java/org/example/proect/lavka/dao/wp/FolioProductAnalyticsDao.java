@@ -287,7 +287,7 @@ public class FolioProductAnalyticsDao {
                 + "AND m.document_date>=a.month_start AND m.document_date<DATE_ADD(a.month_start, INTERVAL 1 MONTH) "
                 + "WHERE " + parts.movementWhere
                 + " AND m.warehouse_id IN (:demandMembers) AND m.sku IN (:demandSkus) "
-                + "AND m.affects_planning_demand=1 "
+                + "AND " + planningDemandPredicate(spec) + " "
                 + "AND (a.available_mask & (1 << (DAYOFMONTH(m.document_date)-1)))<>0 GROUP BY m.sku";
         Map<String, BigDecimal> result = new LinkedHashMap<>();
         named.query(sql, parts.parameters, (org.springframework.jdbc.core.RowCallbackHandler) rs ->
@@ -569,7 +569,7 @@ public class FolioProductAnalyticsDao {
                 + "SUM(CASE WHEN m.affects_financial_sales=1 THEN m.accounting_value ELSE 0 END) sales_cogs,"
                 + "SUM(CASE WHEN m.movement_class='CUSTOMER_RETURN' THEN m.quantity ELSE 0 END) return_quantity,"
                 + "SUM(CASE WHEN m.movement_class='CUSTOMER_RETURN' THEN m.sale_amount ELSE 0 END) return_revenue,"
-                + "SUM(CASE WHEN m.affects_planning_demand=1 THEN m.quantity ELSE 0 END) regular_sold_units,"
+                + "SUM(CASE WHEN " + planningDemandPredicate(spec) + " THEN m.quantity ELSE 0 END) regular_sold_units,"
                 + "SUM(CASE WHEN m.affects_planning_demand=1 THEN m.sale_amount ELSE 0 END) regular_revenue,"
                 + "SUM(CASE WHEN m.affects_planning_demand=1 THEN m.accounting_value ELSE 0 END) regular_cogs,"
                 + "SUM(CASE WHEN m.demand_mode='ONE_OFF_ORDER' AND m.affects_financial_sales=1 THEN m.quantity ELSE 0 END) one_off_sold_units,"
@@ -583,6 +583,24 @@ public class FolioProductAnalyticsDao {
                 + "AND warehouse_id IN (:warehouseIds) AND month_start>=:monthFrom "
                 + "AND month_start<=:monthTo GROUP BY source_database,warehouse_id,sku";
         return new SqlParts(String.join(" AND ", current), flow, inventory, String.join(" AND ", movement), params);
+    }
+
+    /** Explicit operation selection may include replenishable consumption/assembly.
+     * Keep source classification and financial sales unchanged. Other movement filters
+     * (including an explicit REGULAR-only selection) remain authoritative. */
+    private static String planningDemandPredicate(QuerySpec spec) {
+        Selection operations = spec.movementSelections().get("operationKinds");
+        if (operations == null || !"INCLUDE".equals(operations.mode()))
+            return "m.affects_planning_demand=1";
+        List<String> selected = List.of("РАСХОДНИКИ", "МУЛЬТИСБОРКА").stream()
+                .filter(operations.values()::contains).toList();
+        if (selected.isEmpty()) return "m.affects_planning_demand=1";
+        // Values are drawn only from the fixed allowlist above, never request SQL.
+        String kinds = selected.stream().map(value -> "'" + value + "'")
+                .collect(java.util.stream.Collectors.joining(","));
+        return "(m.affects_planning_demand=1 OR (m.operation_kind IN (" + kinds + ")"
+                + " AND m.document_type='Р' AND m.affects_stock=1 AND m.stock_direction='OUT'"
+                + " AND m.demand_mode<>'ONE_OFF_ORDER'))";
     }
 
     private static String escapeLike(String value) {
