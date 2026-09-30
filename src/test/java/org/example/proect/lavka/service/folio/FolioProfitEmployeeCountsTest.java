@@ -63,27 +63,23 @@ class FolioProfitEmployeeCountsTest {
         var service=new FolioProfitReportService(dao,new FolioProfitClassifier(),new FolioProfitReportProperties());
         var report=service.calculate(new FolioProfitReportService.Request("2026-07",null,null,null,null,
                 BigDecimal.ZERO,null,null,BigDecimal.ZERO,1,1),true);
-        assertThat(report.inputs().allocationMode()).isEqualTo("EMPLOYEE_COUNTS");
-        assertThat(report.inputs().totalEmployeeCount()).isEqualTo(2);
-        var retail=report.expenseLines().stream().filter(l->l.lineId().equals("ODESA_TAX_MALAFOP")).findFirst().orElseThrow();
-        assertThat(retail.label()).isEqualTo("Налоги Розн");
-        assertThat(retail.filters().purposeCodes()).containsExactly("МИХНФОП", "МАЛАФОП");
-        assertThat(retail.amount()).isEqualByComparingTo("0.02"); // not rounded pool 0.01
-        var wholesale=report.expenseLines().stream().filter(l->l.lineId().equals("KYIV_TAX_KONDFOP")).findFirst().orElseThrow();
-        assertThat(wholesale.label()).isEqualTo("Налоги ОПТ");
-        assertThat(wholesale.filters().purposeCodes()).containsExactly("КУЗНФОП", "КОНДФОП");
-        assertThat(wholesale.amount()).isEqualByComparingTo("2.00");
+        assertThat(report.inputs().allocationMode()).isEqualTo("ALL_TAXES_KYIV");
+        assertThat(report.inputs().totalEmployeeCount()).isNull();
+        var tax=report.expenseLines().stream().filter(l->l.lineId().equals("KYIV_TAXES")).findFirst().orElseThrow();
+        assertThat(tax.label()).isEqualTo("Налоги — розница и опт");
+        assertThat(tax.filters().purposeCodes()).containsExactly("МИХНФОП", "МАЛАФОП", "КУЗНФОП", "КОНДФОП");
+        assertThat(tax.amount()).isEqualByComparingTo("2.02");
         assertThat(report.documents().stream().map(FolioProfitReportResponse.DocumentLine::odesaAllocation).reduce(BigDecimal.ZERO,BigDecimal::add))
-                .isEqualByComparingTo("0.02");
+                .isZero();
         assertThat(report.controls().operatingExpenseTotal()).isEqualByComparingTo("2.02");
         String fixture=System.getProperty("folio.profit.headcount.fixture.output");
         if(fixture!=null) java.nio.file.Files.writeString(java.nio.file.Path.of(fixture),
                 new ObjectMapper().findAndRegisterModules().writeValueAsString(report));
         var invalid=service.calculate(new FolioProfitReportService.Request("2026-07",null,null,null,null,
                 BigDecimal.ZERO,null,null,BigDecimal.ZERO,0,0),true);
-        assertThat(invalid.sections().get("EXPENSE_INPUTS").errorCode()).isEqualTo("EMPLOYEE_COUNTS_INVALID");
-        assertThat(invalid.complete()).isFalse();
-        assertThat(invalid.inputs().allocationMode()).isEqualTo("UNAVAILABLE");
+        assertThat(invalid.sections().get("EXPENSE_INPUTS").status()).isEqualTo("AVAILABLE");
+        assertThat(invalid.inputs().allocationMode()).isEqualTo("ALL_TAXES_KYIV");
+        assertThat(invalid.warnings()).anyMatch(w -> w.code().equals("TAX_ALLOCATION_LEGACY_PARAMETERS_IGNORED"));
     }
     private static PaymentRow payment(long id,String name,String amount) {
         return new PaymentRow(id,"TEST-"+id,LocalDate.of(2026,7,1),new BigDecimal(amount),false,1,

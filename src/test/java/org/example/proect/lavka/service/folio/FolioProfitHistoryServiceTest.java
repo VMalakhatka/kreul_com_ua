@@ -167,6 +167,7 @@ class FolioProfitHistoryServiceTest {
         ((com.fasterxml.jackson.databind.node.ObjectNode)tree.get("inputs")).remove(List.of(
                 "kyivEmployeeCount","odesaEmployeeCount","totalEmployeeCount","allocationMode","kyivTaxShare"));
         ((com.fasterxml.jackson.databind.node.ObjectNode)tree).remove("taxDetails");
+        ((com.fasterxml.jackson.databind.node.ObjectNode)tree).remove(List.of("masterClassesByCity", "masterClassDocumentsByCity", "grossProfitLines"));
         rows.put(1L,new FolioProfitHistoryDao.Row(1,"Paint_Ua","2025-07",request.requestId(),hash,raw,"COMPLETED",
                 json.writeValueAsString(tree),true,null,Instant.now(),Instant.now())); published=1L;
         var replay=service.calculate("2025-07",request);
@@ -174,6 +175,9 @@ class FolioProfitHistoryServiceTest {
         assertThat(replay.report().inputs().allocationMode()).isNull();
         assertThat(replay.report().inputs().odesaTaxShare()).isEqualByComparingTo("0.4285714286");
         assertThat(replay.report().taxDetails()).isNull();
+        assertThat(replay.report().masterClassesByCity()).isNull();
+        assertThat(replay.report().masterClassDocumentsByCity()).isNull();
+        assertThat(replay.report().grossProfitLines()).isNull();
         verifyNoInteractions(calculator);
     }
     @Test void pinnedVersionConflictIsBeforeReserveAndDoesNotCreateFailedRevision() {

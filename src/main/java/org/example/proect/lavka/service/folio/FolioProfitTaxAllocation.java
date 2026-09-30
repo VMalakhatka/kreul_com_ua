@@ -10,6 +10,9 @@ import java.util.regex.Pattern;
 /** Employee counts retain the exact rational share until the document's final cent rounding. */
 record FolioProfitTaxAllocation(Integer kyivCount, Integer odesaCount, Long totalCount,
         BigDecimal odesaShare, String mode, FolioProfitTaxSettings settings) {
+    static FolioProfitTaxAllocation allKyiv(FolioProfitTaxSettings settings) {
+        return new FolioProfitTaxAllocation(null, null, null, BigDecimal.ZERO, "ALL_TAXES_KYIV", settings);
+    }
     FolioProfitTaxAllocation(Integer kyiv,Integer odesa,Long total,BigDecimal share,String mode) {
         this(kyiv,odesa,total,share,mode,FolioProfitTaxSettings.defaults());
     }

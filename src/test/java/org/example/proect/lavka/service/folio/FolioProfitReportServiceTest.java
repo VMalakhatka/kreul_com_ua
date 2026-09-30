@@ -82,12 +82,12 @@ class FolioProfitReportServiceTest {
                 null, null), true);
 
         assertThat(city(report, "KYIV").baseGrossProfit()).isEqualByComparingTo("264551.50");
-        assertThat(city(report, "KYIV").operatingExpenses()).isEqualByComparingTo("78496.96");
-        assertThat(city(report, "KYIV").profit()).isEqualByComparingTo("186054.54");
+        assertThat(city(report, "KYIV").operatingExpenses()).isEqualByComparingTo("97715.61");
+        assertThat(city(report, "KYIV").profit()).isEqualByComparingTo("166835.89");
         assertThat(city(report, "ODESA").baseGrossProfit()).isEqualByComparingTo("98577.61");
         assertThat(city(report, "ODESA").manualGrossAdjustments()).isEqualByComparingTo("4690.00");
-        assertThat(city(report, "ODESA").operatingExpenses()).isEqualByComparingTo("24218.65");
-        assertThat(city(report, "ODESA").profit()).isEqualByComparingTo("79048.96");
+        assertThat(city(report, "ODESA").operatingExpenses()).isEqualByComparingTo("5000.00");
+        assertThat(city(report, "ODESA").profit()).isEqualByComparingTo("98267.61");
         assertThat(report.masterClass().income()).isEqualByComparingTo("10740.00");
         assertThat(report.masterClass().returns()).isEqualByComparingTo("6050.00");
         assertThat(report.masterClass().netContribution()).isEqualByComparingTo("4690.00");
@@ -147,7 +147,7 @@ class FolioProfitReportServiceTest {
         assertThat(report.masterClass().sku()).isEqualTo("Мастер-Класс сентябр");
         assertThat(report.warnings()).extracting(FolioProfitReportResponse.Warning::code)
                 .contains("MASTER_CLASS_ARTICLE_NOT_FOUND");
-        verify(dao).masterClassArticleExists("Мастер-Класс сентябр");
+        verify(dao, org.mockito.Mockito.times(2)).masterClassArticleExists("Мастер-Класс сентябр");
     }
 
     @Test
@@ -251,10 +251,10 @@ class FolioProfitReportServiceTest {
                     assertThat(r.amount()).isZero(); assertThat(r.documentCount()).isZero();
                     assertThat(r.source()).isEqualTo("REQUEST_OVERRIDE");
                 });
-        assertThat(report.inputs().kyivAdditionalSalary()).isEqualByComparingTo("100");
+        assertThat(report.inputs().kyivAdditionalSalary()).isZero();
         assertThat(report.documents()).filteredOn(r -> r.documentNumber().equals("245")).hasSize(2);
         assertThat(report.documents()).filteredOn(r -> r.paymentId() == 8).singleElement().satisfies(r -> {
-            assertThat(r.expenseLineId()).isEqualTo("SHARED_TAX_MALAFOP");
+            assertThat(r.expenseLineId()).isEqualTo("KYIV_TAXES");
             assertThat(r.kyivAllocation().add(r.odesaAllocation())).isEqualByComparingTo("10.01");
             assertThat(r.profitImpact()).isEqualByComparingTo("10.01");
         });
@@ -310,20 +310,20 @@ class FolioProfitReportServiceTest {
         assertThat(city(report,"ODESA").operatingExpenses()).isEqualByComparingTo("60");
     }
 
-    @Test void rejectsNegativeKyivManualAndHandlesYearBoundary() {
+    @Test void ignoresObsoleteKyivManualAndHandlesYearBoundary() {
         var invalid = service.calculate(new FolioProfitReportService.Request("2026-01", null,
                 null, null, null, null, null, null, new BigDecimal("-1")), false);
-        assertThat(invalid.sections().get("EXPENSE_INPUTS").errorCode()).isEqualTo("KYIV_ADDITIONAL_SALARY_INVALID");
-        assertThat(invalid.sections().get("EXPENSES").status()).isEqualTo("UNAVAILABLE");
-        assertThat(city(invalid, "KYIV").operatingExpenses()).isNull();
-        assertThat(city(invalid, "KYIV").profit()).isNull();
+        assertThat(invalid.sections().get("EXPENSE_INPUTS").status()).isEqualTo("AVAILABLE");
+        assertThat(invalid.sections().get("EXPENSES").status()).isEqualTo("AVAILABLE");
+        assertThat(city(invalid, "KYIV").operatingExpenses()).isZero();
+        assertThat(invalid.warnings()).anyMatch(w -> w.code().equals("KYIV_ADDITIONAL_SALARY_NOT_APPLICABLE"));
         stubEmptyInventory();
         var report = service.calculate(new FolioProfitReportService.Request("2026-01", null, null,
                 null, null, null, null, null), false);
-        verify(dao).findPaymentCandidates(LocalDate.of(2025,12,1), LocalDate.of(2026,3,1), "2026 01");
-        assertThat(report.inputs().kyivAdditionalSalarySource()).isEqualTo("DEFAULT");
+        verify(dao, org.mockito.Mockito.times(2)).findPaymentCandidates(LocalDate.of(2025,12,1), LocalDate.of(2026,3,1), "2026 01");
+        assertThat(report.inputs().kyivAdditionalSalarySource()).isEqualTo("NOT_APPLICABLE");
         assertThat(report.inputs().kyivAdditionalSalary()).isZero();
-        assertThat(report.expenseLines()).hasSize(32);
+        assertThat(report.expenseLines()).hasSize(31);
         assertLineReconciliation(report);
     }
 
@@ -351,8 +351,8 @@ class FolioProfitReportServiceTest {
                 null,null,BigDecimal.ZERO,null,null),true);
         assertThat(report.complete()).isTrue();
         assertThat(report.documents()).hasSize(13);
-        assertThat(city(report,"ODESA").operatingExpenses()).isEqualByComparingTo("20033.95");
-        assertThat(city(report,"KYIV").operatingExpenses()).isEqualByComparingTo("31208.34");
+        assertThat(city(report,"ODESA").operatingExpenses()).isZero();
+        assertThat(city(report,"KYIV").operatingExpenses()).isEqualByComparingTo("51242.29");
         assertThat(report.controls().operatingExpenseTotal()).isEqualByComparingTo("51242.29");
         assertLineReconciliation(report);
     }

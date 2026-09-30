@@ -9,7 +9,8 @@ import java.util.List;
 public class FolioProfitReportProperties {
 
     private boolean enabled = true;
-    private List<Integer> kyivWarehouseIds = List.of(1, 7, 12);
+    private List<Integer> kyivWarehouseIds = List.of(1, 7);
+    private List<Integer> kyivStockWarehouseIds = List.of(1, 7, 12);
     private int odesaWarehouseId = 5;
     private BigDecimal defaultOdesaTaxShare = new BigDecimal("0.4285714286");
     private BigDecimal defaultRubToUahRate = new BigDecimal("0.41");
@@ -27,6 +28,9 @@ public class FolioProfitReportProperties {
     public List<Integer> getKyivWarehouseIds() {
         return kyivWarehouseIds;
     }
+
+    public List<Integer> getKyivStockWarehouseIds() { return kyivStockWarehouseIds; }
+    public void setKyivStockWarehouseIds(List<Integer> ids) { kyivStockWarehouseIds = ids; }
 
     public void setKyivWarehouseIds(List<Integer> kyivWarehouseIds) {
         this.kyivWarehouseIds = kyivWarehouseIds;

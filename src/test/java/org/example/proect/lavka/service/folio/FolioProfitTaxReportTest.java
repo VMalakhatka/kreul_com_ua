@@ -32,7 +32,7 @@ class FolioProfitTaxReportTest {
         setup(List.of(duplicate,duplicate,payment(2,"МАЛАФОП","14"),payment(3,"КУЗНФОП","21"),
                 payment(4,"КОНДФОП","28"),payment(5,"НЕИЗВФОП","5"),payment(6,"МИХНФОП КУЗНФОП","11")));
         var report=service.calculate(request,true);
-        assertThat(report.ruleVersion()).isEqualTo("2026-09-22.1");
+        assertThat(report.ruleVersion()).isEqualTo("2026-09-30.1");
         assertThat(report.complete()).isFalse();
         assertThat(report.controls().selectedDocumentCount()).isEqualTo(6);
         assertThat(report.taxDetails().retailAmount()).isEqualByComparingTo("21");
@@ -43,12 +43,12 @@ class FolioProfitTaxReportTest {
             assertThat(d.accountingTreatment()).isEqualTo("UNALLOCATED");
             assertThat(d.profitImpact()).isZero();
         });
-        assertThat(report.cities().get(0).operatingExpenses()).isEqualByComparingTo("61");
-        assertThat(report.cities().get(1).operatingExpenses()).isEqualByComparingTo("9");
+        assertThat(report.cities().get(0).operatingExpenses()).isEqualByComparingTo("70");
+        assertThat(report.cities().get(1).operatingExpenses()).isZero();
         assertThat(report.controls().operatingExpenseTotal()).isEqualByComparingTo("70");
         assertThat(report.warnings()).filteredOn(w->w.code().equals("UNKNOWN_TAX_POOL")).hasSize(2);
-        assertThat(report.expenseLines()).filteredOn(l->l.lineId().equals("KYIV_TAX_MALAFOP"))
-                .singleElement().satisfies(l->assertThat(l.filters().purposeCodes()).containsExactly("МИХНФОП","МАЛАФОП"));
+        assertThat(report.expenseLines()).filteredOn(l->l.lineId().equals("KYIV_TAXES"))
+                .singleElement().satisfies(l->assertThat(l.filters().purposeCodes()).containsExactly("МИХНФОП","МАЛАФОП","КУЗНФОП","КОНДФОП"));
         verify(settings,times(1)).get();
         String fixture=System.getProperty("folio.profit.tax.fixture.output");
         if(fixture!=null) java.nio.file.Files.writeString(java.nio.file.Path.of(fixture),
@@ -62,10 +62,10 @@ class FolioProfitTaxReportTest {
         assertThat(report.taxDetails().settings()).isEqualTo(captured);
         assertThat(report.taxDetails().unallocatedAmount()).isZero();
         assertThat(report.complete()).isTrue();
-        assertThat(report.cities().get(0).operatingExpenses()).isEqualByComparingTo("109");
-        assertThat(report.cities().get(1).operatingExpenses()).isEqualByComparingTo("41");
-        assertThat(report.expenseLines()).filteredOn(l->l.lineId().equals("ODESA_TAX_MALAFOP")).singleElement()
-                .satisfies(l->assertThat(l.filters().purposeCodes()).containsExactly("НОВАФОП"));
+        assertThat(report.cities().get(0).operatingExpenses()).isEqualByComparingTo("150");
+        assertThat(report.cities().get(1).operatingExpenses()).isZero();
+        assertThat(report.expenseLines()).filteredOn(l->l.lineId().equals("KYIV_TAXES")).singleElement()
+                .satisfies(l->assertThat(l.filters().purposeCodes()).containsExactly("НОВАФОП","КУЗНФОП"));
         verifyNoInteractions(settings);
     }
     @Test void emptyPoolsDisableAllocationNotTaxDocumentSelectionAndUnknownAuditIsNotCapped() {

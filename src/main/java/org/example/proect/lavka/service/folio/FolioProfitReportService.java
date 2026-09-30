@@ -50,7 +50,7 @@ import java.util.Set;
 @Service
 public class FolioProfitReportService {
 
-    private static final String RULE_VERSION = "2026-09-22.1";
+    private static final String RULE_VERSION = "2026-09-30.1";
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(FolioProfitReportService.class);
     private static final String REPORT_CURRENCY = "UAH";
     private static final String MASTER_CLASS_SOURCE = "FOLIO_SCL_NAKL_SCL_MOVE";
@@ -145,8 +145,15 @@ public class FolioProfitReportService {
         BigDecimal kyivAdditionalSalary = expenseInputs == null ? null : expenseInputs.kyivSalary();
         String additionalSalarySource = expenseInputs == null ? "UNAVAILABLE"
                 : request.odesaAdditionalSalary() == null ? "DEFAULT" : "REQUEST_OVERRIDE";
-        String kyivSalarySource = expenseInputs == null ? "UNAVAILABLE"
-                : request.kyivAdditionalSalary() == null ? "DEFAULT" : "REQUEST_OVERRIDE";
+        String kyivSalarySource = expenseInputs == null ? "UNAVAILABLE" : "NOT_APPLICABLE";
+        if (request.kyivEmployeeCount() != null || request.odesaEmployeeCount() != null || request.odesaTaxShare() != null) {
+            warnings.add(warning("TAX_ALLOCATION_LEGACY_PARAMETERS_IGNORED",
+                    "В новых расчётах все подтверждённые налоги относятся на Киев; численность и доля не применяются", Map.of()));
+        }
+        if (request.kyivAdditionalSalary() != null) {
+            warnings.add(warning("KYIV_ADDITIONAL_SALARY_NOT_APPLICABLE",
+                    "Дополнительные работы на Киеве не применяются; переданное значение игнорируется", Map.of()));
+        }
         List<PeriodDiagnostic> periodDiagnostics = new ArrayList<>();
         PaymentResolution readPayments = readSection("EXPENSES", sections, warnings, () -> {
             if (expenseInputs == null) throw validation("EXPENSE_INPUTS_UNAVAILABLE", "Параметры расходов требуют исправления");
@@ -161,19 +168,17 @@ public class FolioProfitReportService {
                 Map.of("count", paymentResolution.problemCount())));
         List<GrossMarginRow> grossRows = readSection("GROSS_MARGIN", sections, warnings,
                 () -> dao.findGrossMargins(month.atDay(1), month.plusMonths(1).atDay(1)));
-        MasterClassComputation readMasterClass = readSection("MASTER_CLASS", sections, warnings,
-                () -> calculateMasterClass(month, includeDocuments, warnings));
-        MasterClassComputation masterClass = readMasterClass == null ? unavailableMasterClass(month) : readMasterClass;
-        if (readMasterClass != null && !masterClass.valid()) sections.put("MASTER_CLASS",
-                new SectionStatus("UNAVAILABLE", "MASTER_CLASS_DATA_INCOMPLETE", null, "Данные МК требуют проверки"));
+        MasterClassComputation masterClass = masterClassSection(month, 5, "MASTER_CLASS_ODESA", includeDocuments, sections, warnings);
+        MasterClassComputation kyivMasterClass = masterClassSection(month, 1, "MASTER_CLASS_KYIV", includeDocuments, sections, warnings);
+        sections.put("MASTER_CLASS", sections.get("MASTER_CLASS_ODESA")); // historical Odesa alias
         InventoryResult kyivInventory = readSection("INVENTORY_KYIV", sections, warnings, () -> {
-            List<Integer> ids = warehouseIdsOrDefault(request.kyivStockWarehouseIds(), properties.getKyivWarehouseIds(), "kyivStockWarehouseIds");
+            List<Integer> ids = warehouseIdsOrDefault(request.kyivStockWarehouseIds(), properties.getKyivStockWarehouseIds(), "kyivStockWarehouseIds");
             assertWarehousesDoNotOverlap(ids, request.odesaStockWarehouseIds() == null ? List.of(properties.getOdesaWarehouseId()) : request.odesaStockWarehouseIds());
             return calculateInventory(month, City.KYIV, ids);
         });
         InventoryResult odesaInventory = readSection("INVENTORY_ODESA", sections, warnings, () -> {
             List<Integer> ids = warehouseIdsOrDefault(request.odesaStockWarehouseIds(), List.of(properties.getOdesaWarehouseId()), "odesaStockWarehouseIds");
-            assertWarehousesDoNotOverlap(request.kyivStockWarehouseIds() == null ? properties.getKyivWarehouseIds() : request.kyivStockWarehouseIds(), ids);
+            assertWarehousesDoNotOverlap(request.kyivStockWarehouseIds() == null ? properties.getKyivStockWarehouseIds() : request.kyivStockWarehouseIds(), ids);
             return calculateInventory(month, City.ODESA, ids);
         });
         List<Integer> kyivStockWarehouseIds = kyivInventory == null ? null : kyivInventory.warehouseIds();
@@ -270,7 +275,7 @@ public class FolioProfitReportService {
         BigDecimal odesaGrossAdjustment = masterClass.valid() ? masterClass.summary().grossAdjustmentApplied() : null;
 
         List<CityResult> cities = List.of(
-                cityResult(City.KYIV, kyivBaseGross, BigDecimal.ZERO, kyivExpenses),
+                cityResult(City.KYIV, kyivBaseGross, kyivMasterClass.valid() ? kyivMasterClass.summary().grossAdjustmentApplied() : null, kyivExpenses),
                 cityResult(City.ODESA, odesaBaseGross, odesaGrossAdjustment, odesaExpenses)
         );
 
@@ -285,6 +290,7 @@ public class FolioProfitReportService {
                 && sections.values().stream().allMatch(s -> "AVAILABLE".equals(s.status()))
                 && paymentResolution.problemCount() == 0
                 && masterClass.valid()
+                && kyivMasterClass.valid()
                 && inventory.negativeClosingPositionCount() == 0
                 && inventory.zeroValueClosingPositionCount() == 0;
 
@@ -295,8 +301,7 @@ public class FolioProfitReportService {
                 complete,
                 RULE_VERSION,
                 new Inputs(taxShare == null ? null : taxShare.odesaShare(),
-                        taxShare == null ? "UNAVAILABLE" : taxShare.mode().equals("EMPLOYEE_COUNTS")
-                                ? "REGISTERED_EMPLOYEE_SHARE" : "EXPLICIT_LEGACY_SHARE", rubRate,
+                        taxShare == null ? "UNAVAILABLE" : taxShare.mode(), rubRate,
                         null, null, additionalSalary, additionalSalarySource,
                         List.copyOf(properties.getKyivWarehouseIds()), List.of(properties.getOdesaWarehouseId()),
                         kyivStockWarehouseIds, odesaStockWarehouseIds, kyivAdditionalSalary, kyivSalarySource,
@@ -333,15 +338,28 @@ public class FolioProfitReportService {
                         expensesAvailable ? money(taxPools.getOrDefault("UNKNOWN", BigDecimal.ZERO)) : null,
                         resolved.stream().filter(p -> p.classified().treatment() == Treatment.TAX_POOL
                                         && "UNALLOCATED".equals(taxShare.pool(p.source())))
-                                .map(p -> toDocumentLine(p, taxShare, rubRate, true)).toList())
+                                .map(p -> toDocumentLine(p, taxShare, rubRate, true)).toList()),
+                Map.of("KYIV", kyivMasterClass.summary(), "ODESA", masterClass.summary()),
+                Map.of("KYIV", kyivMasterClass.documents(), "ODESA", masterClass.documents()),
+                FolioProfitGrossLines.rows(grossRows, properties.getKyivWarehouseIds(), List.of(properties.getOdesaWarehouseId()))
         );
+    }
+
+    private MasterClassComputation masterClassSection(YearMonth month, int warehouseId, String section,
+            boolean includeDocuments, Map<String, SectionStatus> sections, List<Warning> warnings) {
+        var result = readSection(section, sections, warnings,
+                () -> calculateMasterClass(month, warehouseId, includeDocuments, warnings));
+        if (result == null) return unavailableMasterClass(month, warehouseId);
+        if (!result.valid()) sections.put(section,
+                new SectionStatus("UNAVAILABLE", "MASTER_CLASS_DATA_INCOMPLETE", null, "Данные МК требуют проверки"));
+        return result;
     }
 
     private MasterClassComputation calculateMasterClass(
             YearMonth month,
+            int warehouseId,
             boolean includeDocuments,
             List<Warning> warnings) {
-        int warehouseId = properties.getOdesaWarehouseId();
         String sku = MASTER_CLASS_SKUS.get(month.getMonthValue() - 1);
         boolean articleFound = dao.masterClassArticleExists(sku);
         if (!articleFound) {
@@ -381,7 +399,9 @@ public class FolioProfitReportService {
             if (classification.type() == MasterClassLineType.INCOME) {
                 income = income.add(row.amount());
                 incomeLineCount++;
-                if (baseGrossIncludes(row)) {
+                if (baseGrossIncludes(row) && (warehouseId == 1
+                        ? properties.getKyivWarehouseIds().contains(warehouseId)
+                        : properties.getOdesaWarehouseId() == warehouseId)) {
                     grossAlreadyInBase = grossAlreadyInBase.add(row.amount().subtract(row.accountingCost()));
                 }
             } else if (classification.type() == MasterClassLineType.RETURN) {
@@ -638,17 +658,9 @@ public class FolioProfitReportService {
         PaymentRow row = classified.source();
         String pool = odesaShare.pool(row);
         BigDecimal amount = classified.reportAmount();
-        if ("MALAFOP".equals(pool)) {
-            BigDecimal odesa = odesaShare.odesaAmount(amount);
-            BigDecimal kyiv = money(amount.subtract(odesa));
-            addSummary(summaries, City.KYIV, Category.TAXES, Treatment.OPERATING_EXPENSE, kyiv, kyiv, 1);
-            addSummary(summaries, City.ODESA, Category.TAXES, Treatment.OPERATING_EXPENSE, odesa, odesa, 1);
-            pools.merge("MALAFOP", amount, BigDecimal::add);
-            return true;
-        }
-        if ("KONDFOP".equals(pool)) {
+        if ("MALAFOP".equals(pool) || "KONDFOP".equals(pool)) {
             addSummary(summaries, City.KYIV, Category.TAXES, Treatment.OPERATING_EXPENSE, amount, amount, 1);
-            pools.merge("KONDFOP", amount, BigDecimal::add);
+            pools.merge(pool, amount, BigDecimal::add);
             return true;
         }
         addSummary(summaries, City.NONE, Category.UNCLASSIFIED, Treatment.UNCLASSIFIED,
@@ -663,10 +675,7 @@ public class FolioProfitReportService {
 
     private static BigDecimal grossFor(List<GrossMarginRow> rows, List<Integer> warehouses) {
         BigDecimal total = rows.stream()
-                .filter(GrossMarginRow::accounted)
-                .filter(row -> !row.returnDocument())
-                .filter(row -> !"Я".equalsIgnoreCase(safe(row.organizationType())))
-                .filter(row -> warehouses.contains(row.warehouseId()))
+                .filter(row -> FolioProfitGrossLines.included(row, warehouses))
                 .map(GrossMarginRow::grossMargin)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return money(total);
@@ -741,17 +750,17 @@ public class FolioProfitReportService {
 
     private ExpenseInputs expenseInputs(Request request, FolioProfitTaxSettings settings) {
         return new ExpenseInputs(
-                FolioProfitTaxAllocation.resolve(request.kyivEmployeeCount(), request.odesaEmployeeCount(), request.odesaTaxShare()).withSettings(settings),
+                FolioProfitTaxAllocation.allKyiv(settings),
                 positiveOrDefault(request.rubToUahRate(), properties.getDefaultRubToUahRate(),
                         "RUB_RATE_INVALID", "Курс RUB/UAH должен быть больше нуля"),
                 optionalNonNegative(request.odesaAdditionalSalary() == null
                                 ? properties.getDefaultOdesaAdditionalSalary() : request.odesaAdditionalSalary(),
                         "ODESA_ADDITIONAL_SALARY_INVALID"),
-                optionalNonNegative(request.kyivAdditionalSalary(), "KYIV_ADDITIONAL_SALARY_INVALID"));
+                BigDecimal.ZERO);
     }
 
-    private MasterClassComputation unavailableMasterClass(YearMonth month) {
-        return new MasterClassComputation(new MasterClassSummary(properties.getOdesaWarehouseId(),
+    private MasterClassComputation unavailableMasterClass(YearMonth month, int warehouseId) {
+        return new MasterClassComputation(new MasterClassSummary(warehouseId,
                 MASTER_CLASS_SKUS.get(month.getMonthValue() - 1), false, "UNAVAILABLE",
                 null, null, null, null, null, 0, 0, 0, 0, false), List.of(), false);
     }

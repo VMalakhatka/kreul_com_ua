@@ -57,7 +57,7 @@ class FolioProfitReportPartialTest {
     }
 
     @Test void masterClassFailureOnlyInvalidatesDependentOdesaProfit() {
-        when(dao.masterClassArticleExists(anyString())).thenThrow(new QueryTimeoutException("query failed"));
+        when(dao.findMasterClassMovements(eq(5), anyString(), any(), any())).thenThrow(new QueryTimeoutException("query failed"));
         var report = service.calculate(request, true);
         assertThat(report.sections().get("MASTER_CLASS").errorCode()).isEqualTo("PROFIT_REPORT_READ_TIMEOUT");
         assertThat(report.masterClass().income()).isNull();
@@ -74,7 +74,7 @@ class FolioProfitReportPartialTest {
         assertThat(report.sections().get("MASTER_CLASS").status()).isEqualTo("UNAVAILABLE");
         assertThat(report.masterClass().netContribution()).isNull();
         assertThat(city(report,"ODESA").profit()).isNull();
-        assertThat(city(report,"KYIV").profit()).isNotNull();
+        assertThat(city(report,"KYIV").profit()).isNull();
     }
 
     @Test void failedKyivInventoryDoesNotHideOdesaInventoryOrProfit() {
@@ -91,7 +91,7 @@ class FolioProfitReportPartialTest {
         when(dao.findGrossMargins(any(),any())).thenThrow(new DataAccessResourceFailureException("unavailable"));
         var report = service.calculate(request,false);
         assertThat(report.sections().get("EXPENSES").status()).isEqualTo("AVAILABLE");
-        assertThat(report.expenseLines()).hasSize(32);
+        assertThat(report.expenseLines()).hasSize(31);
         assertThat(report.cities()).allSatisfy(city -> {
             assertThat(city.profit()).isNull();
             assertThat(city.baseGrossProfit()).isNull();

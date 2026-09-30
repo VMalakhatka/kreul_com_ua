@@ -65,9 +65,8 @@ public class FolioProfitClassifier {
             return result(row, City.KYIV, Category.SALARY, Treatment.OPERATING_EXPENSE,
                     converted, "RUB", "Зарплата Крым/OPT: RUB пересчитаны в UAH");
         }
-        if (hasCode(row, "БАНКОВСК")) {
-            City city = Integer.valueOf(5).equals(row.warehouseId()) ? City.ODESA : City.KYIV;
-            return operating(row, city, Category.BANK_SERVICES);
+        if (hasCode(row, "БАНКОВСК") && documentClass.equals("РАСХОДЫ СЕТИ")) {
+            return operating(row, City.KYIV, Category.BANK_SERVICES);
         }
         if (hasCode(row, "НЕРЕГУЛ")) {
             if (contains(documentClass, "ОДЕСС")) {
@@ -80,7 +79,7 @@ public class FolioProfitClassifier {
         if (hasCode(row, "НЕРЕГ КИ")) {
             return operating(row, City.KYIV, Category.IRREGULAR);
         }
-        if (hasCode(row, "НЕРЕГМИХ", "НЕРЕГДОН")) {
+        if (hasCode(row, "НЕРЕГ ОД") && documentClass.equals("РАСХОДЫ СЕТИ")) {
             return operating(row, City.ODESA, Category.IRREGULAR);
         }
         if (hasCode(row, "РЕКЛАМКИ")) {
@@ -92,7 +91,7 @@ public class FolioProfitClassifier {
         if (hasCode(row, "ТРАНСПОР", "ТРАНСПКИ")) {
             return operating(row, City.KYIV, Category.TRANSPORT_UKRAINE);
         }
-        if (hasCode(row, "ТРАНСПОД")) {
+        if (hasCode(row, "ТРАНСПОД") && documentClass.equals("РАСХОДЫ СЕТИ")) {
             return operating(row, City.ODESA, Category.TRANSPORT_UKRAINE);
         }
         if (hasCode(row, "ТРАНС.ИМ")) {

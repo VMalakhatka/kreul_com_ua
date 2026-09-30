@@ -114,6 +114,7 @@ public class FolioProfitHistoryService {
     static boolean auditComplete(FolioProfitReportResponse p) {
         return p.controls()!=null&&!p.controls().auditTruncated()&&!p.periodDiagnosticsTruncated()
                 &&p.masterClass()!=null&&!p.masterClass().auditTruncated()
+                &&(p.masterClassesByCity()==null || p.masterClassesByCity().values().stream().allMatch(m->!m.auditTruncated()))
                 &&p.sections()!=null&&p.sections().values().stream().allMatch(s->s.status().equals("AVAILABLE"));
     }
     private String source() { return sourceFromUrl(database.getUrl()); }
