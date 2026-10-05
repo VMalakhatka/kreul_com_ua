@@ -1,4 +1,4 @@
-# Folio receipt catalogue for manager email mailings
+# Folio receipt and invoice catalogue for manager email mailings
 
 Verified: 2026-10-05 against current Java code and isolated controller/DAO tests.
 Owner: `FolioReceiptCatalogueController`, `FolioReceiptCatalogueDao`.
@@ -18,9 +18,12 @@ authentication. Do not expose `/admin/**` publicly. No credentials appear in
 browser JavaScript. No schema migrations, stored procedures or business writes.
 
 Only active `SCL_NAKL`/`SCL_MOVE` are read. Receipt type is Cyrillic `П` (U+041F),
-header accounted flag `STND_UCHET=1`, `ISNULL(VOZVRAT_PR,0)=0`. No archive tables,
-returns, non-accounting documents, purchase costs, amounts or supplier identities
-are returned. SQL Server 2000 compatible `TOP`, bound parameters and keyset
+requiring accounted headers and lines (`STND_UCHET=1`). Invoice type is Cyrillic
+`С` (U+0421); both accounting and non-accounting invoices supply product selections,
+so a promotional invoice does not need to reserve stock. `ISNULL(VOZVRAT_PR,0)=0`
+excludes returns for both types. No archive tables, prices, amounts, quantities
+or counterparty identities are returned. Non-accounting is a flag, not proof
+of cancellation or a live sales order. Document reads do not change reserves. SQL Server 2000 compatible `TOP`, bound parameters and keyset
 pagination are used; no OFFSET/CTE/NOLOCK. This confirms implementation scope,
 not a live data audit. Date is the document calendar day, not a UTC conversion.
 
@@ -33,23 +36,36 @@ not a live data audit. Date is the document calendar day, not a UTC conversion.
 ```
 
 Uses existing `MsWarehouseDao.findAllVisible()`, `SCLAD_R.C_1='1'` warehouses.
+WordPress now uses the established `GET /ref/warehouses` (a bare list of the same
+objects), independently of this newer catalogue route. The original `/warehouses`
+route remains compatible. A missing directory is an error/empty state, never a
+set of hardcoded warehouse IDs.
 The API does not invent sales or arrival warehouse IDs.
 
-## Receipt picker
+## Receipt and invoice picker
 
-`GET ?warehouseId=7&date=2026-10-05&afterId=0`
+`GET ?warehouseId=7&date=2026-10-05&afterId=0&documentType=all`
 
-Positive warehouse, date in 1900–2099, nonnegative cursor. Spring rejects malformed
+Positive warehouse, date in 1900–2099, nonnegative cursor. `documentType` accepts
+`all`, `receipt`, `invoice`; omission defaults to `receipt` for existing callers.
+Unsupported types return 400 before SQL. Both list and SKU responses echo the
+selection in `documentType` and advertise `documentTypes: ["receipt","invoice"]`.
+WordPress refuses invoice/all selection against an older service without this
+capability, instead of silently returning receipts only. Spring rejects malformed
 parameters. Date condition is `[day 00:00, next day 00:00)`, including the entire
 day. Header ID must be greater than afterId. Read 101, return up to 100 documents:
 
 ```json
 {
   "ok":true,"warehouseId":7,"date":"2026-10-05",
-  "documents":[{"id":9001,"number":"501a","date":"2026-10-05","warehouseId":7}],
-  "hasMore":false,"nextAfterId":0
+  "documents":[{"id":9001,"number":"501a","date":"2026-10-05","warehouseId":7,"type":"receipt","accounted":true}],
+  "hasMore":false,"nextAfterId":0,"documentType":"all","documentTypes":["receipt","invoice"]
 }
 ```
+
+`type` is `receipt` or `invoice`; `accounted` is the header flag and permits the UI
+to distinguish non-accounting promotional invoices. No customer identity or
+financial total is exposed.
 
 `id` is `UNICUM_NUM`, the unambiguous internal identifier; `number` is
 `N_PLAT_POR` without decimal zeroes plus trimmed `DOPN_SCHET`. On a full page with
@@ -60,14 +76,15 @@ strings and date arrays. Echoed top-level dates are always ISO strings.
 
 ## Mini price-list SKU selection
 
-`GET /9001/skus?warehouseId=7&date=2026-10-05`
+`GET /9001/skus?warehouseId=7&date=2026-10-05&documentType=all`
 
 ```json
-{"ok":true,"documentId":9001,"warehouseId":7,"date":"2026-10-05","skus":["00123","АБВ"]}
+{"ok":true,"documentId":9001,"warehouseId":7,"date":"2026-10-05","skus":["00123","АБВ"],"documentType":"all","documentTypes":["receipt","invoice"]}
 ```
 
 Positive document ID required. One joined read revalidates exact header ID,
-warehouse, date and accounted non-return receipt. Lines must also be accounted,
+warehouse, date, requested document type and non-return state. Receipt lines must
+also be accounted; invoice lines may be non-accounting. All lines must be
 non-return, positive quantity and from the selected warehouse. Trimmed nonempty
 SKUs are DISTINCT; they remain strings (leading zeroes preserved).
 No eligible lines returns 404; more than 2000 distinct SKUs returns 400 without
@@ -76,14 +93,14 @@ parameters return 400; database errors fail the request, never appear as a valid
 empty price list.
 
 WordPress checks the echoed selection and maps SKUs to published eligible site
-products. Missing/hidden SKUs are explicitly shown in preview. The receipt gives
+products. Missing/hidden SKUs are explicitly shown in preview. The source document gives
 only the product scope. Site customer prices and current Kyiv/Odesa stock are
-used, not receipt purchase prices or receipt quantities. Neither accounting
+used, not source document prices or quantities. Neither accounting
 customer identity nor a document write is involved.
 
 ## Release, evidence and rollback
 
-Deploy Java and WordPress updates for arrival selection. Text/full-price-list
+Deploy Java first, then WordPress for combined receipt/invoice selection. Text/full-price-list
 mailings can work without this endpoint; missing Java support causes a visible
 picker error and no fallback to a full catalogue. Local tests use mocked JDBC,
 HTTP, emails and cron, not live Folio. Java unit command:
@@ -93,8 +110,11 @@ mvn -q -Dtest=FolioReceiptCatalogueTest -Djacoco.skip=true test
 ```
 
 Tests cover pagination, selection validation, limits, SKU-only response and
-SQL constraints including separate header/line warehouse checks. After deployment,
-compare a known receipt's date, warehouse, number and SKU list read-only; no real
+SQL constraints including separate header/line warehouse checks, Cyrillic type
+binding, full-day boundaries, promotional invoice flags, HTTP parameter binding
+and backward-compatible receipt defaults. After deployment,
+compare a known receipt and non-accounting invoice by date, warehouse, type, number
+and SKU list read-only; no real
 customer email is needed to check the picker. Existing receipt changes between
 picker and preview are revalidated by the joined SKU query. WordPress preview is
 an immutable mailing snapshot afterwards. Rollback restores the earlier Java
