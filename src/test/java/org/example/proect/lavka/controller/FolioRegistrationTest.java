@@ -31,4 +31,20 @@ class FolioRegistrationTest {
         assertEquals(404, controller.registration("UNKNOWN", token).getStatusCode().value());
         verify(service, never()).registrationCustomer("123456789");
     }
+    @Test void emailBatchIsProtectedBoundedAndNotCached() {
+        var service=mock(FolioPartnerService.class);
+        var controller=new FolioPartnerController(service);
+        var ids=java.util.List.of("TEST");
+        assertEquals(503, controller.registrationEmails(ids,null).getStatusCode().value());
+        String token="test-only-not-a-secret-1234567890123456";
+        ReflectionTestUtils.setField(controller,"importToken",token);
+        assertEquals(401,controller.registrationEmails(ids,"wrong").getStatusCode().value());
+        assertEquals(400,controller.registrationEmails(java.util.Collections.nCopies(26,"TEST"),token).getStatusCode().value());
+        assertEquals(400,controller.registrationEmails(java.util.List.of("TOO-LONG-KEY"),token).getStatusCode().value());
+        verifyNoInteractions(service);
+        when(service.registrationEmails(ids)).thenReturn(java.util.Map.of("TEST","test@example.invalid"));
+        var response=controller.registrationEmails(ids,token);
+        assertEquals("test@example.invalid",response.getBody().get("TEST"));
+        assertEquals("no-store",response.getHeaders().getCacheControl());
+    }
 }

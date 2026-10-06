@@ -40,6 +40,20 @@ public class FolioPartnerController {
                 .cacheControl(CacheControl.noStore()).body(customer);
     }
 
+    /** Read-only page lookup, protected like the registration contact endpoint. */
+    @org.springframework.web.bind.annotation.PostMapping("/registration-emails")
+    public ResponseEntity<java.util.Map<String, String>> registrationEmails(
+            @org.springframework.web.bind.annotation.RequestBody java.util.List<String> ids,
+            @RequestHeader(value = "X-Auth-Token", required = false) String token) {
+        if (importToken.length() < 32) return ResponseEntity.status(503).build();
+        if (token == null || !MessageDigest.isEqual(importToken.getBytes(StandardCharsets.UTF_8),
+                token.getBytes(StandardCharsets.UTF_8))) return ResponseEntity.status(401).build();
+        if (ids == null || ids.isEmpty() || ids.size() > 25 || ids.stream().anyMatch(
+                id -> id == null || id.isBlank() || id.length() > 8)) return ResponseEntity.badRequest().build();
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(service.registrationEmails(ids.stream().map(String::trim).distinct().toList()));
+    }
+
     @GetMapping
     public ResponseEntity<FolioPartnersResponse> search(
             @RequestParam(required = false) String q,

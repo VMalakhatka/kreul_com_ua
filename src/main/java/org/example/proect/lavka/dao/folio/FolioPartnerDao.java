@@ -111,6 +111,18 @@ public class FolioPartnerDao {
         return rows.size() == 1 ? rows.get(0) : null;
     }
 
+    public Map<String, String> registrationEmails(List<String> ids) {
+        if (ids.isEmpty() || ids.size()>25) throw new IllegalArgumentException("Expected 1..25 customer keys");
+        String placeholders=String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        List<Object> args=new ArrayList<>(ids); args.addAll(List.of("П", "Д", "К", "H"));
+        var rows=jdbc.query("SELECT N_USER, EMAIL_USER FROM dbo._PARTNER WHERE N_USER IN ("
+                + placeholders + ") AND MY_ORGANIZ IN (?, ?, ?, ?)",
+                (rs, row)-> new String[]{trimToNull(rs.getString("N_USER")), trimToNull(rs.getString("EMAIL_USER"))}, args.toArray());
+        Map<String,String> result=new LinkedHashMap<>();
+        for (String[] row:rows) result.put(row[0],row[1]);
+        return result;
+    }
+
     private static QueryParts buildWhere(String q, List<String> types) {
         return buildWhere("p", q, types);
     }

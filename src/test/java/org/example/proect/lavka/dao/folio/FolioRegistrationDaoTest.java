@@ -35,4 +35,19 @@ class FolioRegistrationDaoTest {
         assertEquals("Reference note", result.note());
         assertEquals("Contact one\nContact two", result.additionalInfo());
     }
+    @Test void emailBatchUsesOneBoundQueryAndPreservesMissingEmail() throws Exception {
+        ResultSet rs=mock(ResultSet.class);
+        when(rs.getString("N_USER")).thenReturn(" TEST ");
+        JdbcTemplate jdbc=new JdbcTemplate() {
+            @Override public <T> List<T> query(String sql, RowMapper<T> mapper, Object... args) {
+                assertTrue(sql.startsWith("SELECT N_USER, EMAIL_USER"));
+                assertTrue(sql.contains("N_USER IN (?,?)"));
+                assertArrayEquals(new Object[]{"TEST","SECOND","П","Д","К","H"},args);
+                try{return List.of(mapper.mapRow(rs,0));}catch(java.sql.SQLException e){throw new RuntimeException(e);}
+            }
+        };
+        var result=new FolioPartnerDao(jdbc).registrationEmails(List.of("TEST","SECOND"));
+        assertTrue(result.containsKey("TEST"));assertNull(result.get("TEST"));
+        assertFalse(result.containsKey("SECOND"));
+    }
 }

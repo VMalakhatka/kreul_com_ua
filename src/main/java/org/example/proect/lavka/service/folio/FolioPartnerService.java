@@ -39,6 +39,11 @@ public class FolioPartnerService {
         return dao.registrationCustomer(id);
     }
 
+    @Transactional(transactionManager = "mssqlTransactionManager", readOnly = true)
+    public java.util.Map<String, String> registrationEmails(java.util.List<String> ids) {
+        return dao.registrationEmails(ids);
+    }
+
     private static int normalizeLimit(Integer limit) {
         if (limit == null) {
             return DEFAULT_LIMIT;

@@ -235,3 +235,9 @@ type displayed as pricing reference, not a verified price contract. `PRIMECH` /
 `INFORM_PAR` may populate private manager notes through the protected registration
 route. Field proof: 2026-08-11 column snapshot and Структура7. Contract and
 privacy boundary: `docs/api/FOLIO_PARTNERS_ENDPOINT_TASK.md`.
+
+Registration selection email hints use protected read-only POST
+`/admin/folio/partners/registration-emails`, at most 25 keys in one parameterized
+query. Never add email to unprotected partner search for this UI convenience.
+Unknown lookup is distinct from a blank source email. Source: partners API
+contract and registration controller/DAO tests, 2026-10-06.

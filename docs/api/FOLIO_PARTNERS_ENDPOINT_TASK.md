@@ -276,3 +276,18 @@ Deployment: configure the matching server token and release Java first, then the
 WordPress consumer. Rollback may remove this route without changing Folio data;
 WordPress will report registration data unavailable. Tests:
 `FolioRegistrationTest`, `FolioRegistrationDaoTest` (no database connection).
+
+### Import page email checks (2026-10-06)
+
+Read-only `POST /admin/folio/partners/registration-emails` accepts a JSON array
+of 1..25 exact customer keys, each at most 8 characters. It uses the same
+`X-Auth-Token`/503/401 protection as registration and returns `Cache-Control:
+no-store`. Response is an object mapping found customer keys to trimmed email
+strings or null for no email. Unknown/non-customer keys are omitted. Invalid
+size/keys return 400. One parameterized `_PARTNER` query reads only N_USER and
+EMAIL_USER, limited to П/Д/К/H; no writes, bank fields or notes are returned.
+The WordPress importer compares these emails against Woo accounts, separately
+from Folio-key mappings. This route does not change ordinary partner search.
+Deploy Java before WordPress; on failure the UI must show unknown email status,
+not imply absence of an account. Controller/DAO tests cover access, bounds,
+query parameters and the distinction between missing email and missing key.
