@@ -1,6 +1,12 @@
 package org.example.proect.lavka.controller;
 
 import lombok.RequiredArgsConstructor;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import org.example.proect.lavka.dto.folio.FolioRegistrationCustomer;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.CacheControl;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.example.proect.lavka.dto.folio.FolioPartnersResponse;
 import org.example.proect.lavka.service.folio.FolioPartnerService;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +21,24 @@ import org.springframework.web.bind.annotation.RestController;
 public class FolioPartnerController {
 
     private final FolioPartnerService service;
+
+    // Dedicated fail-closed authorization for personal registration data.
+    @Value("${folio.customer-import.token:${FOLIO_CUSTOMER_IMPORT_TOKEN:}}")
+    private String importToken = "";
+
+    @GetMapping("/registration")
+    public ResponseEntity<FolioRegistrationCustomer> registration(
+            @RequestParam String id,
+            @RequestHeader(value = "X-Auth-Token", required = false) String token) {
+        if (importToken.length() < 32) return ResponseEntity.status(503).build();
+        if (token == null || !MessageDigest.isEqual(
+                importToken.getBytes(StandardCharsets.UTF_8),
+                token.getBytes(StandardCharsets.UTF_8))) return ResponseEntity.status(401).build();
+        if (id == null || id.isBlank() || id.length() > 8) return ResponseEntity.badRequest().build();
+        var customer = service.registrationCustomer(id.trim());
+        return customer == null ? ResponseEntity.notFound().build() : ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore()).body(customer);
+    }
 
     @GetMapping
     public ResponseEntity<FolioPartnersResponse> search(

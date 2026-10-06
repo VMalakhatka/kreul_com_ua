@@ -232,3 +232,44 @@ docs/business/01_ACCOUNT.md
 docs/api/FOLIO_ACCOUNT_JS_API.md
 docs/00_DATABASE_CATALOG.md
 ```
+
+
+## Manager customer registration (2026-10-06)
+
+`GET /admin/folio/partners/registration?id=<exact N_USER>` reads one client of type
+П/Д/К/H. No writes, joins or default Internet-client substitutions occur.
+This route is disabled (503) until `folio.customer-import.token` is configured
+with at least 32 characters (environment `FOLIO_CUSTOMER_IMPORT_TOKEN`). It checks
+`X-Auth-Token` with a constant-time comparison before querying contacts; absent or
+wrong tokens return 401. Use HTTPS or the existing private server transport.
+The WordPress server sends its configured Lavka API token; never put it in browser
+JavaScript, URLs, Git or logs. Successful responses use `Cache-Control: no-store`.
+Existing partner search remains unchanged and does not gain contact fields.
+
+Response: `id`, `name`, `type`, `email`, `phone`, `alternatePhone`, `address`,
+`postcode`, `deliveryAddress`, `discountPercent`. Sources are `_PARTNER.N_USER`,
+`NAME_USER`, `MY_ORGANIZ`, `EMAIL_USER`, `TEL1_USER`, `TEL2_USER`, `ADRES_USER`,
+`INDEX_USER`, `DOST_ADRESS`, `SKIDKAPRCNT`. Whitespace is trimmed; absent fields are
+null. Unknown/non-customer keys return 404; empty/overlong keys return 400.
+
+Evidence: column snapshot `01_live_colums_corect.rpt` (2026-08-11) and manufacturer
+Структура7 field descriptions, with local DAO/controller tests. Current production
+contact completeness has not been measured. This route has not been deployed by
+this task. No schema migration is required.
+
+There is no verified price-contract, first/last-name or customer-city field in
+this mapping. Do not use bank city as customer city or organization type as a
+price role. WordPress managers review these fields and explicitly select an
+existing site role/contract. Personal discounts are shown as a review hint, not
+silently added to role pricing. Address strings remain separate billing/delivery
+values and do not claim a structured Nova Poshta branch reference.
+
+Consumer: WordPress `pc-order-import-export/inc/FolioCustomerImport.php` and
+`FolioCustomerImportUi.php`. It stages private owner-scoped jobs, validates each
+source again before creating a new account, skips existing email/Folio links,
+and optionally sends password-setting links after saving the account. Manager
+instructions live in the WordPress `docs/MANAGER_CUSTOMER_GUIDE_UK.md`.
+Deployment: configure the matching server token and release Java first, then the
+WordPress consumer. Rollback may remove this route without changing Folio data;
+WordPress will report registration data unavailable. Tests:
+`FolioRegistrationTest`, `FolioRegistrationDaoTest` (no database connection).

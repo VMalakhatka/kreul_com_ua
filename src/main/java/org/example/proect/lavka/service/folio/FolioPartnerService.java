@@ -2,6 +2,7 @@ package org.example.proect.lavka.service.folio;
 
 import org.example.proect.lavka.dao.folio.FolioPartnerDao;
 import org.example.proect.lavka.dto.folio.FolioPartnersResponse;
+import org.example.proect.lavka.dto.folio.FolioRegistrationCustomer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +32,11 @@ public class FolioPartnerService {
         var items = dao.find(q, normalizedTypes, normalizedLimit, normalizedOffset);
 
         return new FolioPartnersResponse(true, items, total, normalizedLimit, normalizedOffset);
+    }
+
+    @Transactional(transactionManager = "mssqlTransactionManager", readOnly = true)
+    public FolioRegistrationCustomer registrationCustomer(String id) {
+        return dao.registrationCustomer(id);
     }
 
     private static int normalizeLimit(Integer limit) {

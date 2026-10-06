@@ -216,3 +216,15 @@ GTIN без отдельного правила выбора.
 Перед публикацией `/admin` и `/sync` endpoints проверь фактическую аутентификацию, сетевой периметр и авторизацию. Наличие слова `admin` в path не защищает операцию. Мутирующие endpoints должны иметь аудит request id, безопасные ошибки без секретов и ограничение доступа.
 
 Статический аудит текущей ветки не нашёл входящей Spring Security-конфигурации; защита может существовать только во внешнем proxy, но это нельзя предполагать. До расширения write API подтвердить auth/authz — блокирующее требование.
+
+## Customer registration contacts (2026-10-06, local)
+
+`FolioPartnerController` exposes a separate fail-closed token-protected
+`/admin/folio/partners/registration?id=` read route. `FolioPartnerDao` reads exact
+П/Д/К/H keys directly from `_PARTNER`; contact columns are confirmed by the
+2026-08-11 column snapshot and Структура7 descriptions. No `_PARTNER_PL` join.
+Existing search phone/city placeholders remain unchanged. No verified source price
+contract or structured city/person-name field is assumed; WordPress managers
+review these separately. Do not expose registration contacts through the ordinary
+search response. Exact mapping, token configuration and tests:
+`docs/api/FOLIO_PARTNERS_ENDPOINT_TASK.md`, “Manager customer registration”.
