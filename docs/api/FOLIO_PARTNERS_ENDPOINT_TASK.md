@@ -247,9 +247,9 @@ JavaScript, URLs, Git or logs. Successful responses use `Cache-Control: no-store
 Existing partner search remains unchanged and does not gain contact fields.
 
 Response: `id`, `name`, `type`, `email`, `phone`, `alternatePhone`, `address`,
-`postcode`, `deliveryAddress`, `discountPercent`. Sources are `_PARTNER.N_USER`,
+`postcode`, `deliveryAddress`, `discountPercent`, `bankCity`, `contactType`, `note`, `additionalInfo`. Sources are `_PARTNER.N_USER`,
 `NAME_USER`, `MY_ORGANIZ`, `EMAIL_USER`, `TEL1_USER`, `TEL2_USER`, `ADRES_USER`,
-`INDEX_USER`, `DOST_ADRESS`, `SKIDKAPRCNT`. Whitespace is trimmed; absent fields are
+`INDEX_USER`, `DOST_ADRESS`, `SKIDKAPRCNT`, `TOWNB_USER`, `CP_2`, `PRIMECH`, `INFORM_PAR`. Whitespace is trimmed; absent fields are
 null. Unknown/non-customer keys return 404; empty/overlong keys return 400.
 
 Evidence: column snapshot `01_live_colums_corect.rpt` (2026-08-11) and manufacturer
@@ -258,11 +258,14 @@ contact completeness has not been measured. This route has not been deployed by
 this task. No schema migration is required.
 
 There is no verified price-contract, first/last-name or customer-city field in
-this mapping. Do not use bank city as customer city or organization type as a
-price role. WordPress managers review these fields and explicitly select an
+this mapping. Owner instruction on 2026-10-06 explicitly allows bank city as an
+editable billing/shipping city default and UA for both countries. `contactType`
+is the literal CP_2 reference shown above the Woo role selector, not an automatic
+contract mapping. `note` and multiline `additionalInfo` feed a manager-only
+customer note; do not expose them through public biographies or email. WordPress managers review these fields and explicitly select an
 existing site role/contract. Personal discounts are shown as a review hint, not
-silently added to role pricing. Address strings remain separate billing/delivery
-values and do not claim a structured Nova Poshta branch reference.
+silently added to role pricing. Java preserves source address fields; WordPress initially copies billing address
+and postcode into shipping by owner request. No Nova Poshta branch is inferred.
 
 Consumer: WordPress `pc-order-import-export/inc/FolioCustomerImport.php` and
 `FolioCustomerImportUi.php`. It stages private owner-scoped jobs, validates each

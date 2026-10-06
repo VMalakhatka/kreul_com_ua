@@ -22,7 +22,7 @@ class FolioRegistrationTest {
         var controller = new FolioPartnerController(service);
         String token = "test-only-not-a-secret-1234567890123456";
         ReflectionTestUtils.setField(controller, "importToken", token);
-        var customer = new FolioRegistrationCustomer("ТЕСТ", "Test", "H", "test@example.invalid", null, null, null, null, null, null);
+        var customer = new FolioRegistrationCustomer("ТЕСТ", "Test", "H", "test@example.invalid", null, null, null, null, null, null, null, null, null, null);
         when(service.registrationCustomer("ТЕСТ")).thenReturn(customer);
         var response = controller.registration("ТЕСТ", token);
         assertEquals(customer, response.getBody());

@@ -14,6 +14,10 @@ class FolioRegistrationDaoTest {
         when(rs.getString("EMAIL_USER")).thenReturn(" test@example.invalid ");
         when(rs.getString("TEL1_USER")).thenReturn("+380000000000");
         when(rs.getString("DOST_ADRESS")).thenReturn("Delivery address");
+        when(rs.getString("TOWNB_USER")).thenReturn(" Test city ");
+        when(rs.getString("CP_2")).thenReturn(" TEST WHOLESALE ");
+        when(rs.getString("PRIMECH")).thenReturn(" Reference note ");
+        when(rs.getString("INFORM_PAR")).thenReturn(" Contact one\nContact two ");
         JdbcTemplate jdbc = new JdbcTemplate() {
             @Override public <T> List<T> query(String sql, RowMapper<T> mapper, Object... args) {
                 assertTrue(sql.contains("WHERE N_USER = ?"));
@@ -26,5 +30,9 @@ class FolioRegistrationDaoTest {
         assertEquals("ТЕСТ", result.id());
         assertEquals("test@example.invalid", result.email());
         assertEquals("Delivery address", result.deliveryAddress());
+        assertEquals("Test city", result.bankCity());
+        assertEquals("TEST WHOLESALE", result.contactType());
+        assertEquals("Reference note", result.note());
+        assertEquals("Contact one\nContact two", result.additionalInfo());
     }
 }

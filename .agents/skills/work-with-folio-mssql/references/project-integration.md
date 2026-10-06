@@ -228,3 +228,10 @@ contract or structured city/person-name field is assumed; WordPress managers
 review these separately. Do not expose registration contacts through the ordinary
 search response. Exact mapping, token configuration and tests:
 `docs/api/FOLIO_PARTNERS_ENDPOINT_TASK.md`, “Manager customer registration”.
+
+Customer import defaults (owner request 2026-10-06): `_PARTNER.TOWNB_USER`
+is bank city, explicitly reused as editable Woo city default; `CP_2` is contact
+type displayed as pricing reference, not a verified price contract. `PRIMECH` /
+`INFORM_PAR` may populate private manager notes through the protected registration
+route. Field proof: 2026-08-11 column snapshot and Структура7. Contract and
+privacy boundary: `docs/api/FOLIO_PARTNERS_ENDPOINT_TASK.md`.

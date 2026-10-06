@@ -91,11 +91,12 @@ public class FolioPartnerDao {
         }, params.toArray());
     }
 
-    /** Exact key lookup; no banking data, arbitrary notes or supplier accounts. */
+    /** Exact key lookup of approved registration fields; no bank accounts or suppliers. */
     public FolioRegistrationCustomer registrationCustomer(String id) {
         var rows = jdbc.query("""
                 SELECT N_USER, NAME_USER, MY_ORGANIZ, EMAIL_USER, TEL1_USER, TEL2_USER,
-                       ADRES_USER, INDEX_USER, DOST_ADRESS, SKIDKAPRCNT
+                       ADRES_USER, INDEX_USER, DOST_ADRESS, SKIDKAPRCNT,
+                       TOWNB_USER, CP_2, PRIMECH, INFORM_PAR
                 FROM dbo._PARTNER
                 WHERE N_USER = ? AND MY_ORGANIZ IN (?, ?, ?, ?)
                 """, (rs, row) -> new FolioRegistrationCustomer(
@@ -103,7 +104,9 @@ public class FolioPartnerDao {
                 trimToNull(rs.getString("MY_ORGANIZ")), trimToNull(rs.getString("EMAIL_USER")),
                 trimToNull(rs.getString("TEL1_USER")), trimToNull(rs.getString("TEL2_USER")),
                 trimToNull(rs.getString("ADRES_USER")), trimToNull(rs.getString("INDEX_USER")),
-                trimToNull(rs.getString("DOST_ADRESS")), rs.getBigDecimal("SKIDKAPRCNT")),
+                trimToNull(rs.getString("DOST_ADRESS")), rs.getBigDecimal("SKIDKAPRCNT"),
+                trimToNull(rs.getString("TOWNB_USER")), trimToNull(rs.getString("CP_2")),
+                trimToNull(rs.getString("PRIMECH")), trimToNull(rs.getString("INFORM_PAR"))),
                 id, "П", "Д", "К", "H");
         return rows.size() == 1 ? rows.get(0) : null;
     }
