@@ -109,6 +109,20 @@ class FolioAvailabilityMariaDbTest {
         }
     }
 
+    @Test void groupDictionaryPreservesRepeatedCodesNullNamesCountsAndWarehouseScope() {
+        jdbc.update("UPDATE folio_product_metric_current SET group_level_1_code='G',group_level_1_name='Alpha' WHERE warehouse_id=1 AND sku IN ('SKU-0','SKU-1')");
+        jdbc.update("UPDATE folio_product_metric_current SET group_level_2_code='G',group_level_2_name='Zulu' WHERE warehouse_id=1 AND sku='SKU-0'");
+        jdbc.update("UPDATE folio_product_metric_current SET group_level_6_code='N',group_level_6_name=NULL WHERE warehouse_id=1 AND sku='SKU-2'");
+        jdbc.update("UPDATE folio_product_metric_current SET group_level_3_code='',group_level_3_name='Ignored' WHERE warehouse_id=1 AND sku='SKU-3'");
+        jdbc.update("UPDATE folio_product_metric_current SET group_level_1_code='G',group_level_1_name='Wrong scope' WHERE warehouse_id=7");
+        var rows = dao.dictionaries("Fixture",List.of(1)).get("productGroups");
+        assertThat(rows).hasSize(2);
+        assertThat(rows.stream().filter(r -> r.code().equals("G")).findFirst().orElseThrow())
+                .isEqualTo(new org.example.proect.lavka.dto.folio.FolioProductAnalyticsCapabilitiesResponse.DictionaryItem("G","Zulu",3));
+        assertThat(rows.stream().filter(r -> r.code().equals("N")).findFirst().orElseThrow())
+                .isEqualTo(new org.example.proect.lavka.dto.folio.FolioProductAnalyticsCapabilitiesResponse.DictionaryItem("N","N",1));
+    }
+
     @Test void demandNumeratorUsesGroupUnionSelectedDaysAndMovementFilters() {
         // Warehouse 1 is available days 1..20, warehouse 7 days 21..30.
         for (int n = 1; n <= 5; n++) {

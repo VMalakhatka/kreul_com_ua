@@ -9,14 +9,22 @@ Implemented and tested locally; production acceptance/deployment pending.
 {"sourceDatabase":"Paint_Ua","warehouseIds":[1,7],"rootSkus":["CL-96371CR"]}
 ```
 
-Requires `X-Auth-Token` equal to existing `lavka.token`. No configured token ->503;
+Requires `X-Auth-Token` equal to `lavka.token`, explicitly bound from runtime
+`LAVKA_TOKEN` (empty safe default). Match the existing WordPress `api_token`;
+never put the value in Git or build arguments. No configured token ->503;
 missing/wrong token ->401. Only Paint_Ua/Paint_Rus, nonempty positive warehouse
 IDs (max100), nonblank SKUs (max100 characters, max10000 roots). Source DB_NAME
 must match; no source database identifiers from the request enter SQL.
 
-Response `version:2`, SHA-256 `revision`, `nodes` and `edges`:
+Response `ok:true`, `version:2`, SHA-256 `revision`, `nodes` and `edges`.
+`ok` is required by the WordPress analytics proxy, including HTTP200 responses:
 
-- node: `sku`, `manufactured`, `issues`.
+- node: `sku`, `manufactured`, `issues`, `coldStatus`.
+  `BALL2` on all selected warehouse cards must consistently be 1 (`FREEZES`)
+  or 2 (`NON_FREEZING`); missing, other, fractional or conflicting values are
+  `UNKNOWN`. Unknown cold sensitivity does not change assembly-role issues;
+  WordPress blocks it only when cold-sensitive coverage is enabled. Revision
+  includes cold classification, so changes invalidate an existing preview.
 - edge: `parent`, `child`, `factor` (component units per child), `source`, `rowId`.
 - simple `ALL_RAZBORKA`: `ART` parent, `ART_R` child, factor `1/KOL_R`.
 - complex `ALL_RAZBORKA_SLOJ`: `ARTIC_ROD` parent, `ARTIC_REB` child, factor `KOL_R`.

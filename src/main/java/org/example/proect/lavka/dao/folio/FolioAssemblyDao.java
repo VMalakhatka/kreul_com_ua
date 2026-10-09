@@ -27,9 +27,10 @@ public class FolioAssemblyDao {
         var closure = FolioAssemblyGraph.build(roots, recipes, Map.of());
         List<String> skus = closure.nodes().stream().map(FolioAssemblyGraph.Node::sku).toList();
         Map<String, Set<Integer>> roles = new HashMap<>();
+        Map<String, Set<Integer>> coldFlags = new HashMap<>();
         for (int offset = 0; offset < skus.size(); offset += 300) {
             var part = skus.subList(offset, Math.min(offset + 300, skus.size()));
-            String sql = "SELECT COD_ARTIC, BALL4 FROM dbo.SCL_ARTC WITH (HOLDLOCK) WHERE ID_SCLAD IN ("
+            String sql = "SELECT COD_ARTIC, BALL4, BALL2 FROM dbo.SCL_ARTC WITH (HOLDLOCK) WHERE ID_SCLAD IN ("
                     + String.join(",", Collections.nCopies(warehouses.size(), "?")) + ") AND COD_ARTIC IN ("
                     + String.join(",", Collections.nCopies(part.size(), "?")) + ")";
             jdbc.query(c -> {
@@ -40,9 +41,13 @@ public class FolioAssemblyDao {
                 try { var value = rs.getBigDecimal("BALL4"); if (value != null) flag = value.intValueExact(); }
                 catch (ArithmeticException ignored) { /* Invalid roles require review. */ }
                 roles.computeIfAbsent(FolioAssemblyGraph.key(rs.getString("COD_ARTIC")), k -> new HashSet<>()).add(flag);
+                int cold = -1;
+                try { var value = rs.getBigDecimal("BALL2"); if (value != null) cold = value.intValueExact(); }
+                catch (ArithmeticException ignored) { /* Unknown cold sensitivity is not guessed. */ }
+                coldFlags.computeIfAbsent(FolioAssemblyGraph.key(rs.getString("COD_ARTIC")), k -> new HashSet<>()).add(cold);
             });
         }
-        return FolioAssemblyGraph.build(roots, recipes, roles);
+        return FolioAssemblyGraph.build(roots, recipes, roles, coldFlags);
     }
 
     private List<FolioAssemblyGraph.Recipe> readRecipes(String table, String parent, String child) {

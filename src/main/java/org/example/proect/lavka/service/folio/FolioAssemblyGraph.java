@@ -10,11 +10,16 @@ import java.util.*;
 public final class FolioAssemblyGraph {
     public record Recipe(String source, String id, String parent, String child, BigDecimal coefficient) {}
     public record Edge(String parent, String child, BigDecimal factor, String source, String rowId) {}
-    public record Node(String sku, boolean manufactured, List<String> issues) {}
-    public record Graph(int version, String revision, List<Node> nodes, List<Edge> edges) {}
+    public record Node(String sku, boolean manufactured, List<String> issues, String coldStatus) {}
+    public record Graph(boolean ok, int version, String revision, List<Node> nodes, List<Edge> edges) {}
     public static String key(String value) { return value == null ? "" : value.trim().toUpperCase(Locale.ROOT); }
 
     public static Graph build(List<String> roots, List<Recipe> recipes, Map<String, Set<Integer>> roles) {
+        return build(roots, recipes, roles, Map.of());
+    }
+
+    public static Graph build(List<String> roots, List<Recipe> recipes, Map<String, Set<Integer>> roles,
+                              Map<String, Set<Integer>> coldFlags) {
         Set<String> complexChildren = new HashSet<>();
         for (Recipe r : recipes) if (r.source().equals("ALL_RAZBORKA_SLOJ")) complexChildren.add(key(r.child()));
         Map<String, List<Recipe>> consumers = new LinkedHashMap<>(), components = new LinkedHashMap<>();
@@ -55,7 +60,10 @@ public final class FolioAssemblyGraph {
             }
             for (Recipe r : consumers.getOrDefault(sku, List.of()))
                 if (key(r.child()).isEmpty()) issues.add("ASSEMBLY_INVALID_RECIPE");
-            nodes.add(new Node(sku, manufactured, List.copyOf(issues)));
+            Set<Integer> cold = coldFlags.getOrDefault(sku, Set.of());
+            String coldStatus = cold.equals(Set.of(1)) ? "FREEZES"
+                    : cold.equals(Set.of(2)) ? "NON_FREEZING" : "UNKNOWN";
+            nodes.add(new Node(sku, manufactured, List.copyOf(issues), coldStatus));
         }
         // Stable revision also captures role changes, suppressed recipes do not affect demand.
         nodes.sort(Comparator.comparing(Node::sku));
@@ -63,7 +71,7 @@ public final class FolioAssemblyGraph {
         try {
             String source = nodes.toString() + edges.toString();
             String revision = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(source.getBytes(StandardCharsets.UTF_8)));
-            return new Graph(2, revision, nodes, edges);
+            return new Graph(true, 2, revision, nodes, edges);
         } catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
     }
 }

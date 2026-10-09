@@ -6,6 +6,12 @@ WordPress MariaDB database.
 
 ## Start Here
 
+Assembly analytics requires runtime `LAVKA_TOKEN` matching the existing WordPress
+Java API token. `lavka.token` binds this variable with an empty safe default;
+missing configuration returns503. Store only in ignored runtime environment,
+never in the image or repository. Deploying a rebuilt image without this key
+does not enable assembly forecasts. Contract: [assembly graph API](docs/api/FOLIO_ASSEMBLY_GRAPH_API.md).
+
 - [Java documentation map](docs/README.md) - API contracts, business rules,
   database catalog and experiments.
 - `docs/BACKEND_GUIDE.md` in the WordPress repository - the canonical

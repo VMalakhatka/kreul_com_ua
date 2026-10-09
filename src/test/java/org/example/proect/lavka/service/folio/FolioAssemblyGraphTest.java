@@ -6,6 +6,16 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FolioAssemblyGraphTest {
+    @Test void coldClassificationRequiresConsistentKnownFlagsAndChangesRevision() {
+        var roles = Map.of("F",Set.of(0),"N",Set.of(0),"X",Set.of(0),"U",Set.of(0));
+        var flags = Map.of("F",Set.of(1),"N",Set.of(2),"X",Set.of(1,2),"U",Set.of(3));
+        var graph = FolioAssemblyGraph.build(List.of("F","N","X","U"),List.of(),roles,flags);
+        var nodes = new HashMap<String,FolioAssemblyGraph.Node>(); graph.nodes().forEach(n -> nodes.put(n.sku(),n));
+        assertEquals("FREEZES",nodes.get("F").coldStatus());
+        assertEquals("NON_FREEZING",nodes.get("N").coldStatus());
+        assertEquals("UNKNOWN",nodes.get("X").coldStatus()); assertEquals("UNKNOWN",nodes.get("U").coldStatus());
+        assertNotEquals(graph.revision(),FolioAssemblyGraph.build(List.of("F","N","X","U"),List.of(),roles).revision());
+    }
     private FolioAssemblyGraph.Recipe r(boolean complex, String id, String p, String c, String k) {
         return new FolioAssemblyGraph.Recipe(complex ? "ALL_RAZBORKA_SLOJ" : "ALL_RAZBORKA", id, p, c, new BigDecimal(k));
     }

@@ -241,3 +241,11 @@ Registration selection email hints use protected read-only POST
 query. Never add email to unprotected partner search for this UI convenience.
 Unknown lookup is distinct from a blank source email. Source: partners API
 contract and registration controller/DAO tests, 2026-10-06.
+
+Assembly graph integration (code/tests, 2026-10-09) requires runtime `LAVKA_TOKEN`
+bound to `lavka.token`, matching WordPress's existing API token, and JSON
+`ok:true`. Missing binding fails closed503; container health is insufficient.
+Graph nodes include BALL2-derived coldStatus, revision includes this metadata.
+Mixed-horizon purchase planning applies child horizons before component demand;
+unknown/conflicting flags must not be guessed. Contracts:
+`docs/api/FOLIO_ASSEMBLY_GRAPH_API.md`, WordPress `docs/api/FOLIO_ASSEMBLY_PURCHASE.md`.

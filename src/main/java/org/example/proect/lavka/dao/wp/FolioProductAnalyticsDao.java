@@ -162,12 +162,18 @@ public class FolioProductAnalyticsDao {
         for (int level = 1; level <= 6; level++) {
             if (level > 1) union.append(" UNION ALL ");
             union.append("SELECT group_level_").append(level)
-                    .append("_code code,group_level_").append(level)
-                    .append("_name name FROM folio_product_metric_current ")
-                    .append("WHERE source_database=:db AND warehouse_id IN (:warehouseIds)");
+                    .append("_code code,MAX(COALESCE(group_level_").append(level)
+                    .append("_name,group_level_").append(level)
+                    .append("_code)) name,COUNT(*) item_count FROM folio_product_metric_current ")
+                    .append("WHERE source_database=:db AND warehouse_id IN (:warehouseIds) ")
+                    .append("AND group_level_").append(level).append("_code IS NOT NULL ")
+                    .append("AND group_level_").append(level).append("_code<>'' ")
+                    .append("GROUP BY group_level_").append(level).append("_code");
         }
-        String sql = "SELECT code,MAX(COALESCE(name,code)) name,COUNT(*) item_count FROM ("
-                + union + ") groups_v3 WHERE code IS NOT NULL AND code<>'' "
+        // Reduce each level before UNION: otherwise wide raw card rows spill to disk
+        // before every query, even when the requested report contains just one SKU.
+        String sql = "SELECT code,MAX(name) name,SUM(item_count) item_count FROM ("
+                + union + ") groups_v3 "
                 + "GROUP BY code ORDER BY name,code";
         return dictionary(sql, db, warehouses);
     }
