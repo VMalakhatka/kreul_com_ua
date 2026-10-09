@@ -421,3 +421,15 @@ No Folio writes, migration, schema increment or snapshot rebuild is needed; exis
 schema 6 is required as before. Both Products and movement-summary views and exports
 use this query. Tests: FolioWarehouseUsageTest, FolioProductAnalyticsServiceTest and
 FolioAvailabilityMariaDbTest with a disposable availability_test database.
+## Outgoing quantity addition — 2026-10-09
+
+`metrics.expenseQuantity` is returned at totals, product and warehouse levels.
+It sums `quantity` from captured movement facts with `affects_stock=1` and
+`stock_direction='OUT'` under the query's period and movement filters. It is not
+`soldUnits` or `regularSoldUnits`: selected transfers, assembly consumption and
+other outgoing movements may contribute. Incoming returns are not subtracted.
+Stock-only warehouses do not contribute movements, as with existing flow metrics.
+No snapshot migration is required; schema7 already contains these source facts.
+This display field does not change procurement demand or its one-off exclusion.
+WordPress purchase previewVersion8 uses it in the stock summary and CSV/XLSX;
+missing fields from an older backend must display unknown, never zero or sales.

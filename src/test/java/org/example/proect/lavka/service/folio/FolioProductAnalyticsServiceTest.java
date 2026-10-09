@@ -125,6 +125,10 @@ class FolioProductAnalyticsServiceTest {
         assertThat(response.rows().get(0).internalTransferReservations().accounts()).containsExactly(reservation);
         assertThat(response.rows().get(0).internalTransferReservations().status()).isEqualTo("CAPTURED");
         assertThat(response.totals().productCount()).isEqualTo(1);
+        assertThat(response.totals().metrics().expenseQuantity()).isEqualByComparingTo("57");
+        assertThat(response.rows().get(0).metrics().expenseQuantity()).isEqualByComparingTo("57");
+        assertThat(response.rows().get(0).warehouseBreakdown().get(0).metrics().expenseQuantity()).isEqualByComparingTo("57");
+        assertThat(response.rows().get(0).metrics().soldUnits()).isEqualByComparingTo("50");
         assertThat(response.rows()).hasSize(1);
         assertThat(response.rows().get(0).warehouseBreakdown()).hasSize(2);
         assertThat(response.rows().get(0).abcClass()).isEqualTo("A");
@@ -590,7 +594,7 @@ class FolioProductAnalyticsServiceTest {
                 bd(available), BigDecimal.ZERO, bd(available), bd(inventory), bd(sold),
                 bd(revenue), bd(cogs), bd(profit), BigDecimal.ZERO, BigDecimal.ZERO,
                 bd(sold), bd(revenue), bd(cogs), BigDecimal.ZERO, BigDecimal.ZERO,
-                BigDecimal.ZERO, bd(averageInventory));
+                BigDecimal.ZERO, bd(averageInventory), bd(sold).add(bd("7")));
     }
 
     private static DimensionRow dimensions() {

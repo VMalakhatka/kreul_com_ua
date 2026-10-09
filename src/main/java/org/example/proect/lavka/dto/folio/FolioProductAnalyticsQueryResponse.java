@@ -188,6 +188,7 @@ public record FolioProductAnalyticsQueryResponse(
             BigDecimal inventoryTurns,
             BigDecimal gmroi,
             BigDecimal grossMarginPercent,
-            BigDecimal coverageDays) {
+            BigDecimal coverageDays,
+            BigDecimal expenseQuantity) {
     }
 }

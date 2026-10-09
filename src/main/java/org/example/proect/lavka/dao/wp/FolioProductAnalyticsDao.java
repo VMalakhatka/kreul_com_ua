@@ -479,7 +479,8 @@ public class FolioProductAnalyticsDao {
     }
 
     private static String flowSums(String alias) {
-        return "SUM(COALESCE(" + alias + ".sold_units,0)) sold_units,"
+        return "SUM(COALESCE(" + alias + ".expense_quantity,0)) expense_quantity,"
+                + "SUM(COALESCE(" + alias + ".sold_units,0)) sold_units,"
                 + "SUM(COALESCE(" + alias + ".sales_revenue,0)) sales_revenue,"
                 + "SUM(COALESCE(" + alias + ".sales_cogs,0)) sales_cogs,"
                 + "SUM(COALESCE(" + alias + ".sales_revenue,0)-COALESCE(" + alias + ".sales_cogs,0)) gross_profit,"
@@ -498,6 +499,7 @@ public class FolioProductAnalyticsDao {
                 + "COALESCE(SUM(" + alias + ".reserved_quantity),0) reserved_quantity,"
                 + "COALESCE(SUM(" + alias + ".available_quantity),0) available_quantity,"
                 + "COALESCE(SUM(" + alias + ".inventory_value),0) inventory_value,"
+                + "COALESCE(SUM(" + alias + ".expense_quantity),0) expense_quantity,"
                 + "COALESCE(SUM(" + alias + ".sold_units),0) sold_units,"
                 + "COALESCE(SUM(" + alias + ".sales_revenue),0) sales_revenue,"
                 + "COALESCE(SUM(" + alias + ".sales_cogs),0) sales_cogs,"
@@ -564,6 +566,7 @@ public class FolioProductAnalyticsDao {
         }
 
         String flow = "SELECT m.source_database,m.warehouse_id,m.sku,"
+                + "SUM(CASE WHEN m.affects_stock=1 AND m.stock_direction='OUT' THEN m.quantity ELSE 0 END) expense_quantity,"
                 + "SUM(CASE WHEN m.affects_financial_sales=1 THEN m.quantity ELSE 0 END) sold_units,"
                 + "SUM(CASE WHEN m.affects_financial_sales=1 THEN m.sale_amount ELSE 0 END) sales_revenue,"
                 + "SUM(CASE WHEN m.affects_financial_sales=1 THEN m.accounting_value ELSE 0 END) sales_cogs,"
@@ -692,7 +695,7 @@ public class FolioProductAnalyticsDao {
                 decimal(rs, "regular_sold_units"), decimal(rs, "regular_revenue"),
                 decimal(rs, "regular_cogs"), decimal(rs, "one_off_sold_units"),
                 decimal(rs, "one_off_revenue"), decimal(rs, "one_off_cogs"),
-                decimal(rs, "average_inventory_value"));
+                decimal(rs, "average_inventory_value"), decimal(rs, "expense_quantity"));
     }
 
     private static BigDecimal decimal(ResultSet rs, String column) throws SQLException {
@@ -781,7 +784,7 @@ public class FolioProductAnalyticsDao {
             BigDecimal grossProfit, BigDecimal returnQuantity, BigDecimal returnRevenue,
             BigDecimal regularSoldUnits, BigDecimal regularRevenue, BigDecimal regularCogs,
             BigDecimal oneOffSoldUnits, BigDecimal oneOffRevenue, BigDecimal oneOffCogs,
-            BigDecimal averageInventoryValue) { }
+            BigDecimal averageInventoryValue, BigDecimal expenseQuantity) { }
     private record SqlParts(String currentWhere, String flowSql, String inventorySql, String movementWhere,
                             MapSqlParameterSource parameters) { }
     private static final class MutableTransit {

@@ -41,7 +41,7 @@ migrations or source writes. Each recipe table is bounded at200000 rows, closure
 at10000 nodes; limit violation fails instead of truncating. Cards are queried in
 chunks of300 SKU. Revision includes effective edges and role-derived decisions.
 
-WordPress previewVersion7 freezes the graph, loads missing children from existing
+WordPress previewVersion8 freezes the graph, loads missing children from existing
 analytics query schema7 using identical warehouse/period/generation scope and
 without product/availability filters. One forecast per SKU; stock netted once;
 only manufacturing shortages propagate with fractional coefficients. The existing

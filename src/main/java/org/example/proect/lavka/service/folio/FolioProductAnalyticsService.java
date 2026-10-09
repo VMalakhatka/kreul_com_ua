@@ -735,7 +735,7 @@ public class FolioProductAnalyticsService {
                 includeReturns ? row.returnRevenue() : BigDecimal.ZERO,
                 row.regularSoldUnits(), row.regularRevenue(), row.regularCogs(),
                 row.oneOffSoldUnits(), row.oneOffRevenue(), row.oneOffCogs(),
-                row.averageInventoryValue(), inventoryTurns, gmroi, margin, coverage);
+                row.averageInventoryValue(), inventoryTurns, gmroi, margin, coverage, row.expenseQuantity());
     }
 
     private static BigDecimal ratio(BigDecimal numerator, BigDecimal denominator) {
