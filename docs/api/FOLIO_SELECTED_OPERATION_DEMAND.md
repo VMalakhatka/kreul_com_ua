@@ -1,16 +1,20 @@
 # Выбранные расходные операции в прогнозе закупки
 
-Проверено: 2026-09-28. Владелец — `FolioProductAnalyticsDao`.
+Проверено: 2026-10-09. Владелец — `FolioProductAnalyticsDao`.
 Статус: реализовано и проверено на изолированной MariaDB; требуется деплой Java.
 
 ## Контракт
 
 При `movementFilters.operationKinds.mode=INCLUDE` явно выбранные `РАСХОДНИКИ`
-и `МУЛЬТИСБОРКА` дополняют спрос для закупки. Дополнение применяется только
+дополняют спрос для закупки. Дополнение применяется только
 к учётному расходному движению: `document_type=Р`, `affects_stock=1`,
 `stock_direction=OUT`, `demand_mode<>ONE_OFF_ORDER`. Счета, поступления,
 внутренние перемещения и разовые продажи не становятся спросом из-за этого правила.
-Без INCLUDE этих операций (включая ANY/EXCLUDE) поведение остаётся прежним.
+Без INCLUDE расходников (включая ANY/EXCLUDE) поведение остаётся прежним.
+
+`МУЛЬТИСБОРКА` больше не дополняет спрос даже при явном выборе: её заменяет
+потребность детей по рецептам. При этом `expenseQuantity` сохраняет фактический
+расход по выбранным операциям. См. [сборки](FOLIO_ASSEMBLY_GRAPH_API.md).
 
 `regularSoldUnits` в ответе analytics query — историческое имя количественной
 метрики, которую использует purchase preview. При явном выборе перечисленных
@@ -26,7 +30,7 @@ stock-only, сегмента и остальные movement filters сохран
 
 ## Настройка сценария по отборам ФОЛИО
 
-Для согласованного пользователем отбора:
+Для согласованного пользователем отбора (мультисборка здесь сохраняет только фактический расход):
 
 - documentTypes INCLUDE `Р`;
 - operationKinds INCLUDE `*РОЗНИЦА`, `МУЛЬТИСБОРКА`, `РАСХОДНИКИ`,
@@ -44,8 +48,9 @@ Java и предыдущая ревизия профиля; исходные fac
 
 ## Проверки
 
-`FolioAvailabilityMariaDbTest.selectedConsumptionChangesDemandAndLostDemandButNotFinancialSales` на disposable loopback MariaDB
-проверяет добавление расходников/мультисборки, оба вида предоплаты, единый числитель
+`FolioAvailabilityMariaDbTest.selectedConsumablesChangeDemandButAssemblyRemainsActualExpenseOnly` на disposable loopback MariaDB
+проверяет добавление расходников, исключение мультисборки из спроса при сохранении
+фактического расхода, оба вида предоплаты, единый числитель
 для дней наличия, неизменность финансовых показателей, ANY/EXCLUDE,
 REGULAR-only, stock-only и исключение счетов, прихода, неучётных и разовых операций.
 Также выполнены `FolioProductAnalyticsServiceTest` и `FolioStockoutDemandTest`.

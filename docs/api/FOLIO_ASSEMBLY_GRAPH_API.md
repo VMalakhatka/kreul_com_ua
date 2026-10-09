@@ -14,7 +14,7 @@ missing/wrong token ->401. Only Paint_Ua/Paint_Rus, nonempty positive warehouse
 IDs (max100), nonblank SKUs (max100 characters, max10000 roots). Source DB_NAME
 must match; no source database identifiers from the request enter SQL.
 
-Response `version:1`, SHA-256 `revision`, `nodes` and `edges`:
+Response `version:2`, SHA-256 `revision`, `nodes` and `edges`:
 
 - node: `sku`, `manufactured`, `issues`.
 - edge: `parent`, `child`, `factor` (component units per child), `source`, `rowId`.
@@ -41,7 +41,7 @@ migrations or source writes. Each recipe table is bounded at200000 rows, closure
 at10000 nodes; limit violation fails instead of truncating. Cards are queried in
 chunks of300 SKU. Revision includes effective edges and role-derived decisions.
 
-WordPress previewVersion8 freezes the graph, loads missing children from existing
+WordPress previewVersion9 freezes the graph, loads missing children from existing
 analytics query schema7 using identical warehouse/period/generation scope and
 without product/availability filters. One forecast per SKU; stock netted once;
 only manufacturing shortages propagate with fractional coefficients. The existing
@@ -56,3 +56,13 @@ ensure WordPress `api_token` matches `lavka.token`, start a new preview, reconci
 simple/complex recipes and a grandchild chain before rollout. No production data
 was changed during implementation. Cross-system instructions/formulas are in
 WordPress `docs/api/FOLIO_ASSEMBLY_PURCHASE.md` and `docs/OPERATIONS_RUNBOOK.md`.
+
+Version2 (2026-10-09) also guarantees that analytics regularSoldUnits and
+salesOnAvailableDays exclude historical МУЛЬТИСБОРКА consumption even in an
+explicit INCLUDE selection. That quantity remains in expenseQuantity. Selected
+РАСХОДНИКИ and regular sales retain their demand semantics. Child manufacturing
+shortages now own component demand. Existing snapshot facts need no migration.
+WordPress requires version2 before accepting the completed purchase preview;
+old scenario operation selections remain valid without rewriting saved settings.
+Local regression: FolioAvailabilityMariaDbTest checks mixed/assembly-only demand,
+financial sales, actual expense, stock-only warehouses and available-day demand.

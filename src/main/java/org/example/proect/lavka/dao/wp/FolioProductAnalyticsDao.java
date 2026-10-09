@@ -588,14 +588,15 @@ public class FolioProductAnalyticsDao {
         return new SqlParts(String.join(" AND ", current), flow, inventory, String.join(" AND ", movement), params);
     }
 
-    /** Explicit operation selection may include replenishable consumption/assembly.
+    /** Explicit operation selection may include replenishable consumables.
+     * Assembly demand comes from child recipes, never historical component issues.
      * Keep source classification and financial sales unchanged. Other movement filters
      * (including an explicit REGULAR-only selection) remain authoritative. */
     private static String planningDemandPredicate(QuerySpec spec) {
         Selection operations = spec.movementSelections().get("operationKinds");
         if (operations == null || !"INCLUDE".equals(operations.mode()))
             return "m.affects_planning_demand=1";
-        List<String> selected = List.of("РАСХОДНИКИ", "МУЛЬТИСБОРКА").stream()
+        List<String> selected = List.of("РАСХОДНИКИ").stream()
                 .filter(operations.values()::contains).toList();
         if (selected.isEmpty()) return "m.affects_planning_demand=1";
         // Values are drawn only from the fixed allowlist above, never request SQL.

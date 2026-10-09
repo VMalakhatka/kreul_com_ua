@@ -63,7 +63,7 @@ public final class FolioAssemblyGraph {
         try {
             String source = nodes.toString() + edges.toString();
             String revision = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(source.getBytes(StandardCharsets.UTF_8)));
-            return new Graph(1, revision, nodes, edges);
+            return new Graph(2, revision, nodes, edges);
         } catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
     }
 }

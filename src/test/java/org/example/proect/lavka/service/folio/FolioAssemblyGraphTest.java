@@ -16,6 +16,7 @@ class FolioAssemblyGraphTest {
                 r(true,"5","C","GRANDCHILD","0.5"), r(true,"6","OTHER-SUPPLIER","UNRELATED","1")),
                 Map.of("P",Set.of(1),"C",Set.of(11),"GRANDCHILD",Set.of(12)));
         assertEquals(Set.of("P","C","GRANDCHILD"), new HashSet<>(graph.nodes().stream().map(FolioAssemblyGraph.Node::sku).toList()));
+        assertEquals(2, graph.version());
         assertEquals(3, graph.edges().size());
         assertTrue(graph.edges().stream().allMatch(e -> e.source().equals("ALL_RAZBORKA_SLOJ")));
         assertTrue(graph.edges().stream().anyMatch(e -> e.parent().equals("OTHER-SUPPLIER")));

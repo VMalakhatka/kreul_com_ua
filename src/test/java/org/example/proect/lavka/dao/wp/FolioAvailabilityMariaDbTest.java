@@ -319,7 +319,7 @@ class FolioAvailabilityMariaDbTest {
                 Map.of("skus",new FolioProductAnalyticsDao.Selection("INCLUDE",List.of("SKU-0"))),filters,
                 50,0,List.of(),"SOLD_UNITS",null,stockOnly);
     }
-    @Test void selectedConsumptionChangesDemandAndLostDemandButNotFinancialSales() {
+    @Test void selectedConsumablesChangeDemandButAssemblyRemainsActualExpenseOnly() {
         movement("*ПРЕДОПЛАТА","Р","OUT","REGULAR",1,1,1,85,3);
         movement("*ПРЕДОПЛАТ","Р","OUT","REGULAR",1,1,1,4,23);
         movement("РАСХОДНИКИ","Р","OUT","NOT_APPLICABLE",1,0,0,19,5);
@@ -332,12 +332,17 @@ class FolioAvailabilityMariaDbTest {
         var kinds=new FolioProductAnalyticsDao.Selection("INCLUDE",List.of("*ПРЕДОПЛАТА","*ПРЕДОПЛАТ","РАСХОДНИКИ","МУЛЬТИСБОРКА","*ПЕРЕМЕЩЕНИЕ","*РАЗОВАЯ"));
         var spec=selected(Map.of("operationKinds",kinds),List.of());
         var result=dao.query(spec);
-        assertThat(result.rows().get(0).metrics().regularSoldUnits()).isEqualByComparingTo("114");
-        assertThat(result.total().metrics().regularSoldUnits()).isEqualByComparingTo("114");
+        assertThat(result.rows().get(0).metrics().regularSoldUnits()).isEqualByComparingTo("108");
+        assertThat(result.total().metrics().regularSoldUnits()).isEqualByComparingTo("108");
         assertThat(result.rows().get(0).metrics().soldUnits()).isEqualByComparingTo("1089");
         assertThat(result.rows().get(0).metrics().regularRevenue()).isEqualByComparingTo("89");
-        assertThat(dao.salesOnAvailableDays(spec,List.of(1),List.of("SKU-0")).get("SKU-0")).isEqualByComparingTo("110");
-        assertThat(dao.salesOnAvailableDays(spec,List.of(1,7),List.of("SKU-0")).get("SKU-0")).isEqualByComparingTo("114");
+        assertThat(dao.salesOnAvailableDays(spec,List.of(1),List.of("SKU-0")).get("SKU-0")).isEqualByComparingTo("104");
+        assertThat(dao.salesOnAvailableDays(spec,List.of(1,7),List.of("SKU-0")).get("SKU-0")).isEqualByComparingTo("108");
+        assertThat(result.rows().get(0).metrics().expenseQuantity()).isEqualByComparingTo("2114");
+        var assemblyOnly=selected(Map.of("operationKinds",new FolioProductAnalyticsDao.Selection("INCLUDE",List.of("МУЛЬТИСБОРКА"))),List.of());
+        assertThat(dao.query(assemblyOnly).rows().get(0).metrics().regularSoldUnits()).isZero();
+        assertThat(dao.query(assemblyOnly).rows().get(0).metrics().expenseQuantity()).isEqualByComparingTo("6");
+        assertThat(dao.salesOnAvailableDays(assemblyOnly,List.of(1,7),List.of("SKU-0")).getOrDefault("SKU-0",BigDecimal.ZERO)).isZero();
         // An intentional demand-mode restriction still narrows the selected operations.
         var regular=selected(Map.of("operationKinds",kinds,"demandModes",new FolioProductAnalyticsDao.Selection("INCLUDE",List.of("REGULAR"))),List.of());
         assertThat(dao.query(regular).rows().get(0).metrics().regularSoldUnits()).isEqualByComparingTo("89");
