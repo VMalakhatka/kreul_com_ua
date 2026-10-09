@@ -249,3 +249,13 @@ Graph nodes include BALL2-derived coldStatus, revision includes this metadata.
 Mixed-horizon purchase planning applies child horizons before component demand;
 unknown/conflicting flags must not be guessed. Contracts:
 `docs/api/FOLIO_ASSEMBLY_GRAPH_API.md`, WordPress `docs/api/FOLIO_ASSEMBLY_PURCHASE.md`.
+
+Product analytics performance (code/tests + production read-only SQL, 2026-10-09):
+apply current-card product selection before movement/monthly history aggregation.
+Keep the full `(source_database,warehouse_id,sku)` join and current-card uniqueness;
+supplier metadata may differ between warehouses. MariaDB needs current→history
+`STRAIGHT_JOIN` and the existing movement SKU/date index on this data distribution.
+Do not substitute historical supplier or remove operation/date filters. Pebeo
+totals SQL completed in 4.1s; this does not confirm the full production forecast.
+No Folio writes, migrations or snapshot rebuild required. Deploy Java; contract
+and regression evidence: `docs/api/FOLIO_PRODUCT_ANALYTICS_API.md`.

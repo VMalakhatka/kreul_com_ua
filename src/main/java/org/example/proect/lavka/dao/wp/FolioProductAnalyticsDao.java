@@ -584,13 +584,22 @@ public class FolioProductAnalyticsDao {
                 + "SUM(CASE WHEN m.demand_mode='ONE_OFF_ORDER' AND m.affects_financial_sales=1 THEN m.quantity ELSE 0 END) one_off_sold_units,"
                 + "SUM(CASE WHEN m.demand_mode='ONE_OFF_ORDER' AND m.affects_financial_sales=1 THEN m.sale_amount ELSE 0 END) one_off_revenue,"
                 + "SUM(CASE WHEN m.demand_mode='ONE_OFF_ORDER' AND m.affects_financial_sales=1 THEN m.accounting_value ELSE 0 END) one_off_cogs "
-                + "FROM folio_product_movement_fact m WHERE " + String.join(" AND ", movement)
+                + "FROM folio_product_metric_current c STRAIGHT_JOIN folio_product_movement_fact m "
+                + "FORCE INDEX (idx_folio_product_movement_sku_date) "
+                + "ON m.source_database=c.source_database AND m.warehouse_id=c.warehouse_id AND m.sku=c.sku "
+                + "WHERE " + String.join(" AND ", current) + " AND " + String.join(" AND ", movement)
                 + " GROUP BY m.source_database,m.warehouse_id,m.sku";
-        String inventory = "SELECT source_database,warehouse_id,sku,"
-                + "AVG(average_inventory_value) average_inventory_value "
-                + "FROM folio_product_metric_monthly WHERE source_database=:db "
-                + "AND warehouse_id IN (:warehouseIds) AND month_start>=:monthFrom "
-                + "AND month_start<=:monthTo GROUP BY source_database,warehouse_id,sku";
+        // The outer aggregate only uses selected current warehouse cards. Apply
+        // that same selection before scanning history; the current PK prevents
+        // row multiplication and no historical supplier is substituted. Keep
+        // current cards first and use the existing SKU/date history index:
+        // MariaDB otherwise chooses the warehouse PK scan on production data.
+        String inventory = "SELECT p.source_database,p.warehouse_id,p.sku,"
+                + "AVG(p.average_inventory_value) average_inventory_value "
+                + "FROM folio_product_metric_current c STRAIGHT_JOIN folio_product_metric_monthly p "
+                + "ON p.source_database=c.source_database AND p.warehouse_id=c.warehouse_id AND p.sku=c.sku "
+                + "WHERE " + String.join(" AND ", current) + " AND p.month_start>=:monthFrom "
+                + "AND p.month_start<=:monthTo GROUP BY p.source_database,p.warehouse_id,p.sku";
         return new SqlParts(String.join(" AND ", current), flow, inventory, String.join(" AND ", movement), params);
     }
 

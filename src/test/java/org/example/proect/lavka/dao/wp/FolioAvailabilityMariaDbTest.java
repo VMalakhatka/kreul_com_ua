@@ -47,7 +47,7 @@ class FolioAvailabilityMariaDbTest {
         jdbc.update("DELETE FROM folio_accounting_price_diagnostic");
         jdbc.update("DELETE FROM folio_product_movement_fact");
         for (String table : List.of("folio_product_availability_monthly", "folio_product_availability_monthly_stage",
-                "folio_product_metric_current", "folio_product_metric_current_stage",
+                "folio_product_metric_monthly", "folio_product_metric_current", "folio_product_metric_current_stage",
                 "folio_product_snapshot_change", "folio_product_snapshot_item", "folio_product_metric_alert",
                 "folio_product_snapshot_generation")) jdbc.update("DELETE FROM " + table);
         for (int warehouse : List.of(1,7)) {
@@ -121,6 +121,43 @@ class FolioAvailabilityMariaDbTest {
                 .isEqualTo(new org.example.proect.lavka.dto.folio.FolioProductAnalyticsCapabilitiesResponse.DictionaryItem("G","Zulu",3));
         assertThat(rows.stream().filter(r -> r.code().equals("N")).findFirst().orElseThrow())
                 .isEqualTo(new org.example.proect.lavka.dto.folio.FolioProductAnalyticsCapabilitiesResponse.DictionaryItem("N","N",1));
+    }
+
+    @Test void earlyProductSelectionKeepsWarehouseCardScopeMovementFiltersAndMonthlyAverage() {
+        jdbc.update("UPDATE folio_product_metric_current SET current_supplier='Other',physical_quantity=100,inventory_value=100 WHERE 1=1");
+        jdbc.update("UPDATE folio_product_metric_current SET current_supplier='Pebeo',physical_quantity=7 WHERE warehouse_id=1 AND sku='SKU-0'");
+        // The same SKU has a different supplier in warehouse 7. Its history must not leak into the selection.
+        for (int warehouse : List.of(1,7)) {
+            for (int n=1;n<=3;n++) jdbc.update("""
+                INSERT INTO folio_product_movement_fact
+                (source_database,warehouse_id,movement_recno,generation_id,document_date,sku,quantity,signed_quantity,
+                 movement_class,stock_direction,demand_mode,payment_terms,customer_segment,supplier_state,
+                 affects_stock,affects_financial_sales,affects_planning_demand,sale_amount,accounting_value,operation_kind,captured_at)
+                VALUES ('Fixture',?,?,?,?,'SKU-0',?,-1,'RETAIL_SALE','OUT','REGULAR','UNKNOWN','UNKNOWN','CURRENT',1,1,1,?,10,?,NOW())
+                """,warehouse,n,warehouse,n==3?START.minusDays(1):START.plusDays(1),warehouse==1?3:999,
+                    warehouse==1?60:999,n==2?"EXCLUDED":"RETAIL");
+            for (int month=0;month<3;month++) jdbc.update("""
+                INSERT INTO folio_product_metric_monthly
+                (source_database,warehouse_id,sku,month_start,average_inventory_value,generation_id,calculated_at)
+                VALUES ('Fixture',?,'SKU-0',?,?,?,NOW())
+                """,warehouse,START.plusMonths(month),warehouse==1?(month==0?20:month==1?40:900):999,warehouse);
+        }
+        var selected=new QuerySpec("Fixture",List.of(1,7),START,START.plusMonths(2).minusDays(1),null,
+                Map.of("currentSuppliers",new FolioProductAnalyticsDao.Selection("INCLUDE",List.of("Pebeo"))),
+                Map.of("operationKinds",new FolioProductAnalyticsDao.Selection("EXCLUDE",List.of("EXCLUDED"))),
+                50,0,List.of(),"SOLD_UNITS");
+        var result=dao.query(selected);
+        assertThat(result.total().productCount()).isEqualTo(1);
+        assertThat(result.rows()).extracting(AggregateRow::sku).containsExactly("SKU-0");
+        var metrics=result.rows().get(0).metrics();
+        assertThat(metrics.physicalQuantity()).isEqualByComparingTo("7");
+        assertThat(metrics.regularSoldUnits()).isEqualByComparingTo("3");
+        assertThat(metrics.salesRevenue()).isEqualByComparingTo("60");
+        assertThat(metrics.averageInventoryValue()).isEqualByComparingTo("30");
+        assertThat(result.total().metrics().regularSoldUnits()).isEqualByComparingTo("3");
+        assertThat(result.warehouseRows()).extracting(WarehouseRow::warehouseId).containsExactly(1);
+        assertThat(result.basisRows()).hasSize(1);
+        assertThat(result.basisRows().get(0).value()).isEqualByComparingTo("3");
     }
 
     @Test void demandNumeratorUsesGroupUnionSelectedDaysAndMovementFilters() {
