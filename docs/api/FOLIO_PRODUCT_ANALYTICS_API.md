@@ -454,3 +454,74 @@ No snapshot migration is required; schema7 already contains these source facts.
 This display field does not change procurement demand or its one-off exclusion.
 WordPress purchase previewVersion8 uses it in the stock summary and CSV/XLSX;
 missing fields from an older backend must display unknown, never zero or sales.
+
+
+## Единый текущий срез для заказа поставщику (contract v1)
+
+Подготовлено и проверено локальными тестами 2026-10-11; production acceptance
+требует отдельного Java/WordPress deploy. Обычный analytics query и transit v3
+по-прежнему читают снимки и не объявляют их согласованными.
+
+`POST /admin/folio/product-analytics/current-network-stock`, `X-Auth-Token` из
+`lavka.token`; отсутствующий runtime token —503, неверный —401, неверный scope —400.
+Ответ `Cache-Control: no-store`. Пример:
+
+```json
+{"sourceDatabase":"Paint_Ua","warehouseIds":[1,5,7,9,10,15],
+ "analysisWarehouseIds":[1,5,7,15],"rootSkus":["P-025-010"]}
+```
+
+`analysisWarehouseIds` — непустое подмножество полного scope; по ним проверяются
+роли BALL4 и BALL2. Полный scope включает все склады анализа и транспорта и склад
+сетевой закупочной политики №7. ID сортируются и дедуплицируются. Разрешены только
+Paint_Ua/Paint_Rus, фактический DB_NAME проверяется. Лимиты:100 складов,
+10000 корней/вершин,200000 сочетаний SKU×склад,200000 строк каждого рецепта.
+Превышение и timeout не возвращают усечённый успешный результат.
+
+DAO `FolioCurrentNetworkStockDao` использует один `mssqlTransactionManager`,
+read-only SERIALIZABLE transaction,60с; каждая параметризованная выборка stock
+и account lines использует HOLDLOCK и timeout15с. Пакеты по300 SKU соблюдают
+лимит2100 параметров SQL Server2000. `FolioAssemblyDao` читает рецепты и признаки
+в этой же source transaction. Нет NOLOCK, UPDLOCK, source writes, MariaDB/HTTP
+вызовов под удерживаемыми блокировками. Конкурирующая запись может кратко ждать;
+при timeout preview завершается ошибкой, обхода защиты или KILL нет.
+
+Ответ: `ok:true, version:1, captureId:<UUID>, sourceDatabase,
+method:FOLIO_SERIALIZABLE_READ, startedAt, capturedAt, warehouseIds,
+analysisWarehouseIds, assemblyGraph, cards`. Время UTC ISO8601; capturedAt
+зафиксировано после всех чтений, пока source locks ещё удерживаются. Это новый
+source cut, не старое snapshot generation. Capture хранится только в preview;
+повторный запрос читает новый cut, adjustment/export используют уже принятый cut.
+Продажи, прибыль и дни отсутствия остаются из активных аналитических снимков.
+
+Каждый элемент `cards`: `sku, warehouseId, status, physicalQuantity,
+availableQuantity, reservedQuantity, orderPolicy, internalTransferAccounts`.
+Выдаётся полная матрица графа×scope. Отсутствующая карточка имеет
+`status:SKU_NOT_PRESENT` и неизвестные количества (null), никогда нули.
+`INVALID_STOCK` обозначает null quantity или отрицательный physical−free;
+`INTERNAL_TRANSFER_RESERVE_MISMATCH` — сумма внутренних счетов выше общего резерва.
+Данные другого товара не исправляются и не подменяются.
+
+Источник физического количества — SCL_ARTC.KON_KOLCH, свободного —REZ_KOLCH,
+резерв=physical−free. MIN/MAX используют тот же Java warehouseOrderPolicy,
+что snapshot API. Активные внутренние счета классифицирует существующий
+FolioProductMovementClassifier: движение и документ С, учитываемые строка и шапка,
+операция *ПЕРЕМЕЩЕНИЕ, без возврата, положительное количество. Дата не ограничивается
+горизонтом продаж. Accounts суммируются по SKU×sourceWarehouse×technical documentId;
+ответ account содержит sourceWarehouseId,documentId,quantity. Получатель не влияет.
+Клиентские резервы и уже отгруженные расходы не восстанавливаются.
+
+WordPress previewVersion10 проверяет полный scope, матрицу, арифметику резервов и
+неизменный assembly revision, затем заменяет только текущие остатки и policies.
+Исторические stock metrics сохраняются отдельно для аудита. Производная модель
+транзита v4 привязывает каждый источник к тому же captureId: доступно
+max(0,free+internalTransferReserve). Общий пул распределяется один раз единственной
+закупочной группе; связанные группы получают пополнение внутренним маршрутом.
+При нескольких независимых закупочных группах распределение требует ручного ввода.
+Это не новый контракт analytics query v3 и не основание выставлять confirmed=true
+у независимых historical generations.
+
+Проверки: FolioCurrentNetworkStockControllerTest,FolioCurrentNetworkStockDaoTest,
+FolioAssemblyGraphTest,FolioTransitAnalyticsTest; consumer tests описаны в WordPress
+операционном runbook. Неизвестные stock/рецепты блокируют связанные SKU, а не
+превращаются в нулевую потребность. Новый заказ/резерв/приходник не создаётся.

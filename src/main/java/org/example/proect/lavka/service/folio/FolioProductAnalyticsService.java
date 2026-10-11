@@ -366,7 +366,7 @@ public class FolioProductAnalyticsService {
                         "FORECAST_PLUS_MINIMUM_STOCK", "UNKNOWN"));
     }
 
-    private static WarehouseOrderPolicy warehouseOrderPolicy(
+    public static WarehouseOrderPolicy warehouseOrderPolicy(
             BigDecimal minimumStock, BigDecimal maximumStock) {
         String validation = purchasePolicyValidation(minimumStock, maximumStock);
         Boolean allowed;
