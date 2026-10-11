@@ -48,8 +48,8 @@ public class FolioCurrentNetworkStockDao {
         Map<String, Map<Long, BigDecimal>> accounts = new HashMap<>();
         for (int offset = 0; offset < skus.size(); offset += 300) {
             var part = skus.subList(offset, Math.min(offset + 300, skus.size()));
-            String scope = " ID_SCLAD IN (" + placeholders(warehouses.size()) + ") AND COD_ARTIC IN (" + placeholders(part.size()) + ")";
-            jdbc.query(c -> {
+            String scope = " ID_SCLAD IN (" + placeholders(warehouses.size()) + ") AND COD_ARTIC IN (" + skuPlaceholders(part.size()) + ")";
+            readRows(c -> {
                 var p = c.prepareStatement("SELECT COD_ARTIC, ID_SCLAD, KON_KOLCH, REZ_KOLCH, MIN_TVRZAP, MAX_TVRZAP FROM dbo.SCL_ARTC WITH (HOLDLOCK) WHERE" + scope + " ORDER BY ID_SCLAD, COD_ARTIC");
                 p.setQueryTimeout(15); int n = 1;
                 for (int id : warehouses) p.setInt(n++, id); for (String sku : part) p.setString(n++, sku); return p;
@@ -63,7 +63,7 @@ public class FolioCurrentNetworkStockDao {
                 if (cards.put(key(sku, id), card) != null) throw new IllegalStateException("Duplicate current warehouse card");
             });
             // Source warehouse only; neither recipient inference nor receipt-date filtering.
-            jdbc.query(c -> {
+            readRows(c -> {
                 var p = c.prepareStatement("""
                         SELECT m.NAME_PREDM, m.ID_SCLAD, m.UNICUM_NUM, m.KOLC_PREDM,
                                m.TYPDOCM_PR, n.TYPE_DOC, m.STND_UCHET AS LINE_ACCOUNTED,
@@ -71,8 +71,8 @@ public class FolioCurrentNetworkStockDao {
                                CASE WHEN ISNULL(n.VID_DOC,'')<>'' THEN n.VID_DOC ELSE m.VID_DOC END AS OPERATION_KIND
                           FROM dbo.SCL_MOVE m WITH (HOLDLOCK)
                           JOIN dbo.SCL_NAKL n WITH (HOLDLOCK) ON n.UNICUM_NUM=m.UNICUM_NUM
-                         WHERE m.TYPDOCM_PR=? AND m.STND_UCHET=1 AND m.ID_SCLAD IN (
-                        """ + placeholders(warehouses.size()) + ") AND m.NAME_PREDM IN (" + placeholders(part.size()) + ") ORDER BY m.ID_SCLAD, m.NAME_PREDM, m.UNICUM_NUM, m.RECNO");
+                         WHERE m.TYPDOCM_PR=CAST(? AS varchar(1)) AND m.STND_UCHET=1 AND m.ID_SCLAD IN (
+                        """ + placeholders(warehouses.size()) + ") AND m.NAME_PREDM IN (" + skuPlaceholders(part.size()) + ") ORDER BY m.ID_SCLAD, m.NAME_PREDM, m.UNICUM_NUM, m.RECNO");
                 p.setQueryTimeout(15); p.setString(1, "С"); int n = 2;
                 for (int id : warehouses) p.setInt(n++, id); for (String sku : part) p.setString(n++, sku); return p;
             }, (RowCallbackHandler) rs -> {
@@ -101,6 +101,25 @@ public class FolioCurrentNetworkStockDao {
         // All read locks remain held here: there is one serializable source cut across every batch.
         return new Capture(true, 1, UUID.randomUUID().toString(), database, "FOLIO_SERIALIZABLE_READ",
                 started.toString(), Instant.now().toString(), List.copyOf(warehouses), List.copyOf(analysisWarehouses), graph, complete);
+    }
+    private void readRows(org.springframework.jdbc.core.PreparedStatementCreator creator, RowCallbackHandler rows) {
+        jdbc.query(creator, FolioCurrentNetworkStockDao::boundQueryTimeout,
+                (org.springframework.jdbc.core.ResultSetExtractor<Void>) result -> {
+                    while (result.next()) rows.processRow(result);
+                    return null;
+                });
+    }
+    // JdbcTemplate first applies the transaction timeout, which can replace the
+    // creator's 15s limit. The setter runs afterwards and keeps the shorter bound.
+    private static void boundQueryTimeout(java.sql.PreparedStatement statement) throws java.sql.SQLException {
+        int remaining = statement.getQueryTimeout();
+        statement.setQueryTimeout(remaining > 0 ? Math.min(15, remaining) : 15);
+    }
+    // jTDS sends Unicode strings by default. Explicit varchar keeps the legacy
+    // indexed varchar columns from being converted to nvarchar during comparison.
+    // 100 preserves the controller's full input bound instead of truncating a SKU.
+    private static String skuPlaceholders(int count) {
+        return String.join(",", Collections.nCopies(count, "CAST(? AS varchar(100))"));
     }
     private static String key(String sku, int id) { return id + ":" + sku; }
     private static String placeholders(int count) { return String.join(",", Collections.nCopies(count, "?")); }

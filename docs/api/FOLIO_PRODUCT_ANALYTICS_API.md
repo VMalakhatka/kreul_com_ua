@@ -458,8 +458,9 @@ missing fields from an older backend must display unknown, never zero or sales.
 
 ## Единый текущий срез для заказа поставщику (contract v1)
 
-Подготовлено и проверено локальными тестами 2026-10-11; production acceptance
-требует отдельного Java/WordPress deploy. Обычный analytics query и transit v3
+Java/WordPress deploy подтверждён 2026-10-11. Полный Pebeo preview загрузил
+1046 корней, но текущий срез был отклонён по timeout; итоговый заказ ещё не
+принят. Исправление параметров ниже требует нового Java deploy и native preview. Обычный analytics query и transit v3
 по-прежнему читают снимки и не объявляют их согласованными.
 
 `POST /admin/folio/product-analytics/current-network-stock`, `X-Auth-Token` из
@@ -525,3 +526,33 @@ max(0,free+internalTransferReserve). Общий пул распределяет�
 FolioAssemblyGraphTest,FolioTransitAnalyticsTest; consumer tests описаны в WordPress
 операционном runbook. Неизвестные stock/рецепты блокируют связанные SKU, а не
 превращаются в нулевую потребность. Новый заказ/резерв/приходник не создаётся.
+
+### Проверка legacy плана и таймаутов 2026-10-11
+
+На Paint_Ua полный current-network-stock завершился отказом через60,2с:
+внутренняя выборка SCL_MOVE превысила transaction deadline; Hikari закрыл jTDS
+connection и сообщение rollback скрыло исходный SQLTimeoutException. Частичный
+срез не принят, количества не заменены нулями. История корней сохранена.
+
+Живые metadata подтвердили NAME_PREDM varchar(20), TYPDOCM_PR varchar(1),
+MOVE_I2(NAME_PREDM,DATE_PREDM,ID_SCLAD), MOVE_I1(UNICUM_NUM,NAME_PREDM,ID_SCLAD).
+jTDS Unicode bind сравнивал nvarchar с индексированным varchar. Параметры SKU
+теперь явно CAST(? AS varchar(100)) (весь API input bound, без усечения), тип
+документа CAST(? AS varchar(1)). Индексы/план принудительно не меняются.
+Read-only SERIALIZABLE probe на1052SKU/6складах, четыре пакета, вернул355строк
+за9,8с; диагностический вариант с hints вернул те же355 за3,6с, но hints
+не входят в код. Это проверка SQL, не подтверждение готовой заявки в HTTP UI.
+
+Ограничение15с применяется PreparedStatementSetter после JdbcTemplate timeout
+settings: берётся min(15, оставшееся время транзакции), поскольку Spring может
+перезаписать timeout, заданный в PreparedStatementCreator. Тесты проверяют
+как общий60с deadline, так и оставшиеся3с. Транзакция и неизвестные карточки
+сохраняют прежний контракт; бизнес-фильтр счетов не меняется.
+
+Полный исправленный FolioCurrentNetworkStockDao также проверен в production
+контейнере отдельным минимальным Spring context без web/schedulers: реальный
+mssqlTransactionManager и read-only SERIALIZABLE, те же1046корней/6складов,
+graph1052вершины,6312карточек за14,9с (6276 CAPTURED,36 SKU_NOT_PRESENT).
+Срез получен и сохранён после успешного commit чтения. Рабочий HTTP service
+не заменялся; это native DAO integration evidence, а не acceptance нового
+HTTP endpoint после deploy. Отсутствующие36карточек не заменены нулями.

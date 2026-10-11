@@ -17,6 +17,22 @@ class FolioCurrentNetworkStockDaoTest {
         assertThrows(IllegalStateException.class, () -> new FolioCurrentNetworkStockDao(jdbc, assembly).read("Paint_Ua", List.of(7), List.of(7), List.of("P")));
         verifyNoInteractions(jdbc, assembly);
     }
+    @Test void retainsAShorterRemainingTransactionDeadline() throws Exception {
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+        TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(Connection.TRANSACTION_SERIALIZABLE);
+        var jdbc = mock(JdbcTemplate.class); var assembly = mock(FolioAssemblyDao.class);
+        when(assembly.read("Paint_Ua", List.of(7), List.of("P"))).thenReturn(FolioAssemblyGraph.build(List.of("P"), List.of(), Map.of("P", Set.of(0))));
+        doAnswer(inv -> {
+            var con = mock(Connection.class); var ps = mock(PreparedStatement.class);
+            when(con.prepareStatement(anyString())).thenReturn(ps); when(ps.getQueryTimeout()).thenReturn(3);
+            inv.<PreparedStatementCreator>getArgument(0).createPreparedStatement(con);
+            inv.<PreparedStatementSetter>getArgument(1).setValues(ps); verify(ps).setQueryTimeout(3);
+            return null;
+        }).when(jdbc).query(any(PreparedStatementCreator.class), any(PreparedStatementSetter.class), any(ResultSetExtractor.class));
+        var capture = new FolioCurrentNetworkStockDao(jdbc, assembly).read("Paint_Ua", List.of(7), List.of(7), List.of("P"));
+        assertEquals("SKU_NOT_PRESENT", capture.cards().get(0).status());
+    }
     @Test void emitsAnExplicitMissingCardAndRestoresOnlyCurrentInternalSourceReserves() throws Exception {
         TransactionSynchronizationManager.setActualTransactionActive(true);
         TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
@@ -35,14 +51,20 @@ class FolioCurrentNetworkStockDaoTest {
         when(account.getBigDecimal("KOLC_PREDM")).thenReturn(new BigDecimal("6"));
         List<String> queries = new ArrayList<>();
         doAnswer(inv -> {
-            var con = mock(Connection.class); var ps = mock(PreparedStatement.class);
+            var con = mock(Connection.class); var ps = mock(PreparedStatement.class); when(ps.getQueryTimeout()).thenReturn(60);
             when(con.prepareStatement(anyString())).thenAnswer(call -> { queries.add(call.getArgument(0)); return ps; });
             inv.<PreparedStatementCreator>getArgument(0).createPreparedStatement(con);
-            var callback = inv.<RowCallbackHandler>getArgument(1);
-            if (queries.size() == 1) callback.processRow(stock);
-            else { callback.processRow(account); when(account.getString("OPERATION_KIND")).thenReturn("*РОЗНИЦА"); callback.processRow(account); }
+            inv.<PreparedStatementSetter>getArgument(1).setValues(ps);
+            verify(ps, times(2)).setQueryTimeout(15);
+            var extractor = inv.<ResultSetExtractor<Void>>getArgument(2);
+            if (queries.size() == 1) { when(stock.next()).thenReturn(true, false); extractor.extractData(stock); }
+            else {
+                when(account.next()).thenReturn(true, false); extractor.extractData(account);
+                when(account.getString("OPERATION_KIND")).thenReturn("*РОЗНИЦА");
+                when(account.next()).thenReturn(true, false); extractor.extractData(account);
+            }
             return null;
-        }).when(jdbc).query(any(PreparedStatementCreator.class), any(RowCallbackHandler.class));
+        }).when(jdbc).query(any(PreparedStatementCreator.class), any(PreparedStatementSetter.class), any(ResultSetExtractor.class));
         var capture = new FolioCurrentNetworkStockDao(jdbc, assembly).read("Paint_Ua", List.of(7,9), List.of(7), List.of("P"));
         assertEquals(2, capture.cards().size()); assertEquals("FOLIO_SERIALIZABLE_READ", capture.method());
         var card = capture.cards().get(0); assertEquals(new BigDecimal("30"), card.reservedQuantity());
@@ -51,5 +73,7 @@ class FolioCurrentNetworkStockDaoTest {
         assertEquals("SKU_NOT_PRESENT", capture.cards().get(1).status()); assertNull(capture.cards().get(1).availableQuantity());
         assertTrue(queries.stream().allMatch(q -> q.startsWith("SELECT") && q.contains("HOLDLOCK") && !q.contains("NOLOCK")));
         assertFalse(queries.get(1).contains("DATE_PREDM"));
+        assertTrue(queries.stream().allMatch(q -> q.contains("CAST(? AS varchar(100))")));
+        assertTrue(queries.get(1).contains("m.TYPDOCM_PR=CAST(? AS varchar(1))"));
     }
 }
