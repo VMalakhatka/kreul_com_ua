@@ -556,3 +556,12 @@ graph1052вершины,6312карточек за14,9с (6276 CAPTURED,36 SKU_NO
 Срез получен и сохранён после успешного commit чтения. Рабочий HTTP service
 не заменялся; это native DAO integration evidence, а не acceptance нового
 HTTP endpoint после deploy. Отсутствующие36карточек не заменены нулями.
+
+Проверено: 2026-10-11, production после повторного deploy. Штатный WordPress
+previewVersion10 прошёл12страниц через установленный Java HTTP API, complete=true.
+Current capture `adca531d-4ed4-43b4-acba-3f6dba1159c8` принят после commit чтения,
+capturedAt14:02:56 UTC; интервал startedAt—capturedAt9,1с. Scope1052вершины×6складов,
+все6276карточек1046исторически загруженных корней CAPTURED. Шесть детей без
+аналитической истории остаются на проверке. Ни HTTP-ответы, ни Capture не подменялись.
+Экспорт прошёл свежие recipe/price guards; штатная PHP-модель дала238SKU/3604шт.
+Это acceptance установленного endpoint в дополнение к прежней прямой DAO-проверке.
