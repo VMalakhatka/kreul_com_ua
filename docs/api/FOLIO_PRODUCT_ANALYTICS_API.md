@@ -456,7 +456,7 @@ WordPress purchase previewVersion8 uses it in the stock summary and CSV/XLSX;
 missing fields from an older backend must display unknown, never zero or sales.
 
 
-## Единый текущий срез для заказа поставщику (contract v1)
+## Единый текущий срез для заказа поставщику (contract v2)
 
 Java/WordPress deploy подтверждён 2026-10-11. Полный Pebeo preview загрузил
 1046 корней, но текущий срез был отклонён по timeout; итоговый заказ ещё не
@@ -469,7 +469,7 @@ Java/WordPress deploy подтверждён 2026-10-11. Полный Pebeo prev
 
 ```json
 {"sourceDatabase":"Paint_Ua","warehouseIds":[1,5,7,9,10,15],
- "analysisWarehouseIds":[1,5,7,15],"rootSkus":["P-025-010"]}
+ "analysisWarehouseIds":[1,5,7,15],"rootSkus":["P-025-010"],"asOfDate":"2026-10-14"}
 ```
 
 `analysisWarehouseIds` — непустое подмножество полного scope; по ним проверяются
@@ -487,9 +487,16 @@ read-only SERIALIZABLE transaction,60с; каждая параметризова
 вызовов под удерживаемыми блокировками. Конкурирующая запись может кратко ждать;
 при timeout preview завершается ошибкой, обхода защиты или KILL нет.
 
-Ответ: `ok:true, version:1, captureId:<UUID>, sourceDatabase,
+`asOfDate` — дата запуска preview в формате YYYY-MM-DD. Она задаёт одинаковое с
+балансом клиента окно шести календарных месяцев, включая весь этот день.
+
+Ответ: `ok:true, version:2, captureId:<UUID>, sourceDatabase,
 method:FOLIO_SERIALIZABLE_READ, startedAt, capturedAt, warehouseIds,
-analysisWarehouseIds, assemblyGraph, cards`. Время UTC ISO8601; capturedAt
+analysisWarehouseIds, preorderAsOfDate, assemblyGraph, cards, preorderReservations`.
+`preorderReservations` содержит только `sku, warehouseId, documentId, lineId,
+quantity`: положительные текущие строки активных неучитываемых счетов `С` с
+`*РАЗОВАЯ` и дополнительной информацией `ПРД`, без данных клиента. Учитываются
+только строки складов анализа; архивы и платежи не читаются. Время UTC ISO8601; capturedAt
 зафиксировано после всех чтений, пока source locks ещё удерживаются. Это новый
 source cut, не старое snapshot generation. Capture хранится только в preview;
 повторный запрос читает новый cut, adjustment/export используют уже принятый cut.

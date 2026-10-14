@@ -8,6 +8,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 
 @RestController
@@ -16,7 +18,8 @@ public class FolioCurrentNetworkStockController {
     private final FolioCurrentNetworkStockDao dao;
     private final LavkaApiProperties properties;
     public FolioCurrentNetworkStockController(FolioCurrentNetworkStockDao dao, LavkaApiProperties properties) { this.dao = dao; this.properties = properties; }
-    public record Request(String sourceDatabase, List<Integer> warehouseIds, List<Integer> analysisWarehouseIds, List<String> rootSkus) {}
+    public record Request(String sourceDatabase, List<Integer> warehouseIds, List<Integer> analysisWarehouseIds,
+                          List<String> rootSkus, String asOfDate) {}
     @PostMapping("/current-network-stock")
     public ResponseEntity<FolioCurrentNetworkStockDao.Capture> read(@RequestBody Request request,
             @RequestHeader(value = "X-Auth-Token", required = false) String token) {
@@ -28,10 +31,15 @@ public class FolioCurrentNetworkStockController {
                 || !validIds(request.warehouseIds()) || !validIds(request.analysisWarehouseIds())
                 || !request.warehouseIds().containsAll(request.analysisWarehouseIds()) || !request.warehouseIds().contains(7)
                 || request.rootSkus() == null || request.rootSkus().isEmpty() || request.rootSkus().size() > 10000
-                || request.rootSkus().stream().anyMatch(s -> s == null || s.isBlank() || s.length() > 100)) return ResponseEntity.badRequest().build();
+                || request.rootSkus().stream().anyMatch(s -> s == null || s.isBlank() || s.length() > 100)
+                || parseDate(request.asOfDate()) == null) return ResponseEntity.badRequest().build();
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(dao.read(request.sourceDatabase(),
                 request.warehouseIds().stream().distinct().sorted().toList(), request.analysisWarehouseIds().stream().distinct().sorted().toList(),
-                request.rootSkus().stream().map(FolioAssemblyGraph::key).distinct().sorted().toList()));
+                request.rootSkus().stream().map(FolioAssemblyGraph::key).distinct().sorted().toList(), parseDate(request.asOfDate())));
     }
     private static boolean validIds(List<Integer> ids) { return ids != null && !ids.isEmpty() && ids.size() <= 100 && ids.stream().allMatch(id -> id != null && id > 0); }
+    private static LocalDate parseDate(String value) {
+        if (value == null || !value.matches("\\d{4}-\\d{2}-\\d{2}")) return null;
+        try { return LocalDate.parse(value); } catch (DateTimeParseException ignored) { return null; }
+    }
 }

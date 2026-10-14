@@ -12,6 +12,8 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.sql.Timestamp;
 import java.util.*;
 
 /** One source transaction, including recipes and current internal account reservations.
@@ -27,13 +29,17 @@ public class FolioCurrentNetworkStockDao {
     public record Card(String sku, int warehouseId, String status, BigDecimal physicalQuantity,
                        BigDecimal availableQuantity, BigDecimal reservedQuantity,
                        WarehouseOrderPolicy orderPolicy, List<Account> internalTransferAccounts) {}
+    /** Remaining item quantities on active, non-accounted customer preorder invoices. */
+    public record PreorderReservation(String sku, int warehouseId, long documentId, long lineId, BigDecimal quantity) {}
     public record Capture(boolean ok, int version, String captureId, String sourceDatabase, String method,
                           String startedAt, String capturedAt, List<Integer> warehouseIds,
-                          List<Integer> analysisWarehouseIds, FolioAssemblyGraph.Graph assemblyGraph, List<Card> cards) {}
+                          List<Integer> analysisWarehouseIds, String preorderAsOfDate,
+                          FolioAssemblyGraph.Graph assemblyGraph, List<Card> cards, List<PreorderReservation> preorderReservations) {}
 
     @Transactional(transactionManager = "mssqlTransactionManager", readOnly = true, timeout = 60,
             isolation = Isolation.SERIALIZABLE)
-    public Capture read(String database, List<Integer> warehouses, List<Integer> analysisWarehouses, List<String> roots) {
+    public Capture read(String database, List<Integer> warehouses, List<Integer> analysisWarehouses, List<String> roots,
+                        LocalDate preorderAsOfDate) {
         if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()
                 || !org.springframework.transaction.support.TransactionSynchronizationManager.isCurrentTransactionReadOnly()
                 || !Objects.equals(org.springframework.transaction.support.TransactionSynchronizationManager.getCurrentTransactionIsolationLevel(), java.sql.Connection.TRANSACTION_SERIALIZABLE))
@@ -46,6 +52,8 @@ public class FolioCurrentNetworkStockDao {
             throw new IllegalArgumentException("Current stock scope exceeds 200000 warehouse cards");
         Map<String, Card> cards = new LinkedHashMap<>();
         Map<String, Map<Long, BigDecimal>> accounts = new HashMap<>();
+        List<PreorderReservation> preorders = new ArrayList<>();
+        Set<Long> preorderLines = new HashSet<>();
         for (int offset = 0; offset < skus.size(); offset += 300) {
             var part = skus.subList(offset, Math.min(offset + 300, skus.size()));
             String scope = " ID_SCLAD IN (" + placeholders(warehouses.size()) + ") AND COD_ARTIC IN (" + skuPlaceholders(part.size()) + ")";
@@ -86,6 +94,27 @@ public class FolioCurrentNetworkStockDao {
                 accounts.computeIfAbsent(key(FolioAssemblyGraph.key(rs.getString("NAME_PREDM")), rs.getInt("ID_SCLAD")), k -> new TreeMap<>())
                         .merge(doc, qty, BigDecimal::add);
             });
+            // Same rule and six-calendar-month window as customer balances. Current lines already exclude fulfilled goods.
+            readRows(c -> {
+                var p = c.prepareStatement("""
+                        SELECT m.NAME_PREDM, m.ID_SCLAD, m.UNICUM_NUM, m.RECNO, m.KOLC_PREDM
+                          FROM dbo.SCL_MOVE m WITH (HOLDLOCK)
+                          JOIN dbo.SCL_NAKL n WITH (HOLDLOCK) ON n.UNICUM_NUM=m.UNICUM_NUM
+                         WHERE """ + FolioPreorderRule.PREDICATE + " AND n.DATE_P_POR >= ? AND n.DATE_P_POR < ?"
+                        + " AND m.ID_SCLAD IN (" + placeholders(analysisWarehouses.size()) + ") AND m.NAME_PREDM IN ("
+                        + skuPlaceholders(part.size()) + ") AND m.KOLC_PREDM > 0 AND ISNULL(m.VOZVRAT_PR,0)=0"
+                        + " ORDER BY m.ID_SCLAD, m.NAME_PREDM, m.UNICUM_NUM, m.RECNO");
+                p.setQueryTimeout(15); int n = 1;
+                p.setTimestamp(n++, Timestamp.valueOf(preorderAsOfDate.minusMonths(6).atStartOfDay()));
+                p.setTimestamp(n++, Timestamp.valueOf(preorderAsOfDate.plusDays(1).atStartOfDay()));
+                for (int id : analysisWarehouses) p.setInt(n++, id); for (String sku : part) p.setString(n++, sku); return p;
+            }, (RowCallbackHandler) rs -> {
+                long document = rs.getLong("UNICUM_NUM"), line = rs.getLong("RECNO");
+                BigDecimal quantity = rs.getBigDecimal("KOLC_PREDM");
+                if (document <= 0 || line <= 0 || quantity == null || quantity.signum() <= 0 || !preorderLines.add(line))
+                    throw new IllegalStateException("Invalid or duplicate preorder line");
+                preorders.add(new PreorderReservation(FolioAssemblyGraph.key(rs.getString("NAME_PREDM")), rs.getInt("ID_SCLAD"), document, line, quantity));
+            });
         }
         List<Card> complete = new ArrayList<>();
         for (String sku : skus) for (int id : warehouses) {
@@ -99,8 +128,9 @@ public class FolioCurrentNetworkStockDao {
             complete.add(new Card(sku, id, status, card.physicalQuantity(), card.availableQuantity(), card.reservedQuantity(), card.orderPolicy(), refs));
         }
         // All read locks remain held here: there is one serializable source cut across every batch.
-        return new Capture(true, 1, UUID.randomUUID().toString(), database, "FOLIO_SERIALIZABLE_READ",
-                started.toString(), Instant.now().toString(), List.copyOf(warehouses), List.copyOf(analysisWarehouses), graph, complete);
+        return new Capture(true, 2, UUID.randomUUID().toString(), database, "FOLIO_SERIALIZABLE_READ",
+                started.toString(), Instant.now().toString(), List.copyOf(warehouses), List.copyOf(analysisWarehouses), preorderAsOfDate.toString(),
+                graph, complete, List.copyOf(preorders));
     }
     private void readRows(org.springframework.jdbc.core.PreparedStatementCreator creator, RowCallbackHandler rows) {
         jdbc.query(creator, FolioCurrentNetworkStockDao::boundQueryTimeout,

@@ -5,6 +5,7 @@ import org.springframework.jdbc.core.*;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.sql.*;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -14,7 +15,7 @@ class FolioCurrentNetworkStockDaoTest {
     @AfterEach void clearTransaction() { TransactionSynchronizationManager.clear(); }
     @Test void rejectsReadWithoutAnActualSerializableReadOnlyTransaction() {
         var jdbc = mock(JdbcTemplate.class); var assembly = mock(FolioAssemblyDao.class);
-        assertThrows(IllegalStateException.class, () -> new FolioCurrentNetworkStockDao(jdbc, assembly).read("Paint_Ua", List.of(7), List.of(7), List.of("P")));
+        assertThrows(IllegalStateException.class, () -> new FolioCurrentNetworkStockDao(jdbc, assembly).read("Paint_Ua", List.of(7), List.of(7), List.of("P"), LocalDate.of(2026, 10, 14)));
         verifyNoInteractions(jdbc, assembly);
     }
     @Test void retainsAShorterRemainingTransactionDeadline() throws Exception {
@@ -30,7 +31,7 @@ class FolioCurrentNetworkStockDaoTest {
             inv.<PreparedStatementSetter>getArgument(1).setValues(ps); verify(ps).setQueryTimeout(3);
             return null;
         }).when(jdbc).query(any(PreparedStatementCreator.class), any(PreparedStatementSetter.class), any(ResultSetExtractor.class));
-        var capture = new FolioCurrentNetworkStockDao(jdbc, assembly).read("Paint_Ua", List.of(7), List.of(7), List.of("P"));
+        var capture = new FolioCurrentNetworkStockDao(jdbc, assembly).read("Paint_Ua", List.of(7), List.of(7), List.of("P"), LocalDate.of(2026, 10, 14));
         assertEquals("SKU_NOT_PRESENT", capture.cards().get(0).status());
     }
     @Test void emitsAnExplicitMissingCardAndRestoresOnlyCurrentInternalSourceReserves() throws Exception {
@@ -49,6 +50,10 @@ class FolioCurrentNetworkStockDaoTest {
         when(account.getLong("UNICUM_NUM")).thenReturn(123L); when(account.getString("TYPDOCM_PR")).thenReturn("С"); when(account.getString("TYPE_DOC")).thenReturn("С");
         when(account.getString("OPERATION_KIND")).thenReturn("*ПЕРЕМЕЩЕНИЕ"); when(account.getBoolean("LINE_ACCOUNTED")).thenReturn(true); when(account.getBoolean("HEADER_ACCOUNTED")).thenReturn(true);
         when(account.getBigDecimal("KOLC_PREDM")).thenReturn(new BigDecimal("6"));
+        var preorder = mock(ResultSet.class);
+        when(preorder.getString("NAME_PREDM")).thenReturn("P"); when(preorder.getInt("ID_SCLAD")).thenReturn(7);
+        when(preorder.getLong("UNICUM_NUM")).thenReturn(555L); when(preorder.getLong("RECNO")).thenReturn(777L);
+        when(preorder.getBigDecimal("KOLC_PREDM")).thenReturn(new BigDecimal("4"));
         List<String> queries = new ArrayList<>();
         doAnswer(inv -> {
             var con = mock(Connection.class); var ps = mock(PreparedStatement.class); when(ps.getQueryTimeout()).thenReturn(60);
@@ -58,22 +63,24 @@ class FolioCurrentNetworkStockDaoTest {
             verify(ps, times(2)).setQueryTimeout(15);
             var extractor = inv.<ResultSetExtractor<Void>>getArgument(2);
             if (queries.size() == 1) { when(stock.next()).thenReturn(true, false); extractor.extractData(stock); }
-            else {
+            else if (queries.size() == 2) {
                 when(account.next()).thenReturn(true, false); extractor.extractData(account);
                 when(account.getString("OPERATION_KIND")).thenReturn("*РОЗНИЦА");
                 when(account.next()).thenReturn(true, false); extractor.extractData(account);
-            }
+            } else { when(preorder.next()).thenReturn(true, false); extractor.extractData(preorder); }
             return null;
         }).when(jdbc).query(any(PreparedStatementCreator.class), any(PreparedStatementSetter.class), any(ResultSetExtractor.class));
-        var capture = new FolioCurrentNetworkStockDao(jdbc, assembly).read("Paint_Ua", List.of(7,9), List.of(7), List.of("P"));
-        assertEquals(2, capture.cards().size()); assertEquals("FOLIO_SERIALIZABLE_READ", capture.method());
+        var capture = new FolioCurrentNetworkStockDao(jdbc, assembly).read("Paint_Ua", List.of(7,9), List.of(7), List.of("P"), LocalDate.of(2026, 10, 14));
+        assertEquals(2, capture.cards().size()); assertEquals(2, capture.version()); assertEquals("FOLIO_SERIALIZABLE_READ", capture.method());
         var card = capture.cards().get(0); assertEquals(new BigDecimal("30"), card.reservedQuantity());
         assertEquals(1, card.internalTransferAccounts().size()); assertEquals(new BigDecimal("6"), card.internalTransferAccounts().get(0).quantity());
         assertEquals(7, card.internalTransferAccounts().get(0).sourceWarehouseId());
         assertEquals("SKU_NOT_PRESENT", capture.cards().get(1).status()); assertNull(capture.cards().get(1).availableQuantity());
+        assertEquals(1, capture.preorderReservations().size()); assertEquals(new BigDecimal("4"), capture.preorderReservations().get(0).quantity());
         assertTrue(queries.stream().allMatch(q -> q.startsWith("SELECT") && q.contains("HOLDLOCK") && !q.contains("NOLOCK")));
         assertFalse(queries.get(1).contains("DATE_PREDM"));
         assertTrue(queries.stream().allMatch(q -> q.contains("CAST(? AS varchar(100))")));
         assertTrue(queries.get(1).contains("m.TYPDOCM_PR=CAST(? AS varchar(1))"));
+        assertTrue(queries.get(2).contains(FolioPreorderRule.PREDICATE));
     }
 }
