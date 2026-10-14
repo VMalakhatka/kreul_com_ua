@@ -36,6 +36,28 @@ class FolioCustomerBalanceServiceTest {
     );
 
     @Test
+    void outstandingInvoicesReserveAdvanceWithoutChangingLedgerAndShrinkAfterFulfilment() {
+        var invoice = new org.example.proect.lavka.dto.folio.FolioCustomerBalanceResponse.Preorder(
+                555265L, "555265", LocalDate.of(2026, 7, 21), 7, bd("181000"), "ПРД Предзаказ");
+        var payment = row(0, "ПБ", "PAID", "ПРД Already received", "-159065.94", "0", "159065.94", "2026-08-01", null);
+        var full = new ProcedureResult("A", "A", bd("0"), bd("0"), null, List.of(payment), List.of(invoice));
+        var month = new ProcedureResult("A", "A", bd("-159065.94"), bd("0"), null, List.of(), List.of(invoice));
+        var total = FolioCustomerBalanceCalculator.calculate(full, AS_OF, false).summary();
+        var detail = FolioCustomerBalanceCalculator.calculate(month, AS_OF, true).summary();
+        assertThat(total.commonDebt()).isEqualByComparingTo("-159065.94");
+        assertThat(total.prepaymentAmount()).isEqualByComparingTo("181000");
+        assertThat(total.payableNow()).isEqualByComparingTo("21934.06");
+        assertThat(detail.payableNow()).isEqualByComparingTo(total.payableNow());
+        var remaining = new org.example.proect.lavka.dto.folio.FolioCustomerBalanceResponse.Preorder(
+                invoice.documentId(), invoice.documentNumber(), invoice.documentDate(), 7, bd("10000"), invoice.information());
+        var partial = new ProcedureResult("A", "A", bd("-159065.94"), bd("0"), null, List.of(), List.of(remaining));
+        assertThat(FolioCustomerBalanceCalculator.calculate(partial, AS_OF, false).summary().payableNow())
+                .isEqualByComparingTo("-149065.94");
+        var closed = new ProcedureResult("A", "A", bd("-159065.94"), bd("0"), null, List.of());
+        assertThat(FolioCustomerBalanceCalculator.calculate(closed, AS_OF, false).summary().prepaymentAmount()).isZero();
+    }
+
+    @Test
     void calculatesWorkbookTotalsAndClassifications() {
         FolioCustomerBalanceDao dao = mock(FolioCustomerBalanceDao.class);
         when(dao.load(eq("КЛИЕНТ"), any(), any(), anyList(), anyBoolean()))
@@ -69,7 +91,7 @@ class FolioCustomerBalanceServiceTest {
         assertThat(response.summary().commonDebt()).isEqualByComparingTo("950");
         assertThat(response.summary().deferredAmount()).isEqualByComparingTo("1000");
         assertThat(response.summary().overdueDeferredAmount()).isEqualByComparingTo("400");
-        assertThat(response.summary().prepaymentAmount()).isEqualByComparingTo("500");
+        assertThat(response.summary().prepaymentAmount()).isZero();
         assertThat(response.summary().payableNow()).isEqualByComparingTo("-50");
 
         assertThat(response.rows()).hasSize(6);
@@ -98,7 +120,7 @@ class FolioCustomerBalanceServiceTest {
         assertThat(snapshot.commonDebt()).isEqualByComparingTo("3449.29");
         assertThat(snapshot.payableNow()).isEqualByComparingTo(detail.summary().payableNow());
         assertThat(detail.summary().commonDebt()).isEqualByComparingTo("3449.29");
-        assertThat(snapshot.prepaymentAmount()).isEqualByComparingTo("169892");
+        assertThat(snapshot.prepaymentAmount()).isZero();
         assertThat(detail.summary().prepaymentAmount()).isEqualByComparingTo("0");
         assertThat(detail.rows().get(detail.rows().size() - 1).balanceAfter()).isEqualByComparingTo(snapshot.commonDebt());
     }
@@ -193,7 +215,7 @@ class FolioCustomerBalanceServiceTest {
         assertThat(response.summary().payableNow()).isEqualByComparingTo(canonical.payableNow());
         assertThat(response.summary().prepaymentAmount()).isZero();
         assertThat(response.summary().bankPaymentTotal()).isEqualByComparingTo("30816.88");
-        assertThat(canonical.prepaymentAmount()).isEqualByComparingTo("1000");
+        assertThat(canonical.prepaymentAmount()).isZero();
         assertThat(canonical.bankPaymentTotal()).isEqualByComparingTo("31816.88");
         assertThat(response.rows()).hasSize(3);
         verify(snapshot).updateActiveClient(AS_OF, "A", "Client", canonical);

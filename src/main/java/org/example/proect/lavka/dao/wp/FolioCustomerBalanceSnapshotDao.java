@@ -37,8 +37,8 @@ public class FolioCustomerBalanceSnapshotDao {
         jdbc.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO folio_balance_snapshot_generation
-                        (status, trigger_source, as_of_date, started_at, last_heartbeat_at)
-                    VALUES ('BUILDING', ?, ?, ?, ?)
+                        (status, trigger_source, as_of_date, started_at, last_heartbeat_at, calculation_version)
+                    VALUES ('BUILDING', ?, ?, ?, ?, 2)
                     """, Statement.RETURN_GENERATED_KEYS);
             statement.setString(1, triggerSource);
             statement.setObject(2, asOfDate);
@@ -115,6 +115,7 @@ public class FolioCustomerBalanceSnapshotDao {
                 JOIN folio_balance_snapshot_live_client l
                  ON l.partner_short_name = c.partner_short_name
                  AND l.as_of_date = g.as_of_date
+                 AND l.calculation_version = g.calculation_version
                  AND l.calculated_at >= g.started_at
                  AND l.calculated_at >= c.calculated_at
                 SET c.partner_name = l.partner_name,
@@ -188,7 +189,7 @@ public class FolioCustomerBalanceSnapshotDao {
                 SELECT g.id, g.status, g.as_of_date, g.started_at, g.completed_at, g.total_clients
                 FROM folio_balance_snapshot_state s
                 JOIN folio_balance_snapshot_generation g ON g.id = s.active_generation_id
-                WHERE s.id = 1
+                WHERE s.id = 1 AND g.calculation_version = 2
                 """, (rs, rowNum) -> new ActiveSnapshot(
                 rs.getLong("id"),
                 rs.getString("status"),
@@ -318,17 +319,18 @@ public class FolioCustomerBalanceSnapshotDao {
                 INSERT INTO folio_balance_snapshot_live_client (
                     partner_short_name, as_of_date, partner_name,
                     common_debt, deferred_amount, overdue_deferred_amount,
-                    prepayment_amount, payable_now, calculated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    prepayment_amount, payable_now, calculated_at, calculation_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 2)
                 ON DUPLICATE KEY UPDATE
-                    as_of_date = IF(VALUES(calculated_at) >= calculated_at, VALUES(as_of_date), as_of_date),
-                    partner_name = IF(VALUES(calculated_at) >= calculated_at, VALUES(partner_name), partner_name),
-                    common_debt = IF(VALUES(calculated_at) >= calculated_at, VALUES(common_debt), common_debt),
-                    deferred_amount = IF(VALUES(calculated_at) >= calculated_at, VALUES(deferred_amount), deferred_amount),
-                    overdue_deferred_amount = IF(VALUES(calculated_at) >= calculated_at, VALUES(overdue_deferred_amount), overdue_deferred_amount),
-                    prepayment_amount = IF(VALUES(calculated_at) >= calculated_at, VALUES(prepayment_amount), prepayment_amount),
-                    payable_now = IF(VALUES(calculated_at) >= calculated_at, VALUES(payable_now), payable_now),
-                    calculated_at = GREATEST(calculated_at, VALUES(calculated_at))
+                    as_of_date = IF((calculation_version <> 2 OR VALUES(calculated_at) >= calculated_at), VALUES(as_of_date), as_of_date),
+                    partner_name = IF((calculation_version <> 2 OR VALUES(calculated_at) >= calculated_at), VALUES(partner_name), partner_name),
+                    common_debt = IF((calculation_version <> 2 OR VALUES(calculated_at) >= calculated_at), VALUES(common_debt), common_debt),
+                    deferred_amount = IF((calculation_version <> 2 OR VALUES(calculated_at) >= calculated_at), VALUES(deferred_amount), deferred_amount),
+                    overdue_deferred_amount = IF((calculation_version <> 2 OR VALUES(calculated_at) >= calculated_at), VALUES(overdue_deferred_amount), overdue_deferred_amount),
+                    prepayment_amount = IF((calculation_version <> 2 OR VALUES(calculated_at) >= calculated_at), VALUES(prepayment_amount), prepayment_amount),
+                    payable_now = IF((calculation_version <> 2 OR VALUES(calculated_at) >= calculated_at), VALUES(payable_now), payable_now),
+                    calculated_at = IF(calculation_version <> 2, VALUES(calculated_at), GREATEST(calculated_at, VALUES(calculated_at))),
+                    calculation_version = 2
                 """,
                 partnerShortName,
                 asOfDate,
@@ -346,6 +348,7 @@ public class FolioCustomerBalanceSnapshotDao {
                   ON g.id = c.generation_id
                  AND g.as_of_date = ?
                  AND g.status IN ('ACTIVE', 'BUILDING')
+                 AND g.calculation_version = 2
                 SET c.partner_name = ?,
                     c.common_debt = ?,
                     c.deferred_amount = ?,

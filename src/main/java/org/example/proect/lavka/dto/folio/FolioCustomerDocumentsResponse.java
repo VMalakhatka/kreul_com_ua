@@ -26,8 +26,12 @@ public record FolioCustomerDocumentsResponse(
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
             LocalDate dateTo,
             List<FolioCustomerDocumentType> types,
-            int limit
+            int limit,
+            boolean preordersOnly
     ) {
+        public Filters(LocalDate dateFrom, LocalDate dateTo, List<FolioCustomerDocumentType> types, int limit) {
+            this(dateFrom, dateTo, types, limit, false);
+        }
     }
 
     public record DocumentSummary(

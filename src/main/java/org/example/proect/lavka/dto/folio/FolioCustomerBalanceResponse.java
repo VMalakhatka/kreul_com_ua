@@ -13,8 +13,21 @@ public record FolioCustomerBalanceResponse(
         Filters filters,
         Summary summary,
         List<Row> rows,
-        List<Warning> warnings
+        List<Warning> warnings,
+        List<Preorder> preorders
 ) {
+    @com.fasterxml.jackson.annotation.JsonProperty("calculationVersion")
+    public int calculationVersion() { return 2; }
+
+    public FolioCustomerBalanceResponse(boolean ok, Partner partner, Filters filters, Summary summary,
+            List<Row> rows, List<Warning> warnings) {
+        this(ok, partner, filters, summary, rows, warnings, List.of());
+    }
+
+    public record Preorder(long documentId, String documentNumber,
+            @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd") LocalDate documentDate,
+            Integer warehouseId, BigDecimal amount, String information) {}
+
     public record Partner(String shortName, String name) {
     }
 

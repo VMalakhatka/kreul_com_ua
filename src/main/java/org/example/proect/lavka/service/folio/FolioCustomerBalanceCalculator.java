@@ -39,7 +39,8 @@ final class FolioCustomerBalanceCalculator {
         BigDecimal cashPaymentTotal = ZERO;
         BigDecimal deferredTotal = ZERO;
         BigDecimal overdueDeferredTotal = ZERO;
-        BigDecimal prepaymentTotal = ZERO;
+        BigDecimal prepaymentTotal = procedure.preorders().stream()
+                .map(FolioCustomerBalanceResponse.Preorder::amount).reduce(ZERO, BigDecimal::add);
 
         List<FolioCustomerBalanceResponse.Row> rows = includeRows ? new ArrayList<>() : List.of();
         if (includeRows) {
@@ -79,7 +80,7 @@ final class FolioCustomerBalanceCalculator {
             cashPaymentTotal = cashPaymentTotal.add(amounts.cashPayment());
             deferredTotal = deferredTotal.add(deferredAmount);
             overdueDeferredTotal = overdueDeferredTotal.add(overdueDeferredAmount);
-            prepaymentTotal = prepaymentTotal.add(prepaymentAmount);
+            // Payment markers are audit details only; reserve comes from outstanding invoices.
 
             if (includeRows) {
                 rows.add(new FolioCustomerBalanceResponse.Row(
@@ -120,7 +121,7 @@ final class FolioCustomerBalanceCalculator {
         // PRD classifies received payments; it does not reverse their ledger effect.
         // Adding historical PRD totals back makes debt depend on dateFrom.
         BigDecimal commonDebt = accountingBalance;
-        BigDecimal payableNow = commonDebt.subtract(deferredTotal);
+        BigDecimal payableNow = commonDebt.subtract(deferredTotal).add(prepaymentTotal);
 
         var summary = new FolioCustomerBalanceResponse.Summary(
                 openingBalance,

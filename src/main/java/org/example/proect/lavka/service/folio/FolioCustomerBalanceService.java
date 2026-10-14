@@ -86,7 +86,8 @@ public class FolioCustomerBalanceService {
                 ),
                 calculation.summary(),
                 calculation.rows(),
-                standardWarnings(currentDate, warnings)
+                standardWarnings(currentDate, warnings),
+                procedure.preorders()
         );
     }
 

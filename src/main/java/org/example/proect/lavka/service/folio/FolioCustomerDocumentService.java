@@ -56,6 +56,12 @@ public class FolioCustomerDocumentService {
             String types,
             Integer limit,
             String cursor) {
+        return list(partnerShortName, dateFrom, dateTo, types, limit, cursor, false);
+    }
+
+    @Transactional(transactionManager = "mssqlTransactionManager", readOnly = true)
+    public FolioCustomerDocumentsResponse list(String partnerShortName, LocalDate dateFrom, LocalDate dateTo,
+            String types, Integer limit, String cursor, boolean preordersOnly) {
         String partnerId = normalizePartnerShortName(partnerShortName);
         PartnerRow partner = findPartner(partnerId);
         LocalDate today = LocalDate.now(clock);
@@ -63,13 +69,21 @@ public class FolioCustomerDocumentService {
         LocalDate normalizedFrom = dateFrom == null
                 ? normalizedTo.minusYears(1).plusDays(1)
                 : dateFrom;
-        validatePeriod(normalizedFrom, normalizedTo, today);
-        List<FolioCustomerDocumentType> normalizedTypes = normalizeTypes(types);
+        if (preordersOnly) {
+            normalizedFrom = normalizedTo.minusMonths(6);
+            validatePeriod(normalizedTo, normalizedTo, today);
+        } else {
+            validatePeriod(normalizedFrom, normalizedTo, today);
+        }
+        List<FolioCustomerDocumentType> normalizedTypes = preordersOnly
+                ? List.of(FolioCustomerDocumentType.ACCOUNT) : normalizeTypes(types);
         int normalizedLimit = normalizeLimit(limit);
         DocumentCursor decodedCursor = decodeCursor(cursor);
         validateCursor(decodedCursor, normalizedFrom, normalizedTo, normalizedTypes);
 
-        List<FolioCustomerDocumentsResponse.DocumentSummary> fetched = dao.findDocuments(
+        List<FolioCustomerDocumentsResponse.DocumentSummary> fetched = preordersOnly ? dao.findDocuments(
+                partnerId, normalizedFrom, normalizedTo, normalizedTypes, normalizedLimit + 1, decodedCursor, true
+        ) : dao.findDocuments(
                 partnerId,
                 normalizedFrom,
                 normalizedTo,
@@ -89,7 +103,7 @@ public class FolioCustomerDocumentService {
                 true,
                 new FolioCustomerDocumentsResponse.Partner(partner.shortName(), partner.name()),
                 new FolioCustomerDocumentsResponse.Filters(
-                        normalizedFrom, normalizedTo, normalizedTypes, normalizedLimit
+                        normalizedFrom, normalizedTo, normalizedTypes, normalizedLimit, preordersOnly
                 ),
                 page,
                 nextCursor,

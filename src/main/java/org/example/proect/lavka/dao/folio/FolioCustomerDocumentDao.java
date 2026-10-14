@@ -44,6 +44,13 @@ public class FolioCustomerDocumentDao {
             List<FolioCustomerDocumentType> types,
             int fetchLimit,
             DocumentCursor cursor) {
+        return findDocuments(partnerShortName, dateFrom, dateTo, types, fetchLimit, cursor, false);
+    }
+
+    public List<FolioCustomerDocumentsResponse.DocumentSummary> findDocuments(
+            String partnerShortName, LocalDate dateFrom, LocalDate dateTo,
+            List<FolioCustomerDocumentType> types, int fetchLimit, DocumentCursor cursor, boolean preordersOnly) {
+        if (preordersOnly) types = List.of(FolioCustomerDocumentType.ACCOUNT);
         StringBuilder union = new StringBuilder();
         List<Object> params = new ArrayList<>();
         Timestamp from = Timestamp.valueOf(dateFrom.atStartOfDay());
@@ -60,6 +67,7 @@ public class FolioCustomerDocumentDao {
                 params.add(toExclusive);
             } else {
                 union.append(stockDocumentSummarySql(type));
+                if (preordersOnly) union.append(" AND " + FolioPreorderRule.PREDICATE);
                 params.add(partnerShortName);
                 params.add(type.folioType());
                 params.add(from);

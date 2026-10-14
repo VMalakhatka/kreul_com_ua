@@ -34,6 +34,25 @@ class FolioCustomerDocumentServiceTest {
     );
 
     @Test
+    void preorderFilterUsesSixCalendarMonthsAndAppliesBeforePagination() {
+        FolioCustomerDocumentDao dao = mock(FolioCustomerDocumentDao.class);
+        when(dao.findPartner("A")).thenReturn(Optional.of(new PartnerRow("A", "Client")));
+        var oldest = summary(FolioCustomerDocumentType.ACCOUNT, 1, LocalDateTime.of(2026, 3, 1, 0, 0));
+        var latest = summary(FolioCustomerDocumentType.ACCOUNT, 2, LocalDateTime.of(2026, 7, 1, 0, 0));
+        when(dao.findDocuments("A", LocalDate.of(2026, 2, 14), LocalDate.of(2026, 8, 14),
+                List.of(FolioCustomerDocumentType.ACCOUNT), 2, null, true)).thenReturn(List.of(latest, oldest));
+        var result = new FolioCustomerDocumentService(dao, CLOCK).list("A", LocalDate.of(2026, 8, 1),
+                null, "PAYMENT", 1, null, true);
+        assertThat(result.filters().preordersOnly()).isTrue();
+        assertThat(result.filters().dateFrom()).isEqualTo(LocalDate.of(2026, 2, 14));
+        assertThat(result.documents()).containsExactly(latest);
+        assertThat(result.hasMore()).isTrue();
+        assertThat(result.nextCursor()).isNotBlank();
+        verify(dao).findDocuments("A", LocalDate.of(2026, 2, 14), LocalDate.of(2026, 8, 14),
+                List.of(FolioCustomerDocumentType.ACCOUNT), 2, null, true);
+    }
+
+    @Test
     void returnsLimitedPageAndOpaqueCursor() {
         FolioCustomerDocumentDao dao = mock(FolioCustomerDocumentDao.class);
         when(dao.findPartner("КЛИЕНТ")).thenReturn(Optional.of(new PartnerRow("КЛИЕНТ", "Клиент")));

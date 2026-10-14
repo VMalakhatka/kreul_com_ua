@@ -17,6 +17,9 @@ public record FolioCustomerDebtorsResponse(
         List<DebtorsIssue> warnings,
         List<DebtorsIssue> errors
 ) {
+    @com.fasterxml.jackson.annotation.JsonProperty("calculationVersion")
+    public int calculationVersion() { return 2; }
+
     public record DebtorsFilters(
             BigDecimal minPayable,
             String q,

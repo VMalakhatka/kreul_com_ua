@@ -42,9 +42,10 @@ public class FolioCustomerDocumentController {
             @Parameter(description = "Размер страницы от 1 до 100")
             @RequestParam(required = false) Integer limit,
             @Parameter(description = "Непрозрачный nextCursor из предыдущего ответа")
-            @RequestParam(required = false) String cursor) {
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "false") boolean preordersOnly) {
         return ResponseEntity.ok(service.list(
-                partnerShortName, dateFrom, dateTo, types, limit, cursor
+                partnerShortName, dateFrom, dateTo, types, limit, cursor, preordersOnly
         ));
     }
 

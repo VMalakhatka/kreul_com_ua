@@ -1,6 +1,7 @@
 package org.example.proect.lavka.dao.folio;
 
 import com.zaxxer.hikari.HikariDataSource;
+import org.example.proect.lavka.dto.folio.FolioCustomerBalanceResponse.Preorder;
 import org.example.proect.lavka.service.folio.FolioPartnerNotFoundException;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.UncategorizedSQLException;
@@ -161,8 +162,40 @@ public class FolioCustomerBalanceDao {
                 openingBalance,
                 openingCurrencyBalance,
                 openingCurrencyCode,
-                List.copyOf(rows)
+                List.copyOf(rows),
+                loadPreorders(connection, partnerId, dateTo, warehouseIds)
         );
+    }
+
+    List<Preorder> loadPreorders(
+            Connection connection, String partnerId, LocalDate asOf, List<Integer> warehouses) throws SQLException {
+        String sql = "SELECT n.UNICUM_NUM, n.N_PLAT_POR, n.DATE_P_POR, n.ID_SCLAD, n.SUM_POR, n.L_CP2_PLAT "
+                + "FROM dbo.SCL_NAKL n WITH (NOLOCK) WHERE n.BRIEFORG = ? AND "
+                + FolioPreorderRule.PREDICATE + " AND n.DATE_P_POR >= ? AND n.DATE_P_POR < ?";
+        if (!warehouses.isEmpty()) {
+            sql += " AND NOT EXISTS (SELECT 1 FROM dbo.SCL_MOVE m WITH (NOLOCK)"
+                    + " WHERE m.UNICUM_NUM = n.UNICUM_NUM AND (m.ID_SCLAD IS NULL OR m.ID_SCLAD NOT IN ("
+                    + String.join(",", java.util.Collections.nCopies(warehouses.size(), "?")) + ")))";
+        }
+        sql += " ORDER BY n.DATE_P_POR, n.UNICUM_NUM";
+        var result = new ArrayList<Preorder>();
+        try (var statement = connection.prepareStatement(sql)) {
+            statement.setString(1, partnerId);
+            statement.setTimestamp(2, java.sql.Timestamp.valueOf(asOf.minusMonths(6).atStartOfDay()));
+            statement.setTimestamp(3, java.sql.Timestamp.valueOf(asOf.plusDays(1).atStartOfDay()));
+            for (int i = 0; i < warehouses.size(); i++) statement.setInt(i + 4, warehouses.get(i));
+            try (var rs = statement.executeQuery()) {
+                while (rs.next()) {
+                    var amount = rs.getBigDecimal("SUM_POR");
+                    result.add(new Preorder(
+                            rs.getLong("UNICUM_NUM"), rs.getBigDecimal("N_PLAT_POR") == null ? "" : rs.getBigDecimal("N_PLAT_POR").stripTrailingZeros().toPlainString(),
+                            rs.getTimestamp("DATE_P_POR").toLocalDateTime().toLocalDate(),
+                            rs.getObject("ID_SCLAD") == null ? null : ((Number) rs.getObject("ID_SCLAD")).intValue(), money(amount),
+                            rs.getString("L_CP2_PLAT")));
+                }
+            }
+        }
+        return List.copyOf(result);
     }
 
     private List<PartnerCandidate> findPartnerCandidates(Connection connection,
@@ -387,8 +420,13 @@ public class FolioCustomerBalanceDao {
             BigDecimal openingBalance,
             BigDecimal openingCurrencyBalance,
             String openingCurrencyCode,
-            List<RawRow> rows
+            List<RawRow> rows,
+            List<Preorder> preorders
     ) {
+        public ProcedureResult(String partnerId, String partnerName, BigDecimal openingBalance,
+                BigDecimal openingCurrencyBalance, String openingCurrencyCode, List<RawRow> rows) {
+            this(partnerId, partnerName, openingBalance, openingCurrencyBalance, openingCurrencyCode, rows, List.of());
+        }
     }
 
     public record PartnerCandidate(
