@@ -81,6 +81,7 @@ class FolioCurrentNetworkStockDaoTest {
         assertFalse(queries.get(1).contains("DATE_PREDM"));
         assertTrue(queries.stream().allMatch(q -> q.contains("CAST(? AS varchar(100))")));
         assertTrue(queries.get(1).contains("m.TYPDOCM_PR=CAST(? AS varchar(1))"));
-        assertTrue(queries.get(2).contains(FolioPreorderRule.PREDICATE));
+        assertTrue(queries.get(2).contains("WHERE " + FolioPreorderRule.PREDICATE),
+                "Preorder predicate must be separated from WHERE in the actual prepared SQL");
     }
 }

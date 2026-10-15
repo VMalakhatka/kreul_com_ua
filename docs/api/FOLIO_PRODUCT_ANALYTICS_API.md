@@ -572,3 +572,12 @@ capturedAt14:02:56 UTC; интервал startedAt—capturedAt9,1с. Scope1052�
 аналитической истории остаются на проверке. Ни HTTP-ответы, ни Capture не подменялись.
 Экспорт прошёл свежие recipe/price guards; штатная PHP-модель дала238SKU/3604шт.
 Это acceptance установленного endpoint в дополнение к прежней прямой DAO-проверке.
+
+### Current-stock preorder SQL regression (2026-10-15)
+
+The preorder query explicitly adds a separator between `WHERE` and the shared
+predicate. Java text blocks strip trailing spaces, so a space before their closing
+delimiter is insufficient and produced `WHEREn.TYPE_DOC` on SQL Server.
+The DAO regression test checks the actual prepared SQL boundary. This is a Java-only
+fix; deploy the corrected backend and start a new purchase preview. Incomplete
+previews remain non-exportable; no Folio data or schema changes are required.

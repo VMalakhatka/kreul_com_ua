@@ -100,7 +100,7 @@ public class FolioCurrentNetworkStockDao {
                         SELECT m.NAME_PREDM, m.ID_SCLAD, m.UNICUM_NUM, m.RECNO, m.KOLC_PREDM
                           FROM dbo.SCL_MOVE m WITH (HOLDLOCK)
                           JOIN dbo.SCL_NAKL n WITH (HOLDLOCK) ON n.UNICUM_NUM=m.UNICUM_NUM
-                         WHERE """ + FolioPreorderRule.PREDICATE + " AND n.DATE_P_POR >= ? AND n.DATE_P_POR < ?"
+                         WHERE""" + " " + FolioPreorderRule.PREDICATE + " AND n.DATE_P_POR >= ? AND n.DATE_P_POR < ?"
                         + " AND m.ID_SCLAD IN (" + placeholders(analysisWarehouses.size()) + ") AND m.NAME_PREDM IN ("
                         + skuPlaceholders(part.size()) + ") AND m.KOLC_PREDM > 0 AND ISNULL(m.VOZVRAT_PR,0)=0"
                         + " ORDER BY m.ID_SCLAD, m.NAME_PREDM, m.UNICUM_NUM, m.RECNO");
