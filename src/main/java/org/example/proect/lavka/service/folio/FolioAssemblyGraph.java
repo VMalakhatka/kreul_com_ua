@@ -42,7 +42,9 @@ public final class FolioAssemblyGraph {
         for (String sku : reached) {
             Set<String> issues = new LinkedHashSet<>();
             Set<Integer> flags = roles.getOrDefault(sku, Set.of());
-            if (flags.size() != 1 || flags.stream().anyMatch(f -> f < 0 || f > 12)) issues.add("ASSEMBLY_ROLE_REQUIRED");
+            // Owner rule: missing, invalid or inconsistent BALL4 means ordinary card.
+            // Explicit recipes still determine manufactured children.
+            if (flags.size() != 1 || flags.stream().anyMatch(f -> f < 0 || f > 12)) flags = Set.of(0);
             List<Recipe> recipe = components.getOrDefault(sku, List.of());
             if (recipe.size() > 1 && recipe.get(0).source().equals("ALL_RAZBORKA")) issues.add("ASSEMBLY_DUPLICATE_COMPONENT");
             boolean manufactured = !recipe.isEmpty() || flags.stream().anyMatch(f -> Set.of(3,9,11,12).contains(f));

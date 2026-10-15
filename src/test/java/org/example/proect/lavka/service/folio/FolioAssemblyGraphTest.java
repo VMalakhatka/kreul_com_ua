@@ -16,6 +16,19 @@ class FolioAssemblyGraphTest {
         assertEquals("UNKNOWN",nodes.get("X").coldStatus()); assertEquals("UNKNOWN",nodes.get("U").coldStatus());
         assertNotEquals(graph.revision(),FolioAssemblyGraph.build(List.of("F","N","X","U"),List.of(),roles).revision());
     }
+    @Test void invalidOrMissingRolesDefaultToOrdinaryButRecipesStillWin() {
+        for (Set<Integer> flags : List.of(Set.<Integer>of(), Set.of(-1), Set.of(13), Set.of(0,3))) {
+            var ordinary = FolioAssemblyGraph.build(List.of("P"), List.of(), Map.of("P", flags)).nodes().get(0);
+            assertFalse(ordinary.manufactured());
+            assertTrue(ordinary.issues().isEmpty());
+            var graph = FolioAssemblyGraph.build(List.of("P"), List.of(r(false,"1","P","C","5")),
+                    Map.of("P", flags, "C", flags));
+            var child = graph.nodes().stream().filter(n -> n.sku().equals("C")).findFirst().orElseThrow();
+            assertTrue(child.manufactured());
+            assertTrue(child.issues().isEmpty());
+            assertEquals(0, new BigDecimal("0.2").compareTo(graph.edges().get(0).factor()));
+        }
+    }
     private FolioAssemblyGraph.Recipe r(boolean complex, String id, String p, String c, String k) {
         return new FolioAssemblyGraph.Recipe(complex ? "ALL_RAZBORKA_SLOJ" : "ALL_RAZBORKA", id, p, c, new BigDecimal(k));
     }
@@ -41,7 +54,7 @@ class FolioAssemblyGraphTest {
         var recipe = List.of(r(false,"1","P","C","4"));
         var graph = FolioAssemblyGraph.build(List.of(" p "), recipe, Map.of("P",Set.of(1),"C",Set.of(3)));
         assertEquals(0, new BigDecimal("0.25").compareTo(graph.edges().get(0).factor()));
-        assertNotEquals(graph.revision(), FolioAssemblyGraph.build(List.of("P"), recipe, Map.of("P",Set.of(1,2),"C",Set.of(3))).revision());
+        assertNotEquals(graph.revision(), FolioAssemblyGraph.build(List.of("P"), recipe, Map.of("P",Set.of(3),"C",Set.of(3))).revision());
     }
     @Test void flagsMissingRecipesSelfReferencesAndDuplicatesNeedReview() {
         var graph = FolioAssemblyGraph.build(List.of("P","MISSING"), List.of(r(true,"1","P","P","1"),r(true,"2","P","P","1")), Map.of("P",Set.of(11),"MISSING",Set.of(9)));

@@ -37,8 +37,13 @@ Those extra components do NOT become nodes/roots and their unrelated consumers
 are not loaded. Root and child identities use trim + uppercase.
 
 `SCL_ARTC.BALL4` is read for closure nodes on selected warehouses. Flags3/9/11/12
-or having any recipe mark a node manufactured. Missing/conflicting/unknown role,
-missing child recipe, empty SKU, coefficient<=0, self-link, duplicate component
+or having any recipe mark a node manufactured. Owner rule (2026-10-15): missing,
+invalid or conflicting BALL4 defaults to ordinary role 0, without a blocking
+ASSEMBLY_ROLE_REQUIRED issue. Explicit recipes still take priority: a child with
+an invalid BALL4 remains manufactured and is never ordered directly. A valid
+child flag without a recipe still requires review. This changes only analytical
+interpretation; no SCL_ARTC values are written. Start a new preview after Java deployment.
+Missing child recipe, empty SKU, coefficient<=0, self-link, duplicate component
 or multiple simple parents are review issues. Invalid edges remain visible with
 null factor, to retain the diagnostic path; WordPress must not use them as zero.
 WordPress topological evaluation detects multi-node cycles and blocks ancestors.
