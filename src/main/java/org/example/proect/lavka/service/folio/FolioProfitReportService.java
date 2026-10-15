@@ -50,7 +50,7 @@ import java.util.Set;
 @Service
 public class FolioProfitReportService {
 
-    private static final String RULE_VERSION = "2026-09-30.1";
+    private static final String RULE_VERSION = "2026-10-15.1";
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(FolioProfitReportService.class);
     private static final String REPORT_CURRENCY = "UAH";
     private static final String MASTER_CLASS_SOURCE = "FOLIO_SCL_NAKL_SCL_MOVE";

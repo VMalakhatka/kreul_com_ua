@@ -32,9 +32,9 @@ final class FolioProfitExpenseLines {
             d("KYIV_ADDITIONAL_SALARY", City.KYIV, Category.SALARY, "Дополнительные работы", "", false, "Не применять на Киеве; 0"),
             d("KYIV_BANK_SERVICES", City.KYIV, Category.BANK_SERVICES, "Услуги банка", "РАСХОДЫ СЕТИ", true, "Все склады кассы и банка, включая 5; полностью Киев", "БАНКОВСК"),
             d("KYIV_TAXES", City.KYIV, Category.TAXES, "Налоги — розница и опт", "НАЛОГИ", false, "Фирмы обоих списков; полностью Киев, без долей работников", "НАЛОГИ"),
-            d("KYIV_IRREGULAR", City.KYIV, Category.IRREGULAR, "Нерегулярные ЧП", "", false, "", "НЕРЕГ КИ"),
+            d("KYIV_HOUSEHOLD", City.KYIV, Category.HOUSEHOLD, "Хозяйственные услуги и расходы", "РАСХОДЫ КИЕВА", true, "Только две точные операции: РАСХОДЫ КИЕВА или РАСХОДЫ КИЕВОПТ; касса и банк всех складов; одна строка без дубля", "НЕРЕГУЛ"),
+            d("KYIV_IRREGULAR", City.KYIV, Category.IRREGULAR, "Нерегулярные ЧП", "", false, "Касса и банк всех складов; тип операции и код назначения не ограничены; относится Киеву независимо от склада оплаты", "НЕРЕГДОН"),
             d("KYIV_ACCOUNTING", City.KYIV, Category.ACCOUNTING_SERVICES, "Бухгалтер", "ОПЛАТА ПОСТАВЩИКУ", false, "Примечание содержит БУХГАЛТЕР; специальное правило до исключения поставщиков", "ВЫХОДЦЕВ"),
-            d("KYIV_HOUSEHOLD", City.KYIV, Category.HOUSEHOLD, "Хозяйственные", "РАСХОДЫ КИЕВА", true, "Фактически операция содержит КИЕВ, не точное равенство", "НЕРЕГУЛ"),
             d("KYIV_ADVERTISING", City.KYIV, Category.ADVERTISING, "Реклама", "", false, "", "РЕКЛАМКИ"),
             d("KYIV_TRANSPORT_UKRAINE", City.KYIV, Category.TRANSPORT_UKRAINE, "Транспорт Украина", "РАСХОДЫ СЕТИ", false, "ТРАНСПКИ — поддерживаемый legacy alias", "ТРАНСПОР", "ТРАНСПКИ"),
             d("KYIV_INTERNET", City.KYIV, Category.INTERNET, "Интернет", "УСЛУГИ СВЯЗИ", false, "", "ИНТЕРНКИ"),
@@ -129,7 +129,10 @@ final class FolioProfitExpenseLines {
             List<Integer> warehouses = List.of();
             List<String> purposes = d.id().equals("KYIV_TAXES") ? java.util.stream.Stream
                     .concat(settings.retailFirmCodes().stream(), settings.wholesaleFirmCodes().stream()).toList() : List.of();
-            ExpenseFilters filters = new ExpenseFilters(d.codes(), d.operation().isEmpty() ? List.of() : List.of(d.operation()),
+            List<String> operations = d.id().equals("KYIV_HOUSEHOLD")
+                    ? List.of("РАСХОДЫ КИЕВА", "РАСХОДЫ КИЕВОПТ")
+                    : d.operation().isEmpty() ? List.of() : List.of(d.operation());
+            ExpenseFilters filters = new ExpenseFilters(d.codes(), operations,
                     purposes, warehouses, warehouses, mode, mode, d.required(),
                     "Точный код после trim/upper: expenseCode ИЛИ purposeCode; не AND. "
                     + "Классификатор выбирает первое совпавшее правило. Тип операции — контрольный, если operationRequired=false. "
