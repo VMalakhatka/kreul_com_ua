@@ -144,6 +144,27 @@ bin/folio-rus-lab procedure-fingerprints
 SQL-aware semantic hash: комментарии и форматирование исключаются, а
 содержимое строковых литералов и quoted identifiers сохраняется.
 
+### Отпечатки платёжных процедур
+
+Для сверки версий штатных процедур платежей доступна отдельная read-only команда:
+
+```sh
+bin/folio-rus-lab payment-procedure-fingerprints
+```
+
+`GET /api/v1/procedure-fingerprints/payments` принимает только bearer-аутентификацию,
+не принимает имя процедуры и возвращает метаданные/хеши фиксированного списка
+`dbo.INSERT_PLAT`, `dbo.i_ins_plat`, `dbo.I_GET_LAST_PLAT_NUM`, `dbo.I_TEST_NUM_PLAT`.
+Используются тот же guard `Paint_Rus` и общий operation gate. Отсутствующий,
+недоступный/пустой или неполный исходник прерывает всю сверку. SQL-текст не
+возвращается и процедуры не исполняются. Запрет `SOURCE_CODE_EXPORT` для SQL API
+не изменён. Хеши служат диагностикой, а не разрешением на запись в ФОЛИО;
+compact/semantic hash сам по себе не доказывает эквивалентность SQL. Перед
+rollback-экспериментом нужны изученные определения и подтверждённые границы отката.
+
+Результат проверки четырёх процедур на копии:
+[2026-10-16 payment fingerprints](../docs/folio-experiments/2026-10-16-payment-procedure-fingerprints.md).
+
 ### Полный безопасный preview учётных цен
 
 После установки в `Paint_Rus` отдельных процедур

@@ -31,11 +31,14 @@ public final class ProcedureFingerprintService {
             "I_UCHET_1_TOVAR",
             "I_UCHET_TOVAR"
     );
+    private static final List<String> PAYMENT_PROCEDURES = List.of(
+            "INSERT_PLAT", "i_ins_plat", "I_GET_LAST_PLAT_NUM", "I_TEST_NUM_PLAT"
+    );
     private static final String SOURCE_SQL = """
             SELECT c.colid, c.text
             FROM dbo.sysobjects o
             JOIN dbo.syscomments c ON c.id = o.id
-            WHERE o.type = 'P' AND o.name = ?
+            WHERE o.type = 'P' AND o.name = ? AND USER_NAME(o.uid) = 'dbo'
             ORDER BY c.colid
             """;
 
@@ -54,6 +57,14 @@ public final class ProcedureFingerprintService {
     }
 
     public ProcedureFingerprintResponse capture() {
+        return capture(ALLOWED_PROCEDURES);
+    }
+
+    public ProcedureFingerprintResponse capturePayments() {
+        return capture(PAYMENT_PROCEDURES);
+    }
+
+    private ProcedureFingerprintResponse capture(List<String> procedureNames) {
         if (!operationGate.tryAcquire()) {
             throw new LabBusyException();
         }
@@ -63,7 +74,7 @@ public final class ProcedureFingerprintService {
             connection.setReadOnly(true);
 
             List<ProcedureFingerprint> fingerprints = new ArrayList<>();
-            for (String procedureName : ALLOWED_PROCEDURES) {
+            for (String procedureName : procedureNames) {
                 fingerprints.add(captureOne(connection, procedureName));
             }
 
@@ -106,8 +117,8 @@ public final class ProcedureFingerprintService {
                         throw new SQLException("Non-contiguous syscomments fragments for " + procedureName);
                     }
                     String fragment = rows.getString("text");
-                    if (fragment == null) {
-                        throw new SQLException("NULL syscomments fragment for " + procedureName);
+                    if (fragment == null || fragment.isBlank()) {
+                        throw new SQLException("Unavailable syscomments fragment for " + procedureName);
                     }
                     source.append(fragment);
                     String normalizedFragment = normalizeLineEndings(fragment);
