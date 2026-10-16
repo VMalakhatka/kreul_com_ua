@@ -38,6 +38,7 @@ IMPACT_RULES = (
         (
             "src/main/java/**/service/folio/**",
             "src/main/java/**/dao/folio/**",
+            "src/main/java/**/folio/payment/**",
         ),
         (
             "docs/api/**",
