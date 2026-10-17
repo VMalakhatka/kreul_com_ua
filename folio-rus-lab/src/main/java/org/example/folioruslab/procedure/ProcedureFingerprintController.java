@@ -32,4 +32,14 @@ public final class ProcedureFingerprintController {
     public ProcedureFingerprintResponse accountingPrices() {
         return service.capture();
     }
+
+    @GetMapping("/payments")
+    @Operation(
+            summary = "Получить отпечатки четырёх штатных платёжных процедур",
+            description = "Только INSERT_PLAT, i_ins_plat, I_GET_LAST_PLAT_NUM, I_TEST_NUM_PLAT; "
+                    + "исходный SQL не возвращается, процедуры не выполняются."
+    )
+    public ProcedureFingerprintResponse payments() {
+        return service.capturePayments();
+    }
 }

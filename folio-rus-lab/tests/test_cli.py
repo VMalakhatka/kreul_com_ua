@@ -56,6 +56,24 @@ class FakeResponse:
 
 
 class FolioRusLabCliOutcomeTest(unittest.TestCase):
+    def test_fingerprint_commands_use_fixed_read_only_authenticated_routes(self) -> None:
+        for command, route in (
+            ("procedure-fingerprints", "accounting-prices"),
+            ("payment-procedure-fingerprints", "payments"),
+        ):
+            with (
+                self.subTest(command=command),
+                patch.object(sys, "argv", ["folio-rus-lab", command]),
+                patch.object(cli, "bearer_token", return_value="test-only-token"),
+                patch.object(cli, "request_json", return_value=(200, {"procedures": []})) as request,
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(0, cli.main())
+                args, kwargs = request.call_args
+                self.assertEqual("/api/v1/procedure-fingerprints/" + route, args[1])
+                self.assertEqual("test-only-token", kwargs["token"])
+                self.assertNotIn("payload", kwargs)
+
     def setUp(self) -> None:
         self.token = "cli-test-" + ("T" * 64)
         self.sql_marker = "PRIVATE_SQL_PAYLOAD_MUST_NOT_BE_PRINTED"

@@ -1,6 +1,9 @@
 package org.example.folioruslab.web;
 
 import org.example.folioruslab.config.LabProperties;
+import org.example.folioruslab.procedure.ProcedureFingerprintController;
+import org.example.folioruslab.procedure.ProcedureFingerprintService;
+import org.example.folioruslab.procedure.ProcedureFingerprintResponse;
 import org.example.folioruslab.security.BearerTokenAuthenticationFilter;
 import org.example.folioruslab.security.SecurityConfig;
 import org.junit.jupiter.api.AfterAll;
@@ -65,6 +68,29 @@ class FolioRusLabWebSecurityTest {
     @BeforeEach
     void resetService() {
         recordingLabService.reset();
+        org.mockito.Mockito.reset(context.getBean(ProcedureFingerprintService.class));
+    }
+
+    @Test
+    void paymentFingerprintsRequireTokenAndExposeOnlyFixedGetRoute() throws Exception {
+        var service = context.getBean(ProcedureFingerprintService.class);
+        mockMvc.perform(get("/api/v1/procedure-fingerprints/payments"))
+                .andExpect(status().isUnauthorized());
+        org.mockito.Mockito.verifyNoInteractions(service);
+        org.mockito.Mockito.when(service.capturePayments()).thenReturn(
+                new ProcedureFingerprintResponse("Paint_Rus", java.time.OffsetDateTime.now(), java.util.List.of()));
+        mockMvc.perform(get("/api/v1/procedure-fingerprints/payments")
+                        .header("Authorization", "Bearer " + LAB_AUTHENTICATOR))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.database").value("Paint_Rus"));
+        org.mockito.Mockito.verify(service).capturePayments();
+        mockMvc.perform(get("/api/v1/procedure-fingerprints/INSERT_PLAT")
+                        .header("Authorization", "Bearer " + LAB_AUTHENTICATOR))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/v1/procedure-fingerprints/payments")
+                        .header("Authorization", "Bearer " + LAB_AUTHENTICATOR))
+                .andExpect(status().isMethodNotAllowed());
+        org.mockito.Mockito.verifyNoMoreInteractions(service);
     }
 
     @Test
@@ -143,6 +169,16 @@ class FolioRusLabWebSecurityTest {
     @EnableWebSecurity
     @Import(SecurityConfig.class)
     static class SecurityTestConfiguration {
+
+        @Bean
+        ProcedureFingerprintService procedureFingerprintService() {
+            return org.mockito.Mockito.mock(ProcedureFingerprintService.class);
+        }
+
+        @Bean
+        ProcedureFingerprintController procedureFingerprintController(ProcedureFingerprintService service) {
+            return new ProcedureFingerprintController(service);
+        }
 
         @Bean
         LabProperties labProperties() {

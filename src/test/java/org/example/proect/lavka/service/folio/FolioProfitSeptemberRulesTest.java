@@ -49,9 +49,9 @@ class FolioProfitSeptemberRulesTest {
             payments.add(payment(++id,code,"РАСХОДЫ ОДЕССЫ",5,false));
         when(dao.findPaymentCandidates(any(),any(),anyString())).thenReturn(payments);
         var report = service.calculate(request,true);
-        assertThat(report.cities().get(0).operatingExpenses()).isEqualByComparingTo("100");
+        assertThat(report.cities().get(0).operatingExpenses()).isEqualByComparingTo("110");
         assertThat(report.cities().get(1).operatingExpenses()).isEqualByComparingTo("20");
-        assertThat(report.controls().unclassifiedDocumentCount()).isEqualTo(6);
+        assertThat(report.controls().unclassifiedDocumentCount()).isEqualTo(5); // НЕРЕГДОН cash belongs to Kyiv, not an Odesa alias.
         assertThat(report.complete()).isFalse();
         assertThat(report.expenseLines()).filteredOn(l -> l.lineId().equals("KYIV_BANK_SERVICES")).singleElement().satisfies(l -> {
             assertThat(l.documentCount()).isEqualTo(10);

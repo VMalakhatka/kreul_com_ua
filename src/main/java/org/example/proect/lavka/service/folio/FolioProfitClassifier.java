@@ -72,11 +72,11 @@ public class FolioProfitClassifier {
             if (contains(documentClass, "ОДЕСС")) {
                 return operating(row, City.ODESA, Category.HOUSEHOLD);
             }
-            if (contains(documentClass, "КИЕВ")) {
+            if (documentClass.equals("РАСХОДЫ КИЕВА") || documentClass.equals("РАСХОДЫ КИЕВОПТ")) {
                 return operating(row, City.KYIV, Category.HOUSEHOLD);
             }
         }
-        if (hasCode(row, "НЕРЕГ КИ")) {
+        if (hasCode(row, "НЕРЕГДОН")) {
             return operating(row, City.KYIV, Category.IRREGULAR);
         }
         if (hasCode(row, "НЕРЕГ ОД") && documentClass.equals("РАСХОДЫ СЕТИ")) {

@@ -1,0 +1,87 @@
+SET NOCOUNT ON
+IF DB_NAME()<>'Paint_Rus' BEGIN RAISERROR('Wrong database',16,1) RETURN END
+IF @@TRANCOUNT<1 BEGIN RAISERROR('External lab transaction required',16,1) RETURN END
+DECLARE @outer_tx int,@warehouse int,@line int,@payment int,@number int,@ret int,
+ @name varchar(20),@qty float,@required float,@position smallint
+SELECT @outer_tx=@@TRANCOUNT,@payment=NULL,@number=NULL
+IF EXISTS(SELECT 1 FROM dbo._PARTNER WHERE N_USER='TSTWFP16')
+ OR EXISTS(SELECT 1 FROM dbo.ALL_ARTC WHERE COD_ARTIC='TST-WFP-20261016')
+ OR EXISTS(SELECT 1 FROM dbo.SCL_ARTC WHERE COD_ARTIC='TST-WFP-20261016')
+ OR EXISTS(SELECT 1 FROM dbo.SCL_NAKL WHERE UNICUM_NUM=-16102601)
+ OR EXISTS(SELECT 1 FROM dbo.SCL_ADDN WHERE UNICUM_NUM=-16102601)
+ OR EXISTS(SELECT 1 FROM dbo.SCL_MOVE WHERE UNICUM_NUM=-16102601 OR NAME_PREDM='TST-WFP-20261016')
+ OR EXISTS(SELECT 1 FROM dbo.TMP_MOVE WHERE UNICUM_NUM=-16102601)
+ OR EXISTS(SELECT 1 FROM dbo.SCL_PLAT WHERE ORG_PREDM='TSTWFP16' OR DOCUMN_POR='TST-WFP-20261016')
+ OR EXISTS(SELECT 1 FROM dbo.SCL_PMOV WHERE ORG_PREDM='TSTWFP16' OR UNICUM_NUM=-16102601)
+ OR EXISTS(SELECT 1 FROM dbo.SCLAD_R WHERE NAME_SCLAD='TST-WFP-20261016')
+BEGIN RAISERROR('Synthetic scope already exists; do not retry blindly',16,1) RETURN END
+IF NOT EXISTS(SELECT 1 FROM dbo.SCLAD_R WHERE ID_SCLAD=5)
+ OR NOT EXISTS(SELECT 1 FROM dbo.VID_OPER WHERE SIGNIFIC='РЕАЛИЗАЦИЯ')
+BEGIN RAISERROR('Required reference missing',16,1) RETURN END
+
+-- Isolated fixture only. No real customer, product, invoice or stock is edited.
+INSERT dbo.SCLAD_R(NAME_SCLAD) VALUES('TST-WFP-20261016')
+SELECT @warehouse=CONVERT(int,@@IDENTITY)
+INSERT dbo._PARTNER(N_USER,NAME_USER,NAMEP_USER,MY_ORGANIZ)
+VALUES('TSTWFP16','TST WFP payment fixture','TST WFP payment fixture','К')
+INSERT dbo.ALL_ARTC(COD_ARTIC) VALUES('TST-WFP-20261016')
+INSERT dbo.SCL_ARTC(COD_ARTIC,ID_SCLAD,NAME_ARTIC,NACH_KOLCH,KON_KOLCH,REZ_KOLCH)
+VALUES('TST-WFP-20261016',@warehouse,'TST WFP product',10,10,9)
+INSERT dbo.SCL_NAKL(UNICUM_NUM,N_PLAT_POR,DATE_P_POR,SUM_POR,TYPE_DOC,STND_UCHET,
+ ID_SCLAD,BRIEFORG,ORGANIZNKL,VALUTROUBL)
+VALUES(-16102601,16102601,'20261016',4,'С',1,@warehouse,'TSTWFP16','TST WFP payment fixture',1)
+INSERT dbo.SCL_ADDN(UNICUM_NUM) VALUES(-16102601)
+INSERT dbo.SCL_MOVE(UNICUM_NUM,NUM_PREDMT,NAME_PREDM,KOLTREB_PR,KOLC_PREDM,CENA_PREDM,
+ SUM_PREDM,DATE_PREDM,TYPDOCM_PR,STND_UCHET,ID_SCLAD,ORG_PREDM,NUMDOCM_PR,VALUTROUBL)
+VALUES(-16102601,1,'TST-WFP-20261016',1,1,4,4,'20261016','С',1,@warehouse,'TSTWFP16',16102601,1)
+SELECT @line=CONVERT(int,@@IDENTITY)
+
+INSERT dbo.TMP_MOVE(UNICUM_NUM,NUM_PREDMT,NAME_PREDM,KOLTREB_PR,KOLC_PREDM,CENA_PREDM,
+ SUM_PREDM,TYPDOCM_PR,VALUT_CENA,COD_VALUT,SUM_VALUT,NACENKA,NALOGMONEY,NALOGVALUT,
+ ID_SCLAD,NAL_PR_RUB,NAL_PR_VAL)
+VALUES(-16102601,1,'TST-WFP-20261016',@line,1,4,4,'С',0,NULL,0,0,0,0,@warehouse,0,0)
+
+EXEC @ret=dbo.INSERT_PLAT
+ @skip_test=0,@sclad=5,@date_p_por='16.10.2026',@sum_por=4,
+ @nalog1_por=NULL,@prcnt_por=0,@stnd_uchet=1,@codcel_por='TST',
+ @documn_por='TST-WFP-20261016',@prilog_por=NULL,@osnovanie='TST invoice 16102601',
+ @n_sf_por=NULL,@buhschetpl=NULL,@naclad_por=16102601,@uchet_move=1,@contr_por=NULL,
+ @not_nal=1,@valutroubl=1,@cod_valut=NULL,@sumval_por=0,@nalog_por=0,@nalogprcnt=0,
+ @nalg2prcnt=0,@type_por=1,@l_name_por='TST WFP payment fixture',@nalog2_por=NULL,
+ @otmetka=0,@vid_doc='РЕАЛИЗАЦИЯ',@org_predm='TSTWFP16',@notovarost=0,@notovarval=0,
+ @nalogvalut=0,@unicum_tmp=-16102601,@corr_unicum=NULL,
+ @unicum_plt=@payment OUTPUT,@n_plat_por=@number OUTPUT,@name_predm=@name OUTPUT,
+ @kolc_predm=@qty OUTPUT,@koltreb_pr=@required OUTPUT,@num_predmt=@position OUTPUT,
+ @family='TST-WFP',@is_nalprod=NULL,@nds_torgn=NULL,@my_org=NULL,@ist_inf=NULL,@spec_act=1
+
+IF @ret IS NULL OR @ret<>0 OR @payment IS NULL OR @number IS NULL OR @@TRANCOUNT<>@outer_tx
+BEGIN RAISERROR('Native payment failed or changed transaction boundary',16,1) RETURN END
+IF (SELECT COUNT(*) FROM dbo.SCL_PLAT WHERE UNICUM_PLT=@payment AND SUM_POR=4
+ AND ID_SCLAD=5 AND ORG_PREDM='TSTWFP16' AND TYPE_POR=1 AND NOT_NAL=1 AND STND_UCHET=1 AND UCHET_MOVE=1)<>1
+BEGIN RAISERROR('Payment header postcondition failed',16,1) RETURN END
+IF (SELECT COUNT(*) FROM dbo.SCL_PMOV WHERE UNICUM_PLT=@payment)<>1
+ OR (SELECT COUNT(*) FROM dbo.SCL_PMOV WHERE UNICUM_PLT=@payment AND UNICUM_NUM=-16102601
+ AND NAME_PREDM='TST-WFP-20261016' AND KOLC_PREDM=1 AND SUM_PREDM=4 AND ID_SCLAD=@warehouse)<>1
+BEGIN RAISERROR('Allocation postcondition failed',16,1) RETURN END
+IF (SELECT COUNT(*) FROM dbo.SCL_MOVE WHERE RECNO=@line AND KOLC_OPL=1 AND SUM_OPL=4 AND OPLATA_SCH=1)<>1
+ OR (SELECT COUNT(*) FROM dbo.SCL_NAKL WHERE UNICUM_NUM=-16102601 AND CHAST_OPLT=1 AND OPLATA_SCH=1)<>1
+BEGIN RAISERROR('Invoice paid state postcondition failed',16,1) RETURN END
+IF (SELECT COUNT(*) FROM dbo.SCL_ARTC WHERE COD_ARTIC='TST-WFP-20261016'
+ AND ID_SCLAD=@warehouse AND NACH_KOLCH=10 AND KON_KOLCH=10 AND REZ_KOLCH=9)<>1
+ OR EXISTS(SELECT 1 FROM dbo.TMP_MOVE WHERE UNICUM_NUM=-16102601)
+BEGIN RAISERROR('Protected stock or scratch cleanup postcondition failed',16,1) RETURN END
+
+SELECT @ret AS return_code,@payment AS payment_id,@number AS payment_number,
+ @outer_tx AS transaction_before,@@TRANCOUNT AS transaction_after,
+ @warehouse AS invoice_warehouse,5 AS payment_warehouse,
+ 'POSTCONDITIONS_PASSED' AS outcome
+SELECT p.SUM_POR AS payment_total,p.TYPE_POR,p.NOT_NAL,p.STND_UCHET,p.UCHET_MOVE,
+ p.ORG_PREDM,m.UNICUM_NUM,m.KOLC_PREDM AS allocated_qty,m.SUM_PREDM AS allocated_amount,
+ n.OPLATA_SCH AS invoice_paid,n.OPLTDATE,a.KON_KOLCH,a.REZ_KOLCH,
+ (SELECT COUNT(*) FROM dbo.SCL_ADDP WHERE UNICUM_PLT=@payment) AS addp_rows
+FROM dbo.SCL_PLAT p JOIN dbo.SCL_PMOV m ON m.UNICUM_PLT=p.UNICUM_PLT
+ JOIN dbo.SCL_NAKL n ON n.UNICUM_NUM=m.UNICUM_NUM
+ JOIN dbo.SCL_ARTC a ON a.COD_ARTIC=m.NAME_PREDM AND a.ID_SCLAD=m.ID_SCLAD
+WHERE p.UNICUM_PLT=@payment
+-- No COMMIT: the laboratory must roll back this entire batch and fixture.
+

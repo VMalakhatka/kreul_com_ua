@@ -120,6 +120,10 @@ def parse_args() -> argparse.Namespace:
         "procedure-fingerprints",
         help="получить SHA-256 разрешённых процедур без публикации SQL-текста",
     )
+    commands.add_parser(
+        "payment-procedure-fingerprints",
+        help="получить SHA-256 четырёх платёжных процедур; без SQL-текста и выполнения",
+    )
 
     execute = commands.add_parser("execute", help="выполнить SQL из файла или stdin")
     execute.add_argument(
@@ -463,10 +467,13 @@ def main() -> int:
                 http_timeout=args.http_timeout,
                 token=bearer_token(),
             )
-        elif args.command == "procedure-fingerprints":
+        elif args.command in ("procedure-fingerprints", "payment-procedure-fingerprints"):
             status, response = request_json(
                 base_url,
-                "/api/v1/procedure-fingerprints/accounting-prices",
+                "/api/v1/procedure-fingerprints/" + (
+                    "payments" if args.command == "payment-procedure-fingerprints"
+                    else "accounting-prices"
+                ),
                 http_timeout=args.http_timeout,
                 token=bearer_token(),
             )

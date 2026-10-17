@@ -181,7 +181,7 @@ public class FolioOrderAccountService {
                 truncate(base.payerShortName(), 8),
                 truncate(base.folioUser(), 20),
                 truncate(sourceInfoForDocument(base.sourceInfo(), documentType), 30),
-                truncate(missingAdditionalInfo(base.additionalInfo(), group, accountingEnabled), 30),
+                truncate(missingAdditionalInfo(base.additionalInfo(), documentType), 30),
                 truncate(base.priceContractType(), 10),
                 base.notCash(),
                 accountingEnabled,
@@ -371,8 +371,8 @@ public class FolioOrderAccountService {
                 : FolioDocumentCounterCode.ACCOUNT_UNACCOUNTED;
     }
 
-    private String missingAdditionalInfo(String value, DocumentGroup group, boolean accountingEnabled) {
-        if (accountingEnabled) {
+    private String missingAdditionalInfo(String value, String documentType) {
+        if (!"missing_stock_account".equals(documentType)) {
             return value;
         }
         String marker = "Нет на складе";
