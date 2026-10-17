@@ -1,7 +1,8 @@
 # WayForPay → independent Folio bank income
 
 Owner: Java `folio.payment`; caller: WordPress `pc-wayforpay-checkbox` 0.2.0.
-Reviewed 2026-10-16. Implemented, **not deployed or enabled in production**.
+Reviewed 2026-10-17. Deployed; production API/apply enabled after ledger installation
+and read-only HTTP acceptance. **The first real end-to-end bank income still needs acceptance.**
 
 ## Business meaning
 
@@ -33,11 +34,13 @@ netting of commission, new invoice, Checkbox receipt, card charge or historical 
 | `start-at` | empty; fixed ISO UTC cutoff, identical to WordPress activation cutoff |
 | `bank-template-id` | 0; explicitly reviewed existing bank-income technical ID |
 
-Spring relaxed binding supports environment variables such as
-`FOLIO_WFP_PAYMENT_API_ENABLED`, `FOLIO_WFP_PAYMENT_APPLY_ENABLED`,
-`FOLIO_WFP_PAYMENT_TOKEN`, `FOLIO_WFP_PAYMENT_EXPECTED_DATABASE`,
-`FOLIO_WFP_PAYMENT_SOURCE_SCOPE`, `FOLIO_WFP_PAYMENT_MERCHANT_HASH`,
-`FOLIO_WFP_PAYMENT_START_AT`, `FOLIO_WFP_PAYMENT_BANK_TEMPLATE_ID`.
+Production-verified canonical Spring environment names:
+`FOLIO_WFPPAYMENT_APIENABLED`, `FOLIO_WFPPAYMENT_APPLYENABLED`,
+`FOLIO_WFPPAYMENT_TOKEN`, `FOLIO_WFPPAYMENT_EXPECTEDDATABASE`,
+`FOLIO_WFPPAYMENT_SOURCESCOPE`, `FOLIO_WFPPAYMENT_MERCHANTHASH`,
+`FOLIO_WFPPAYMENT_STARTAT`, `FOLIO_WFPPAYMENT_BANKTEMPLATEID`.
+Dots become underscores and dashes are removed; do not substitute the previously
+documented, unverified `FOLIO_WFP_PAYMENT_*` spelling.
 Restart Java after config changes. Do not paste secrets into Git, chat, logs or client JS.
 
 The template must be a reviewed accounted bank income on warehouse 5 with the
@@ -135,9 +138,17 @@ warehouse5, allocations0, transaction1→1, outer rollback confirmed.
 Independent connection `1e5ca5bc-2b25-4077-84ab-3269e5e72f25`: all four fixture
 counts0 and no remaining transaction. This is not a production API acceptance test.
 
-Still required before production enablement: approved ledger DDL/permissions,
-deployed Java + WP versions, private token/network checks, reviewed bank template,
-fresh fixed start boundary, Java read-only preview, one approved new live payment,
-Folio desktop/debt report and independent ledger verification. Full HTTP/native
-runtime concurrency and commit-loss testing are not claimed by offline mocks.
+Production 2026-10-17: administrator-created ledger independently verified through
+the service (12 columns, three unique indexes, SELECT/INSERT grants; no broad roles).
+Reviewed template and four native hashes match. Dedicated token configured;
+WP uses loopback. Same image restarted with preview-only settings, then apply;
+internal/external health recovered, maintenance lock released. Synthetic authenticated
+GET404 → preview READY/hash/amount/warehouse match → GET404 proved no persisted
+operation; no synthetic apply was sent. Ledger remained empty. WP live/unpaused,
+original capture cutoff retained; protected local deploy configs updated as well.
+
+Still required: one approved new live payment, Folio desktop/debt report and
+independent ledger verification of that income. Full HTTP/native runtime concurrency
+and commit-loss testing are not claimed by offline mocks. Operator state and rollback
+are in the WordPress `docs/FOLIO_WFP_PAYMENTS.md` and `docs/JAVA_DOCKER_RUNTIME.md`.
 Rollback: pause WP, disable Java apply; preserve both journals for GET reconciliation.
