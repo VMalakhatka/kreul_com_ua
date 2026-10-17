@@ -2,6 +2,7 @@ package org.example.proect.lavka.dao.wp;
 
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsCapabilitiesResponse.DictionaryItem;
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryRequest.AvailabilityCalculation;
+import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryRequest.GroupBranch;
 import org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryResponse.Availability;
 import org.example.proect.lavka.service.folio.FolioAvailabilityOptions;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -131,6 +132,21 @@ public class FolioProductAnalyticsDao {
             result.put(key, movementDictionary(sourceDatabase, warehouseIds, key));
         }
         return Map.copyOf(result);
+    }
+
+    /** Real paths, not a Cartesian product of independent level dictionaries. */
+    public List<List<String>> groupPaths(String db, List<Integer> warehouses) {
+        String columns = java.util.stream.IntStream.rangeClosed(1, 6)
+                .mapToObj(i -> "COALESCE(group_level_" + i + "_code,'') AS g" + i)
+                .collect(java.util.stream.Collectors.joining(","));
+        return named.query("SELECT DISTINCT " + columns + " FROM folio_product_metric_current"
+                        + " WHERE source_database=:db AND warehouse_id IN (:warehouses) ORDER BY g1,g2,g3,g4,g5,g6",
+                new MapSqlParameterSource("db", db).addValue("warehouses", warehouses), (rs, n) -> {
+                    List<String> path = new ArrayList<>();
+                    for (int i = 1; i <= 6; i++) path.add(rs.getString("g" + i));
+                    while (!path.isEmpty() && path.get(path.size() - 1).isEmpty()) path.remove(path.size() - 1);
+                    return List.copyOf(path);
+                }).stream().filter(p -> !p.isEmpty()).toList();
     }
 
     private List<DictionaryItem> currentDictionary(String db, List<Integer> warehouses,
@@ -521,6 +537,22 @@ public class FolioProductAnalyticsDao {
                 + "COALESCE(SUM(" + alias + ".average_inventory_value),0) average_inventory_value";
     }
 
+    static void addGroupBranches(List<String> current, MapSqlParameterSource params, List<GroupBranch> branches) {
+        List<String> includes = new ArrayList<>(), excludes = new ArrayList<>();
+        for (int b = 0; b < branches.size(); b++) {
+            GroupBranch branch = branches.get(b);
+            List<String> path = new ArrayList<>();
+            for (int i = 0; i < branch.path().size(); i++) {
+                String key = "branch_" + b + "_" + i;
+                params.addValue(key, branch.path().get(i));
+                path.add("COALESCE(c.group_level_" + (i + 1) + "_code,'')=:" + key);
+            }
+            (branch.mode().equals("EXCLUDE") ? excludes : includes).add("(" + String.join(" AND ", path) + ")");
+        }
+        if (!includes.isEmpty()) current.add("(" + String.join(" OR ", includes) + ")");
+        if (!excludes.isEmpty()) current.add("NOT (" + String.join(" OR ", excludes) + ")");
+    }
+
     private static SqlParts sqlParts(QuerySpec spec) {
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("db", spec.sourceDatabase())
@@ -554,6 +586,7 @@ public class FolioProductAnalyticsDao {
         }
         addSelection(current, params, spec.productSelections().get("departments"),
                 "departments", List.of("c.department_code"));
+        addGroupBranches(current, params, spec.groupBranches());
         addSelection(current, params, spec.productSelections().get("productTypes"),
                 "productTypes", List.of("c.product_type_code"));
         addSelection(current, params, spec.productSelections().get("units"),
@@ -736,9 +769,17 @@ public class FolioProductAnalyticsDao {
                             Map<String, Selection> productSelections,
                             Map<String, Selection> movementSelections,
                             int pageSize, int offset, List<SortSpec> sort,
-                            String abcBasis, AvailabilityCalculation availability, List<Integer> stockOnlyWarehouseIds) {
+                            String abcBasis, AvailabilityCalculation availability, List<Integer> stockOnlyWarehouseIds,
+                            List<GroupBranch> groupBranches) {
         public QuerySpec {
             stockOnlyWarehouseIds = stockOnlyWarehouseIds == null ? List.of() : List.copyOf(stockOnlyWarehouseIds);
+            groupBranches = groupBranches == null ? List.of() : List.copyOf(groupBranches);
+        }
+        public QuerySpec(String db, List<Integer> warehouses, LocalDate from, LocalDate to,
+                         String search, Map<String, Selection> product, Map<String, Selection> movement,
+                         int size, int offset, List<SortSpec> sort, String basis, AvailabilityCalculation availability,
+                         List<Integer> stockOnly) {
+            this(db, warehouses, from, to, search, product, movement, size, offset, sort, basis, availability, stockOnly, List.of());
         }
         public QuerySpec(String db, List<Integer> warehouses, LocalDate from, LocalDate to,
                          String search, Map<String, Selection> product, Map<String, Selection> movement,

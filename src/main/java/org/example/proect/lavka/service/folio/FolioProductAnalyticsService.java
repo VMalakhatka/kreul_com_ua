@@ -126,7 +126,9 @@ public class FolioProductAnalyticsService {
                 capabilitiesMap(compatible, unavailableReason),
                 dictionaries, purchasePolicyCapability(networkGeneration),
                 transit,
-                Map.of("warehouseUsage", Map.of("supported", true, "version", 1,
+                Map.of("groupHierarchy", Map.of("supported", compatible, "version", 1,
+                                "paths", compatible ? dao.groupPaths(scope.sourceDatabase(), scope.warehouseIds()) : List.of()),
+                        "warehouseUsage", Map.of("supported", true, "version", 1,
                                 "modes", List.of("FULL", "STOCK_ONLY")),
                         "availability", Map.of("supported", compatible,
                         "basis", List.of("PHYSICAL_END_OF_DAY"),
@@ -147,6 +149,7 @@ public class FolioProductAnalyticsService {
         Scope scope = scope(request.sourceDatabase(), request.warehouseIds(), true);
         Period period = period(request.period(), scope.generations());
         Map<String, Selection> product = productSelections(request.productFilters());
+        var branches = normalizeBranches(request.productFilters() == null ? null : request.productFilters().groupBranches());
         Map<String, Selection> movement = movementSelections(request.movementFilters());
         assertUnsupportedSelections(request.productFilters(), request.movementFilters());
         String search = search(request.productFilters());
@@ -170,7 +173,7 @@ public class FolioProductAnalyticsService {
         TransitCapability transit = FolioTransitAnalytics.capability(transitConfig,
                 transitGenerations, scope.warehouseIds(), scope.generations(), SCHEMA_VERSION);
         Object applied = new AppliedFilters(scope.sourceDatabase(), scope.warehouseIds(),
-                new AppliedPeriod(period.from(), period.to()), search, product, movement,
+                new AppliedPeriod(period.from(), period.to()), search, product, movement, branches,
                 new AppliedCalculation(abcBasis, includeReturns, availability, transitConfig, stockOnly));
         String cursorScope = cursorScope(applied, sort, scope.generations(), networkGeneration, transitGenerations);
         int offset = decodeOffset(request.page() == null ? null : request.page().cursor(), cursorScope);
@@ -180,7 +183,7 @@ public class FolioProductAnalyticsService {
         validateSelections(scope, product, movement, dictionaries);
         QuerySpec spec = new QuerySpec(scope.sourceDatabase(), scope.warehouseIds(),
                 period.from(), period.to(), search, product, movement,
-                pageSize, offset, sort, abcBasis, availability, stockOnly);
+                pageSize, offset, sort, abcBasis, availability, stockOnly, branches);
         var result = dao.query(spec);
         Map<String, String> abc = abcClasses(result.basisRows());
         List<String> pageSkus = result.rows().stream().map(AggregateRow::sku).toList();
@@ -863,10 +866,26 @@ public class FolioProductAnalyticsService {
     private record AppliedCalculation(String abcBasis, boolean includeReturns,
                                       AvailabilityCalculation availability, TransitCalculation transit,
                                       List<Integer> stockOnlyWarehouseIds) { }
+    static List<org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryRequest.GroupBranch> normalizeBranches(
+            List<org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryRequest.GroupBranch> branches) {
+        if (branches == null) return List.of();
+        if (branches.size() > 100) throw error("INVALID_GROUP_BRANCHES", "Use at most 100 group branches");
+        for (var branch : branches) {
+            if (branch == null || !("INCLUDE".equals(branch.mode()) || "EXCLUDE".equals(branch.mode()))
+                    || branch.path() == null || branch.path().isEmpty() || branch.path().size() > 6
+                    || branch.path().stream().anyMatch(v -> v == null || v.length() > 255)
+                    || branch.path().get(branch.path().size() - 1).isBlank()) {
+                throw error("INVALID_GROUP_BRANCHES", "Each branch needs an include/exclude mode and a complete path of 1 to 6 levels");
+            }
+        }
+        return List.copyOf(branches);
+    }
+
     private record AppliedFilters(String sourceDatabase, List<Integer> warehouseIds,
                                   AppliedPeriod period,
                                   String search,
                                   Map<String, Selection> productFilters,
                                   Map<String, Selection> movementFilters,
+                                  List<org.example.proect.lavka.dto.folio.FolioProductAnalyticsQueryRequest.GroupBranch> groupBranches,
                                   AppliedCalculation calculation) { }
 }
