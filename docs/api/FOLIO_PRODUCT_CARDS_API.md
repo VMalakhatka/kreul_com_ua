@@ -43,7 +43,10 @@ WordPress price-sync API token. Rollback: revert these classes and consumer; no
 DB rollback. Live equivalence still requires a read on the target environment;
 unit tests alone do not prove the current view definition matches the archive.
 
-Validation 2026-10-18: 5 isolated DAO/controller tests and Java 17 package build
-passed. Live comparison not completed: the pre-existing local kreul-api container
-was restarting; a separate JDBC attempt failed. No runtime restart, migration or
-production deployment was performed. Current live equality remains unverified.
+Validation 2026-10-18: 6 isolated DAO/controller tests and Java 17 package build
+passed. Live direct SELECT succeeded; the view phase failed with SQLState 42000,
+error 229 (read permission denied). Current live equality is unverified. The
+consumer defaults to direct mode. View/compare report CARD_QUERY_ACCESS_DENIED
+until the DBA allows SELECT on card_tov for the existing service account; no
+permissions are granted by this change. The existing local kreul-api container
+was also observed restarting. No runtime restart, migration or production deploy.
