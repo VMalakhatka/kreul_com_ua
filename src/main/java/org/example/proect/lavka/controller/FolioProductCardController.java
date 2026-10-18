@@ -32,6 +32,10 @@ public class FolioProductCardController {
             return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(dao.read(request.mode(),request.skus().stream().distinct().toList()));
         } catch (RuntimeException e) {
             // Never return JDBC exceptions (SQL, server names or credentials) to the browser.
+            for (Throwable cause=e; cause!=null; cause=cause.getCause()) {
+                if (cause instanceof java.sql.SQLException sql && sql.getErrorCode()==229)
+                    return ResponseEntity.status(503).cacheControl(CacheControl.noStore()).body(Map.of("ok",false,"error","CARD_QUERY_ACCESS_DENIED"));
+            }
             return ResponseEntity.status(503).cacheControl(CacheControl.noStore()).body(Map.of("ok",false,"error","CARD_READ_FAILED"));
         }
     }

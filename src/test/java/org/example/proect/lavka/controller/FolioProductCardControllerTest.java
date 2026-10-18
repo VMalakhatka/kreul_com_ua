@@ -23,4 +23,10 @@ class FolioProductCardControllerTest {
         doReturn(new FolioProductCardDao.Result(true,"Paint_Ua","direct",new FolioProductCardDao.Data(List.of(),List.of()),null,0,null,List.of("001"))).when(dao).read("direct",List.of("001"));
         var success=c.read(req,"test-only");assertEquals(200,success.getStatusCode().value());assertEquals("no-store",success.getHeaders().getCacheControl());
     }
+    @Test void reportsPermissionDenialWithoutLeakingDatabaseDetails() {
+        var dao=mock(FolioProductCardDao.class);var p=new LavkaApiProperties();p.setToken("test-only");
+        when(dao.read("view",List.of())).thenThrow(new org.springframework.jdbc.UncategorizedSQLException("read","private SQL",new java.sql.SQLException("private server","42000",229)));
+        var response=new FolioProductCardController(dao,p).read(new FolioProductCardController.Request("view",List.of()),"test-only");
+        assertEquals(503,response.getStatusCode().value());assertTrue(response.getBody().toString().contains("CARD_QUERY_ACCESS_DENIED"));assertFalse(response.getBody().toString().contains("private"));
+    }
 }
