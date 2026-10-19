@@ -25,6 +25,9 @@ public record FolioProductAnalyticsQueryRequest(
     public record Selection(String mode, List<String> values) {
     }
 
+    /** Complete path from level 1 to the selected branch; exclusions always win. */
+    public record GroupBranch(String mode, List<String> path) { }
+
     public record ProductFilters(
             String search,
             Selection skus,
@@ -41,7 +44,17 @@ public record FolioProductAnalyticsQueryRequest(
             Selection currentSuppliers,
             Selection supplierStates,
             Selection brands,
-            Selection barcodes) {
+            Selection barcodes,
+            List<GroupBranch> groupBranches) {
+        public ProductFilters(String search, Selection skus, Selection groups,
+                Selection groupLevel1, Selection groupLevel2, Selection groupLevel3,
+                Selection groupLevel4, Selection groupLevel5, Selection groupLevel6,
+                Selection departments, Selection productTypes, Selection units,
+                Selection currentSuppliers, Selection supplierStates, Selection brands, Selection barcodes) {
+            this(search, skus, groups, groupLevel1, groupLevel2, groupLevel3, groupLevel4,
+                    groupLevel5, groupLevel6, departments, productTypes, units,
+                    currentSuppliers, supplierStates, brands, barcodes, null);
+        }
     }
 
     public record MovementFilters(

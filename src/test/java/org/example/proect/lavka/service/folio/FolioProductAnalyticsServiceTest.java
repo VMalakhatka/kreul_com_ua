@@ -37,6 +37,27 @@ import static org.mockito.Mockito.when;
 
 class FolioProductAnalyticsServiceTest {
 
+    @Test void branchesReachTotalsAndCursorScopeAndRejectInvalidPaths() throws Exception {
+        var dao = mock(FolioProductAnalyticsDao.class);
+        when(dao.activeGenerations("Paint_Ua", List.of(1, 5))).thenReturn(generations(7));
+        when(dao.dictionaries("Paint_Ua", List.of(1, 5))).thenReturn(Map.of());
+        when(dao.query(any())).thenReturn(emptyResult());
+        var branches=List.of(new FolioProductAnalyticsQueryRequest.GroupBranch("INCLUDE",List.of("Textile","Opaque")),
+                new FolioProductAnalyticsQueryRequest.GroupBranch("EXCLUDE",List.of("Textile","Opaque","Kreul")));
+        var filters=new FolioProductAnalyticsQueryRequest.ProductFilters(null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,branches);
+        var response=new FolioProductAnalyticsService(dao).query(request(filters,null));
+        var spec=ArgumentCaptor.forClass(FolioProductAnalyticsDao.QuerySpec.class);verify(dao).query(spec.capture());
+        assertThat(spec.getValue().groupBranches()).isEqualTo(branches);
+        String applied=new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules().writeValueAsString(response.appliedFilters());
+        assertThat(applied).contains("groupBranches", "Opaque", "EXCLUDE");
+        assertThatThrownBy(()->FolioProductAnalyticsService.normalizeBranches(List.of(new FolioProductAnalyticsQueryRequest.GroupBranch("ANY",List.of("A")))))
+                .isInstanceOf(FolioProductAnalyticsException.class);
+        assertThatThrownBy(()->FolioProductAnalyticsService.normalizeBranches(List.of(new FolioProductAnalyticsQueryRequest.GroupBranch("INCLUDE",List.of()))))
+                .isInstanceOf(FolioProductAnalyticsException.class);
+        assertThatThrownBy(()->FolioProductAnalyticsService.normalizeBranches(List.of(new FolioProductAnalyticsQueryRequest.GroupBranch("INCLUDE",List.of("1","2","3","4","5","6","7")))))
+                .isInstanceOf(FolioProductAnalyticsException.class);
+    }
+
     @Test
     void freeStockFixRequiresRebuiltSnapshotsEvenForSchemaFive() {
         FolioProductAnalyticsDao dao = mock(FolioProductAnalyticsDao.class);
