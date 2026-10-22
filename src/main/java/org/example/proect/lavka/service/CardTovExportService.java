@@ -14,8 +14,7 @@ import org.springframework.stereotype.Service;
 import org.slf4j.Marker;
 import org.slf4j.MarkerFactory;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
+import org.example.proect.lavka.utils.FullSyncHash;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -290,66 +289,23 @@ public class CardTovExportService {
                 d.getRAZM_IZMER(),
                 d.getGr_descr(),
                 groupId,
+                d.getSupplier(),
                 null // hash добавим ниже
         );
     }
 
     /** Добавляем hash в out-DTO (record с полем hash в конце) */
     private CardTovExportOutDto withHash(CardTovExportOutDto o) {
-        String h = calcHash(o); // теперь включает groupId
+        String h = FullSyncHash.calculate(o);
         return new CardTovExportOutDto(
                 o.sku(), o.name(), o.img(), o.edinIzmer(), o.globalUniqueId(),
                 o.weight(), o.length(), o.width(), o.height(), o.status(),
                 o.vesEdinic(), o.description(), o.razmIzmer(), o.grDescr(), o.groupId(),
+                o.supplier(),
                 h
         );
     }
 
-    /** Хеш считаем по канонизированным данным источника + groupId. */
-    private String calcHash(CardTovExportOutDto o) {
-        String payload = String.join("|",
-                nz(o.sku()),
-                nz(o.name()),
-                nz(o.img()),
-                nz(o.edinIzmer()),
-                nz(o.globalUniqueId()),
-                fmt(o.weight()),
-                fmt(o.length()),
-                fmt(o.width()),
-                fmt(o.height()),
-                String.valueOf(o.status() == null ? 0 : o.status()),
-                fmt(o.vesEdinic()),
-                nz(o.description()),
-                nz(o.razmIzmer()),
-                nz(o.grDescr()),
-                // ВАЖНО: теперь учитываем категорию (groupId)
-                String.valueOf(o.groupId() == null ? 0L : o.groupId())
-        );
-        return sha256hex(payload);
-    }
-
-    private static String sha256hex(String s) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] out = md.digest(s.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder(out.length * 2);
-            for (byte b : out) sb.append(String.format("%02x", b));
-            return sb.toString();
-        } catch (Exception e) {
-            throw new IllegalStateException("hash error", e);
-        }
-    }
-
-    private static String fmt(Number n) { return n == null ? "" : (n instanceof Integer || n instanceof Long) ? String.valueOf(n) : stripTrailingZeros(n.doubleValue()); }
-    private static String stripTrailingZeros(double v) {
-        String s = Double.toString(v);
-        if (s.contains("E") || s.contains("e")) return s; // не трогаем экспоненту
-        if (s.indexOf('.') >= 0) {
-            while (s.endsWith("0")) s = s.substring(0, s.length()-1);
-            if (s.endsWith(".")) s = s.substring(0, s.length()-1);
-        }
-        return s;
-    }
     private static String nz(String s) {
         if (s == null) return "";
         return s.replace('\u00A0', ' ').trim();
@@ -435,6 +391,7 @@ public class CardTovExportService {
                 d.getRAZM_IZMER(),
                 d.getGr_descr(),
                 groupId,
+                d.getSupplier(),
                 null // hash добавим позже через withHash()
         );
     }

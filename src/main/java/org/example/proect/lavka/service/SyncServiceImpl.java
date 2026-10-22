@@ -116,7 +116,10 @@ public class SyncServiceImpl implements SyncService {
                 if (windowRaw.isEmpty()) {
                     break;
                 }
-                if (unitAttributeId == null) unitAttributeId = wooApiClient.requireUnitAttributeId();
+                if (unitAttributeId == null) {
+                    wooApiClient.requireFullSyncSupplierSupport();
+                    unitAttributeId = wooApiClient.requireUnitAttributeId();
+                }
                 Map<Long, List<Map<String, Object>>> attributeSnapshot = wooApiClient.readProductAttributes(
                         windowRaw.stream().limit(wooWindowSize).map(SeenItem::postId).toList());
 
@@ -192,18 +195,15 @@ public class SyncServiceImpl implements SyncService {
                             var updates = new ArrayList<>((List<Map<String, Object>>) batchPayload.getOrDefault("update", List.of()));
                             updates.addAll(unitOnly);
                             batchPayload.put("update", updates);
-                            totalUpdated += unitOnly.size();
                         }
                         List<Map<String, Object>> subPayloads = splitBatchPayload(batchPayload, props.getMaxBatchSize());
-                        if (firstIterationForThisWindow) {
-                            totalDrafted += batchDel;  // намерение заdraftить
-                            totalUpdated += batchUpd;
-                        }
                         if (isDry) {
                             totalCreated += batchAdd;
+                            totalUpdated += batchUpd + unitOnly.size();
+                            totalDrafted += batchDel;
                         } else {
                             final AtomicInteger batchNo = new AtomicInteger(0);
-                            int createdNow = 0, updatedNow = 0;
+                            int createdNow = 0, updatedNow = 0, deletedNow = 0;
                             for (Map<String, Object> sub : subPayloads) {
                                 int no = batchNo.incrementAndGet();
                                 MDC.put("batchNo", String.valueOf(no));
@@ -230,11 +230,10 @@ public class SyncServiceImpl implements SyncService {
 
                                 createdNow += res.createdCount();
                                 updatedNow += res.updatedCount();
+                                deletedNow += res.deletedCount();
                             }
-                            if (firstIterationForThisWindow) {
-                                totalUpdated += batchUpd;   // как и было (логика «за окно» ок)
-                                totalDrafted += batchDel;
-                            }
+                            totalUpdated += updatedNow;
+                            totalDrafted += deletedNow;
                             totalCreated += createdNow;
 
                             MDC.remove("batchNo"); // очистим ключ после подпакетов
@@ -471,6 +470,9 @@ public class SyncServiceImpl implements SyncService {
     ) {
         java.util.Map<String,Object> m = new java.util.HashMap<>();
 
+        if (dto.supplier() == null) throw new IllegalStateException("FOLIO_SUPPLIER_UNAVAILABLE");
+        m.put("lavka_supplier", dto.supplier());
+
         // Если знаем id товара в Woo - ставим
         if (knownId != null && knownId > 0) {
             m.put("id", knownId);
@@ -640,7 +642,10 @@ public class SyncServiceImpl implements SyncService {
     private WooApiClient.WooBatchResult postWithBisect(Map<String,Object> sub, int minSize,
                                                        List<String> allErrors) {
         try {
-            return wooApiClient.upsertProductsBatch(sub);
+            var result = wooApiClient.upsertProductsBatch(sub);
+            // HTTP 200 can contain individual Woo errors. Do not retry confirmed successes.
+            allErrors.addAll(result.errors());
+            return result;
         } catch (Exception e) {
             // соберём список sku/id для лога
             String skus = extractSkusFromBatch(sub);

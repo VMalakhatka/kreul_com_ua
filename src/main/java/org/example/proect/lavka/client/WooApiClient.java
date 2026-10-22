@@ -240,8 +240,27 @@ public class WooApiClient {
     public record WooBatchResult(
             int createdCount,
             int updatedCount,
-            int deletedCount
-    ) {}
+            int deletedCount,
+            List<String> errors
+    ) {
+        public WooBatchResult(int createdCount, int updatedCount, int deletedCount) {
+            this(createdCount, updatedCount, deletedCount, List.of());
+        }
+    }
+
+    /** Fail before diff/category writes if the target cannot persist the supplier field. */
+    public void requireFullSyncSupplierSupport() {
+        Map<?, ?> schema = rex.execSafe("woo.fullSyncSchema", () -> restTemplate.exchange(
+                props.getBaseUrl() + "/products", org.springframework.http.HttpMethod.OPTIONS,
+                org.springframework.http.HttpEntity.EMPTY, Map.class).getBody());
+        if (schema == null || !(schema.get("schema") instanceof Map<?, ?> item)
+                || !(item.get("properties") instanceof Map<?, ?> properties)
+                || !(properties.get("lavka_supplier") instanceof Map<?, ?> field)
+                || !"string".equals(field.get("type"))
+                || !Boolean.TRUE.equals(field.get("x-lavka-full-sync-supplier"))) {
+            throw new IllegalStateException("WOO_FULL_SYNC_SUPPLIER_UNSUPPORTED: deploy Lavka Total Sync first");
+        }
+    }
 
     /** Resolve the existing global attribute in this target Woo, never a local hardcoded ID. */
     public long requireUnitAttributeId() {
@@ -309,36 +328,34 @@ public class WooApiClient {
                 restTemplate.postForEntity(url, payload, Map.class));
 
         Map body = resp.getBody();
-        if (body == null) {
-            return new WooBatchResult(0, 0, 0);
-        }
-
         if (resp.getStatusCode().is2xxSuccessful()) {
-
-            int c = 0;
-            int u = 0;
-            int d = 0;
-
-            Object createdArr = body.get("create");
-            if (createdArr instanceof List<?> listC) {
-                c = listC.size();
-            }
-
-            Object updatedArr = body.get("update");
-            if (updatedArr instanceof List<?> listU) {
-                u = listU.size();
-            }
-
-            Object deletedArr = body.get("delete");
-            if (deletedArr instanceof List<?> listD) {
-                d = listD.size();
-            }
-
-            return new WooBatchResult(c, u, d);
-
+            var errors = new ArrayList<String>();
+            int c = batchSuccessCount("create", payload, body, errors);
+            int u = batchSuccessCount("update", payload, body, errors);
+            int d = batchSuccessCount("delete", payload, body, errors);
+            return new WooBatchResult(c, u, d, List.copyOf(errors));
         } else {
-            return new WooBatchResult(0, 0, 0);
+            return new WooBatchResult(0, 0, 0, List.of("WOO_BATCH_RESPONSE_FAILED"));
         }
     }
 
+    private static int batchSuccessCount(String section, Map<String, Object> request,
+            Map<?, ?> response, List<String> errors) {
+        if (!(request.get(section) instanceof List<?> sent) || sent.isEmpty()) return 0;
+        List<?> received = response != null && response.get(section) instanceof List<?> rows ? rows : List.of();
+        if (received.size() != sent.size()) errors.add("WOO_BATCH_RESPONSE_INCOMPLETE: " + section);
+        int count = 0;
+        for (int i = 0; i < Math.min(sent.size(), received.size()); i++) {
+            if (received.get(i) instanceof Map<?, ?> row && !row.containsKey("error")
+                    && row.get("id") instanceof Number id && id.longValue() > 0) {
+                count++;
+            } else {
+                String code = "INVALID_RESULT";
+                if (received.get(i) instanceof Map<?, ?> row && row.get("error") instanceof Map<?, ?> error
+                        && error.get("code") instanceof String value && value.matches("[A-Za-z0-9_-]{1,100}")) code = value;
+                errors.add("WOO_BATCH_ITEM_FAILED: " + section + "[" + i + "] " + code);
+            }
+        }
+        return count;
+    }
 }

@@ -29,6 +29,33 @@ class WooUnitAttributeClientTest {
                         +"{\"id\":901,\"name\":\"Одиниця виміру\",\"slug\":\"pa_edin_izmer\"}]",MediaType.APPLICATION_JSON));
         assertThat(client.requireUnitAttributeId()).isEqualTo(901); server.verify();
     }
+    @Test void supplierSupportUsesReadOnlySchemaAndFailsClosedOnOldPlugin() {
+        server.expect(requestTo(BASE+"/products")).andExpect(method(HttpMethod.OPTIONS))
+                .andRespond(withSuccess("{\"schema\":{\"properties\":{}}}",MediaType.APPLICATION_JSON));
+        assertThatThrownBy(client::requireFullSyncSupplierSupport).hasMessageContaining("WOO_FULL_SYNC_SUPPLIER_UNSUPPORTED");
+        server.verify();
+    }
+    @Test void acceptsSupplierContract() {
+        server.expect(requestTo(BASE+"/products")).andExpect(method(HttpMethod.OPTIONS))
+                .andRespond(withSuccess("{\"schema\":{\"properties\":{\"lavka_supplier\":{\"type\":\"string\",\"x-lavka-full-sync-supplier\":true}}}}",MediaType.APPLICATION_JSON));
+        client.requireFullSyncSupplierSupport(); server.verify();
+    }
+    @Test void http200SupplierErrorIsNotCountedAsSuccessOrRetried() {
+        server.expect(requestTo(BASE+"/products/batch")).andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"update\":[{\"id\":101},{\"id\":0,\"error\":{\"code\":\"lts_supplier_save_failed\",\"message\":\"private details\"}}]}",MediaType.APPLICATION_JSON));
+        var result=client.upsertProductsBatch(Map.of("update",List.of(Map.of("id",101),Map.of("id",102))));
+        assertThat(result.updatedCount()).isEqualTo(1);
+        assertThat(result.errors()).containsExactly("WOO_BATCH_ITEM_FAILED: update[1] lts_supplier_save_failed");
+        server.verify();
+    }
+    @Test void emptyBatchResponseIsNotSuccess() {
+        server.expect(requestTo(BASE+"/products/batch")).andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{}",MediaType.APPLICATION_JSON));
+        var result=client.upsertProductsBatch(Map.of("create",List.of(Map.of("sku","TEST"))));
+        assertThat(result.createdCount()).isZero();
+        assertThat(result.errors()).containsExactly("WOO_BATCH_RESPONSE_INCOMPLETE: create");
+        server.verify();
+    }
     @Test void missingAttributeExplicitlyFailsWithoutPost() {
         server.expect(requestTo(BASE+"/products/attributes")).andRespond(withSuccess("[]",MediaType.APPLICATION_JSON));
         assertThatThrownBy(client::requireUnitAttributeId).hasMessageContaining("WOO_UNIT_ATTRIBUTE_MISSING"); server.verify();

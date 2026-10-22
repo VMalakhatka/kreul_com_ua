@@ -147,8 +147,39 @@ class SyncServiceUnitAttributeTest {
     static Map<String,Object> attr(long id,String name,List<String> options,int position,boolean visible,boolean variation) {
         return Map.of("id",id,"name",name,"options",options,"position",position,"visible",visible,"variation",variation);
     }
+    @ParameterizedTest @ValueSource(strings={"Pebeo France","Other supplier",""})
+    void supplierIsIncludedInCreateAndUpdateWithoutVisibilitySettings(String supplier) throws Exception {
+        var source = FullSyncHashTest.change(dto("KR-79406","80ml"), "supplier", supplier);
+        diff(List.of(source),List.of(source));
+        service.runOneBatch(10,200,null,false);
+        assertThat(posted("update")).containsEntry("lavka_supplier",supplier).doesNotContainKeys("psu_catalog_suppliers","brands");
+        assertThat(posted("create")).containsEntry("lavka_supplier",supplier);
+        verify(woo).requireFullSyncSupplierSupport();
+    }
+
+    @Test void incompatibleTargetStopsBeforeDiffOrProductWrites() {
+        doThrow(new IllegalStateException("WOO_FULL_SYNC_SUPPLIER_UNSUPPORTED")).when(woo).requireFullSyncSupplierSupport();
+        assertThatThrownBy(()->service.runOneBatch(10,200,null,false)).hasMessageContaining("WOO_FULL_SYNC_SUPPLIER_UNSUPPORTED");
+        verifyNoInteractions(cards,locations);
+        verify(woo,never()).upsertProductsBatch(any());
+    }
+
+    @Test void supplierDryRunDoesNotWriteProducts() {
+        diff(List.of(dto("KR-79406","80ml")),List.of());
+        service.runOneBatch(10,200,null,true);
+        verify(woo,never()).upsertProductsBatch(any());
+    }
+    @Test void knownPerItemFailureReachesReportWithoutRepostingSuccessfulItems() {
+        diff(List.of(dto("KR-79406","80ml")),List.of());
+        when(woo.upsertProductsBatch(any())).thenReturn(new WooApiClient.WooBatchResult(0,0,0,
+                List.of("WOO_BATCH_ITEM_FAILED: update[0] lts_supplier_save_failed")));
+        var result=service.runOneBatch(10,200,null,false);
+        assertThat(result.errors()).containsExactly("WOO_BATCH_ITEM_FAILED: update[0] lts_supplier_save_failed");
+        assertThat(result.updated()).isZero();
+        verify(woo,times(1)).upsertProductsBatch(any());
+    }
     static CardTovExportOutDto dto(String sku,String unit) {
         return new CardTovExportOutDto(sku," Test product ",null,unit," 12345 ",2d,1d,3d,4d,
-                1,2d,"source description"," box ",null,12L,"same-hash");
+                1,2d,"source description"," box ",null,12L,"","same-hash");
     }
 }

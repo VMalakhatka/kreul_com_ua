@@ -34,4 +34,5 @@ public class CardTovExportDto {
     private String  DESCRIPTION;
     private String  RAZM_IZMER;
     private String  gr_descr;
+    private String supplier;
 }
