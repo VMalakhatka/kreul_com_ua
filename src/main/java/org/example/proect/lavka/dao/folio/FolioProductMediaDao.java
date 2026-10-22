@@ -203,4 +203,16 @@ public class FolioProductMediaDao {
         }
         return id;
     }
+
+    public int removeGallery(int id, long plusArtic,
+                             @Nullable String expectedOldFilename,
+                             @Nullable Integer expectedOldSortOrder) {
+        return jdbc.update("""
+                DELETE FROM dbo.img_prod
+                 WHERE id = ? AND PLUS_ARTIC = ?
+                   AND (image = ? OR (image IS NULL AND ? IS NULL))
+                   AND (sort_order = ? OR (sort_order IS NULL AND ? IS NULL))
+                """, id, plusArtic, expectedOldFilename, expectedOldFilename,
+                expectedOldSortOrder, expectedOldSortOrder);
+    }
 }

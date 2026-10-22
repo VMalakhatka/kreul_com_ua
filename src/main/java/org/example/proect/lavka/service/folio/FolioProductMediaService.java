@@ -250,6 +250,8 @@ public class FolioProductMediaService {
                         plan.galleryId(), plan.plusArtic(),
                         plan.beforeFilename(), plan.beforeSortOrder(),
                         plan.afterFilename(), plan.afterSortOrder());
+                case REMOVE_GALLERY -> affected = folio.removeGallery(
+                        plan.galleryId(), plan.plusArtic(), plan.beforeFilename(), plan.beforeSortOrder());
                 case ADD_GALLERY -> {
                     int generatedId = folio.insertGallery(
                             plan.plusArtic(), plan.afterFilename(), plan.afterSortOrder());
@@ -286,10 +288,15 @@ public class FolioProductMediaService {
         }
         if (operation == null) {
             return blockedPlan(index, change.operation(), sku, null, role, null,
-                    message("INVALID_OPERATION", "operation must be set_main, update_gallery or add_gallery."),
+                    message("INVALID_OPERATION", "operation must be set_main, update_gallery, add_gallery or remove_gallery."),
                     List.of(), null, null);
         }
 
+        // Removing a reference does not require the old object to still exist in S3.
+        // The exact row, product and old values are the authority for this operation.
+        if (operation == Operation.REMOVE_GALLERY) {
+            return planRemoveGallery(index, change, context);
+        }
         FilenameValidation filenameValidation = validateFilename(change.filename());
         if (filenameValidation.error() != null) {
             return blockedPlan(index, operation.apiValue, sku, operation, role, null,
@@ -336,7 +343,45 @@ public class FolioProductMediaService {
             case SET_MAIN -> planSetMain(index, change, context, product, filename, s3);
             case UPDATE_GALLERY -> planUpdateGallery(index, change, context, product, filename, s3);
             case ADD_GALLERY -> planAddGallery(index, change, context, product, filename, s3);
+            case REMOVE_GALLERY -> throw new IllegalStateException("Removal was already handled");
         };
+    }
+
+    private Plan planRemoveGallery(int index, Change change, PlanningContext context) {
+        ProductRow product = context.product();
+        String sku = trimToNull(change.sku());
+        if (product == null) {
+            return blockedPlan(index, Operation.REMOVE_GALLERY.apiValue, sku, Operation.REMOVE_GALLERY,
+                    "gallery", null, message("SKU_NOT_FOUND", "SKU does not exist in dbo.ALL_ARTC."),
+                    List.of(), null, null);
+        }
+        if (product.plusArtic() <= 0 || folio.countProductsByPlusArtic(product.plusArtic()) != 1) {
+            return blockedPlan(index, Operation.REMOVE_GALLERY.apiValue, sku, Operation.REMOVE_GALLERY,
+                    "gallery", null, message("PLUS_ARTIC_REQUIRED", "SKU does not resolve to one non-empty PLUS_ARTIC."),
+                    List.of(), null, null);
+        }
+        Integer id = parseRecordId(change.recordId());
+        VirtualGallery row = id == null ? null : context.gallery().stream()
+                .filter(candidate -> candidate.id == id && candidate.plusArtic == product.plusArtic())
+                .findFirst().orElse(null);
+        RecordId recordId = id == null ? null : new RecordId("img_prod", String.valueOf(id));
+        if (row == null) {
+            return blockedPlan(index, Operation.REMOVE_GALLERY.apiValue, sku, Operation.REMOVE_GALLERY,
+                    "gallery", recordId, message("GALLERY_RECORD_NOT_FOUND", "Gallery row does not exist for this SKU."),
+                    List.of(), null, null);
+        }
+        Value before = new Value(row.filename, row.sortOrder);
+        if (!Objects.equals(row.filename, change.expectedOldFilename())
+                || !Objects.equals(row.sortOrder, change.expectedOldSortOrder())) {
+            return blockedPlan(index, Operation.REMOVE_GALLERY.apiValue, sku, Operation.REMOVE_GALLERY,
+                    "gallery", recordId, oldValueChanged(change.expectedOldFilename(), change.expectedOldSortOrder(), row.filename, row.sortOrder),
+                    List.of(), before, null);
+        }
+        context.gallery().remove(row);
+        return planResult(index, Operation.REMOVE_GALLERY, sku, product.plusArtic(), id,
+                row.filename, row.sortOrder, null, null,
+                new Result(index, Operation.REMOVE_GALLERY.apiValue, "ready", "gallery", sku,
+                        recordId, before, null, List.of(), List.of(), List.of()));
     }
 
     private Plan planSetMain(int index,
@@ -915,7 +960,8 @@ public class FolioProductMediaService {
     private enum Operation {
         SET_MAIN("set_main"),
         UPDATE_GALLERY("update_gallery"),
-        ADD_GALLERY("add_gallery");
+        ADD_GALLERY("add_gallery"),
+        REMOVE_GALLERY("remove_gallery");
 
         private final String apiValue;
 

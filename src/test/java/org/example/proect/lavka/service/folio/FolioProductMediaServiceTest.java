@@ -21,6 +21,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.times;
 
 class FolioProductMediaServiceTest {
 
@@ -124,6 +126,88 @@ class FolioProductMediaServiceTest {
         assertThat(response.results().get(0).recordId().key()).isEqualTo("12345");
         verify(folio).insertGallery(42, "gallery.jpg", 1);
         verify(requestDao).save(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void previewRemovalUsesExactOldValuesWithoutRequiringS3() {
+        removalFixture(false);
+        var response = service.change(request(removal("old.jpg", 2)));
+        assertThat(response.ok()).isTrue();
+        assertThat(response.results().get(0).after()).isNull();
+        verify(folio, never()).removeGallery(7, 42, "old.jpg", 2);
+        verifyNoInteractions(s3);
+    }
+
+    @Test
+    void removalBlocksChangedFilenameAndPosition() {
+        removalFixture(false);
+        for (var change : List.of(removal("other.jpg", 2), removal("old.jpg", 3))) {
+            var response = service.change(request(change));
+            assertThat(response.ok()).isFalse();
+            assertThat(response.results().get(0).errors()).extracting(error -> error.code())
+                    .contains("OLD_VALUE_CHANGED");
+        }
+        verify(folio, never()).removeGallery(7, 42, "old.jpg", 2);
+    }
+
+    @Test
+    void removalCannotTargetAnotherProductsGallery() {
+        removalFixture(false);
+        when(folio.findGalleryByPlusArtic(42, false)).thenReturn(List.of(
+                new FolioProductMediaDao.GalleryRow(7, 99, "old.jpg", 2)));
+        assertThat(service.change(request(removal("old.jpg", 2))).ok()).isFalse();
+    }
+
+    @Test
+    void removalBlocksSharedProductGrouping() {
+        removalFixture(false);
+        when(folio.countProductsByPlusArtic(42)).thenReturn(2);
+        assertThat(service.change(request(removal("old.jpg", 2))).ok()).isFalse();
+    }
+
+    @Test
+    void blockedRemovalPreventsMainReplacementForSameSku() {
+        removalFixture(true);
+        when(s3.findByFileName("new.jpg")).thenReturn(List.of(
+                new S3MediaIndexDao.Row("new.jpg", "uploads/new.jpg", 10, null, "etag")));
+        var response = service.change(new FolioProductMediaChangeRequest("blocked", false, "test", List.of(
+                new FolioProductMediaChangeRequest.Change("set_main", "ABC-001", null, "main.jpg", null, "new.jpg", null, null),
+                removal("wrong.jpg", 2))));
+        assertThat(response.ok()).isFalse();
+        verify(folio, never()).updateMain(anyString(), anyString(), anyString());
+        verify(folio, never()).removeGallery(7, 42, "old.jpg", 2);
+    }
+
+    @Test
+    void appliedRemovalIsReplayedWithoutAnotherDelete() throws Exception {
+        var requests = mock(FolioProductMediaRequestDao.class);
+        var mapper = new ObjectMapper();
+        service = new FolioProductMediaService(folio, s3, requests, mapper, transactionManager());
+        removalFixture(true);
+        when(folio.removeGallery(7, 42, "old.jpg", 2)).thenReturn(1);
+        var request = new FolioProductMediaChangeRequest("remove-request", false, "test", List.of(removal("old.jpg", 2)));
+        var response = service.change(request);
+        assertThat(response.ok()).isTrue();
+        assertThat(response.summary().applied()).isEqualTo(1);
+        var hash = org.mockito.ArgumentCaptor.forClass(String.class);
+        var json = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(requests).save(org.mockito.ArgumentMatchers.eq("remove-request"), hash.capture(), json.capture());
+        when(requests.find("remove-request")).thenReturn(new FolioProductMediaRequestDao.StoredRequest("remove-request", hash.getValue(), json.getValue()));
+        assertThat(service.change(request).ok()).isTrue();
+        verify(folio, times(1)).removeGallery(7, 42, "old.jpg", 2);
+        verifyNoInteractions(s3);
+    }
+
+    private void removalFixture(boolean apply) {
+        when(folio.findProduct("ABC-001", apply)).thenReturn(
+                new FolioProductMediaDao.ProductRow("ABC-001", "Product", "main.jpg", 42));
+        when(folio.countProductsByPlusArtic(42)).thenReturn(1);
+        when(folio.findGalleryByPlusArtic(42, apply)).thenReturn(List.of(
+                new FolioProductMediaDao.GalleryRow(7, 42, "old.jpg", 2)));
+    }
+
+    private static FolioProductMediaChangeRequest.Change removal(String oldFile, Integer oldPosition) {
+        return new FolioProductMediaChangeRequest.Change("remove_gallery", "ABC-001", "7", oldFile, oldPosition, null, null, null);
     }
 
     private static FolioProductMediaChangeRequest request(
