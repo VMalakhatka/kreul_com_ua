@@ -16,6 +16,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Collection;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Slf4j
 @RetryLabel("CardTovExportDaoImpl")
@@ -90,7 +92,7 @@ public class CardTovExportDaoImpl extends AbstractRetryingDao implements CardTov
         var params = new MapSqlParameterSource()
                 .addValue("after", (after == null || after.isBlank()) ? null : after);
 
-        return namedJdbc.query(sql, params, CardTovExportRowMapper.M);
+        return queryCards(sql, params);
     }
 
     @Override
@@ -122,7 +124,7 @@ public class CardTovExportDaoImpl extends AbstractRetryingDao implements CardTov
             WHERE sku IN (:skus)
             """;
         var params = new MapSqlParameterSource().addValue("skus", skus);
-        return namedJdbc.query(sql, params, CardTovExportRowMapper.M);
+        return queryCards(sql, params);
     }
 
 @Override
@@ -173,7 +175,7 @@ public List<CardTovExportDto> findBetweenExcluding(
         params.addValue("exclude", exclude);
     }
 
-    return namedJdbc.query(sql, params, CardTovExportRowMapper.M);
+    return queryCards(sql, params);
 }
 
 
@@ -202,7 +204,7 @@ public List<CardTovExportDto> findBetweenExcluding(
         var params = new MapSqlParameterSource().addValue("max", maxExclusive);
         if (hasExclude) params.addValue("exclude", exclude);
 
-        return namedJdbc.query(sql, params, CardTovExportRowMapper.M);
+        return queryCards(sql, params);
     }
 
     @Override
@@ -222,7 +224,38 @@ public List<CardTovExportDto> findBetweenExcluding(
     """).formatted(lim);
 
         var params = new MapSqlParameterSource().addValue("min", minExclusive);
-        return namedJdbc.query(sql, params, CardTovExportRowMapper.M);
+        return queryCards(sql, params);
+    }
+
+    private List<CardTovExportDto> queryCards(String sql, MapSqlParameterSource params) {
+        List<CardTovExportDto> cards = namedJdbc.query(sql, params, CardTovExportRowMapper.M);
+        // The legacy export view has no supplier column. Read the same source warehouse
+        // in bounded batches without changing that shared view or multiplying its rows.
+        for (int from = 0; from < cards.size(); from += 1000) {
+            var batch = cards.subList(from, Math.min(from + 1000, cards.size()));
+            Map<String, String> suppliers = new LinkedHashMap<>();
+            namedJdbc.query("""
+                    SELECT COD_ARTIC, DOP2_ARTIC
+                    FROM dbo.SCL_ARTC
+                    WHERE ID_SCLAD = 7 AND COD_ARTIC IN (:skus)
+                    """, new MapSqlParameterSource("skus", batch.stream().map(CardTovExportDto::getSku).toList()),
+                    (org.springframework.jdbc.core.RowCallbackHandler) rs -> {
+                        String sku = supplierSkuKey(rs.getString("COD_ARTIC"));
+                        String value = rs.getString("DOP2_ARTIC");
+                        if (suppliers.putIfAbsent(sku, value == null ? "" : value.trim()) != null)
+                            throw new IllegalStateException("FOLIO_SUPPLIER_AMBIGUOUS");
+                    });
+            for (var card : batch) {
+                String key = supplierSkuKey(card.getSku());
+                if (!suppliers.containsKey(key)) throw new IllegalStateException("FOLIO_SUPPLIER_UNAVAILABLE");
+                card.setSupplier(suppliers.get(key));
+            }
+        }
+        return cards;
+    }
+
+    private static String supplierSkuKey(String sku) {
+        return sku == null ? "" : sku.replace('\u00a0', ' ').trim();
     }
 
     private static CardTovExportDto mapRow(ResultSet rs, int i) throws SQLException {

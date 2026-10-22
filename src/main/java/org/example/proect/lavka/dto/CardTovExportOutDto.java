@@ -19,5 +19,6 @@ public record CardTovExportOutDto(
         String razmIzmer,
         String grDescr,
         Long groupId,
+        String supplier,
         String hash
 ) {}
