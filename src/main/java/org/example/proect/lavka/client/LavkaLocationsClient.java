@@ -116,6 +116,14 @@ public class LavkaLocationsClient {
     }
 
     public void pushCategoryDescriptionsBatch(Map<Long,String> catMap) {
+        pushCategoryDescriptionsBatch(catMap, false);
+    }
+
+    public void pushCategoryDescriptionsBatchOnce(Map<Long,String> catMap) {
+        pushCategoryDescriptionsBatch(catMap, true);
+    }
+
+    private void pushCategoryDescriptionsBatch(Map<Long,String> catMap, boolean once) {
         // собрать payload в формате:
         // { "items": [ { "term_id": 1504, "html": "<p>...</p>" }, ... ] }
 
@@ -142,6 +150,10 @@ public class LavkaLocationsClient {
         String url = base + "/catdesc/batch";
 
         try {
+            if (once) {
+                rt.postForEntity(url, payload, Void.class);
+                return;
+            }
             // lavkaRestTemplateBasic уже должен ставить Basic Auth заголовок
             rex.execUnsafe("woo.findCategoryByNameAndParent", () ->
                     rt.postForEntity(url, payload, Void.class)

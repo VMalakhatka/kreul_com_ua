@@ -4,6 +4,9 @@ import org.example.proect.lavka.dto.sync.SyncRunResponse;
 
 public interface SyncService {
 
+    org.example.proect.lavka.dto.sync.SyncChunkResult runDurableChunk(
+            int size, String cursorAfter, boolean dryRun, boolean forceRefresh);
+
     /**
      * Выполняет один шаг синхронизации по диффу.
      *

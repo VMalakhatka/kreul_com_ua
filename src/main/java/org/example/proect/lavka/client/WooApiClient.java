@@ -144,6 +144,10 @@ public class WooApiClient {
         payload.setName(name);
         payload.setSlug(slug);
         payload.setParent(parentId == null ? 0L : parentId);
+        if (singleAttemptWrites.get()) {
+            try { return restTemplate.postForObject(url, payload, WooCategory.class); }
+            catch (RuntimeException e) { throw new org.example.proect.lavka.service.sync.SyncOutcomeUnknownException(); }
+        }
         return rex.execUnsafe("woo.createCategory", () ->
                 restTemplate.postForObject(url, payload, WooCategory.class)
         );
@@ -316,6 +320,30 @@ public class WooApiClient {
     }
 
     public WooBatchResult upsertProductsBatch(Map<String,Object> payload) {
+        return upsertProductsBatch(payload, false);
+    }
+
+    public WooBatchResult upsertProductsBatchOnce(Map<String,Object> payload) {
+        return upsertProductsBatch(payload, true);
+    }
+
+    private final ThreadLocal<Boolean> singleAttemptWrites = ThreadLocal.withInitial(() -> false);
+
+    /** Applies to category creation inside diff preparation as well as product writes. */
+    public <T> T withoutWriteRetries(java.util.function.Supplier<T> operation) {
+        boolean previous = singleAttemptWrites.get();
+        singleAttemptWrites.set(true);
+        try { return operation.get(); }
+        finally { if (previous) singleAttemptWrites.set(true); else singleAttemptWrites.remove(); }
+    }
+
+    public boolean ownsFullSyncLease(String jobId, String token) {
+        Map<?, ?> result = restTemplate.postForObject(props.getBaseUrl() + "/lavka-full-sync/lease",
+                Map.of("jobId", jobId, "token", token), Map.class);
+        return result != null && Boolean.TRUE.equals(result.get("owned"));
+    }
+
+    private WooBatchResult upsertProductsBatch(Map<String,Object> payload, boolean once) {
 
         if (payload == null || payload.isEmpty()) {
             return new WooBatchResult(0, 0, 0);
@@ -324,8 +352,8 @@ public class WooApiClient {
         String url = props.getBaseUrl() + "/products/batch";
 
         @SuppressWarnings("unchecked")
-        ResponseEntity<Map> resp = rex.execUnsafe("woo.products.batch", () ->
-                restTemplate.postForEntity(url, payload, Map.class));
+        ResponseEntity<Map> resp = once ? restTemplate.postForEntity(url, payload, Map.class)
+                : rex.execUnsafe("woo.products.batch", () -> restTemplate.postForEntity(url, payload, Map.class));
 
         Map body = resp.getBody();
         if (resp.getStatusCode().is2xxSuccessful()) {
@@ -353,7 +381,8 @@ public class WooApiClient {
                 String code = "INVALID_RESULT";
                 if (received.get(i) instanceof Map<?, ?> row && row.get("error") instanceof Map<?, ?> error
                         && error.get("code") instanceof String value && value.matches("[A-Za-z0-9_-]{1,100}")) code = value;
-                errors.add("WOO_BATCH_ITEM_FAILED: " + section + "[" + i + "] " + code);
+                errors.add(("INVALID_RESULT".equals(code) ? "WOO_BATCH_RESPONSE_INVALID: " : "WOO_BATCH_ITEM_FAILED: ")
+                        + section + "[" + i + "] " + code);
             }
         }
         return count;

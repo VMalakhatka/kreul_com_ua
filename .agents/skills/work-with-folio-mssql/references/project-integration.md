@@ -1,5 +1,13 @@
 # Текущая интеграция Java, WooCommerce и ФОЛИО
 
+Full-card synchronization (2026-10-23): use `/admin/sync/jobs` protocol 1 with
+V19 MariaDB job/chunk history, authenticated WordPress ecosystem-lease callback
+and connection-scoped worker exclusion. Persist in-flight before writes and
+checkpoint cursor/results atomically. Missing checkpoint or uncertain Woo write
+must not replay; confirmed terminal status is required to release the WP lease.
+Do not treat the old 600-second WordPress timeout as Java completion. Contract,
+rollout prerequisites and isolated tests: `docs/api/FOLIO_FULL_SYNC_JOBS.md`.
+
 ## Содержание
 
 - [Архитектура данных](#архитектура-данных)

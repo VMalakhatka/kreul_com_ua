@@ -37,6 +37,77 @@ public class SyncServiceImpl implements SyncService {
     private static final Marker MISMATCH = MarkerFactory.getMarker("MISMATCH");
 
     @Override
+    public org.example.proect.lavka.dto.sync.SyncChunkResult runDurableChunk(
+            int size, String after, boolean dry, boolean force) {
+        if (size < 1 || size > 100) throw new IllegalArgumentException("INVALID_CHUNK_SIZE");
+        List<SeenItem> raw = wpProductDao.collectSeenWindow(size + 1, after);
+        List<SeenItem> seen = raw.stream().limit(size).toList();
+        wooApiClient.requireFullSyncSupplierSupport();
+        long unitId = wooApiClient.requireUnitAttributeId();
+        Map<Long, List<Map<String, Object>>> attributes = wooApiClient.readProductAttributes(
+                seen.stream().map(SeenItem::postId).toList());
+        var diff = wooApiClient.withoutWriteRetries(() -> cardTovExportService.diffPage(after, size, seen.stream()
+                .map(s -> new CardTovExportService.ItemHash(s.sku(), s.hash() == null ? "" : s.hash())).toList(), force));
+        List<CardTovExportOutDto> updates = nzList(diff.toUpdateFull());
+        List<CardTovExportOutDto> creates = nzList(diff.toCreateFull());
+        List<String> deletes = nzList(diff.toDelete());
+        Map<String, Long> ids = new LinkedHashMap<>();
+        for (SeenItem item : seen) {
+            Long previous = ids.putIfAbsent(item.sku(), item.postId());
+            if (previous != null && !previous.equals(item.postId())) throw new IllegalStateException("WOO_PRODUCT_MATCH_AMBIGUOUS");
+            previous = ids.putIfAbsent(item.sku().replace('\u00a0', ' ').trim(), item.postId());
+            if (previous != null && !previous.equals(item.postId())) throw new IllegalStateException("WOO_PRODUCT_MATCH_AMBIGUOUS");
+        }
+        for (CardTovExportOutDto update : updates) {
+            Long id = ids.get(update.sku().replace('\u00a0', ' ').trim());
+            if (id == null) throw new IllegalStateException("WOO_PRODUCT_MATCH_MISSING");
+            ids.put(update.sku(), id);
+        }
+        Map<String, Object> payload = buildWooBatchPayload(updates, creates, deletes, ids, attributes, unitId);
+        if (!force) {
+            var unitUpdates = unitOnlyUpdates(seen, updates, deletes, attributes, unitId);
+            if (!unitUpdates.isEmpty()) {
+                @SuppressWarnings("unchecked")
+                var merged = new ArrayList<>((List<Map<String, Object>>)payload.getOrDefault("update", List.of()));
+                merged.addAll(unitUpdates);
+                payload.put("update", merged);
+            }
+        }
+        int created = 0, updated = 0, drafted = 0;
+        List<String> errors = new ArrayList<>();
+        for (Map<String, Object> part : splitBatchPayload(payload, Math.min(25, props.getMaxBatchSize()))) {
+            if (dry) {
+                created += ((List<?>)part.getOrDefault("create", List.of())).size();
+                updated += ((List<?>)part.getOrDefault("update", List.of())).size();
+                drafted += ((List<?>)part.getOrDefault("delete", List.of())).size();
+                continue;
+            }
+            try {
+                var result = wooApiClient.upsertProductsBatchOnce(part);
+                if (result.errors().stream().anyMatch(e -> e.startsWith("WOO_BATCH_RESPONSE")))
+                    throw new org.example.proect.lavka.service.sync.SyncOutcomeUnknownException();
+                created += result.createdCount(); updated += result.updatedCount(); drafted += result.deletedCount();
+                errors.addAll(result.errors());
+            } catch (RuntimeException e) {
+                throw new org.example.proect.lavka.service.sync.SyncOutcomeUnknownException();
+            }
+        }
+        if (!dry) {
+            Map<Long, String> descriptions = new HashMap<>();
+            updates.forEach(d -> collectCategoryDesc(descriptions, d.groupId(), d.grDescr()));
+            creates.forEach(d -> collectCategoryDesc(descriptions, d.groupId(), d.grDescr()));
+            if (!descriptions.isEmpty()) {
+                try { lavkaLocationsClient.pushCategoryDescriptionsBatchOnce(descriptions); }
+                catch (RuntimeException e) { throw new org.example.proect.lavka.service.sync.SyncOutcomeUnknownException(); }
+            }
+        }
+        // An empty Woo window still needs the Folio tail, including a completely empty Woo catalogue.
+        boolean exhausted = seen.isEmpty() && diff.last();
+        return new org.example.proect.lavka.dto.sync.SyncChunkResult(seen.size() + creates.size(),
+                created, updated, drafted, diff.nextAfter() == null ? after : diff.nextAfter(), exhausted, List.copyOf(errors));
+    }
+
+    @Override
     public SyncRunResponse runOneBatch(
             Integer limit,
             Integer pageSizeWoo,

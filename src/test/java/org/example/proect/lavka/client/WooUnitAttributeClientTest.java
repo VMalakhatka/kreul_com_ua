@@ -29,6 +29,24 @@ class WooUnitAttributeClientTest {
                         +"{\"id\":901,\"name\":\"Одиниця виміру\",\"slug\":\"pa_edin_izmer\"}]",MediaType.APPLICATION_JSON));
         assertThat(client.requireUnitAttributeId()).isEqualTo(901); server.verify();
     }
+    @Test void durableProductPostDoesNotRetryHttp500() {
+        server.expect(requestTo(BASE+"/products/batch")).andRespond(withServerError());
+        assertThatThrownBy(() -> client.upsertProductsBatchOnce(Map.of("update",List.of(Map.of("id",100)))))
+                .isInstanceOf(org.springframework.web.client.HttpServerErrorException.class);
+        server.verify();
+    }
+    @Test void durableCategoryWriteDoesNotRetryTimeout() {
+        server.expect(requestTo(BASE+"/products/categories")).andRespond(withException(new java.net.SocketTimeoutException()));
+        assertThatThrownBy(() -> client.withoutWriteRetries(() -> client.createCategory("Synthetic","synthetic",0L)))
+                .isInstanceOf(org.example.proect.lavka.service.sync.SyncOutcomeUnknownException.class);
+        server.verify();
+    }
+    @Test void malformedItemReceiptIsUnknownNotAnExplicitRejection() {
+        server.expect(requestTo(BASE+"/products/batch")).andRespond(withSuccess("{\"update\":[{}]}",MediaType.APPLICATION_JSON));
+        assertThat(client.upsertProductsBatchOnce(Map.of("update",List.of(Map.of("id",100)))).errors())
+                .containsExactly("WOO_BATCH_RESPONSE_INVALID: update[0] INVALID_RESULT");
+        server.verify();
+    }
     @Test void supplierSupportUsesReadOnlySchemaAndFailsClosedOnOldPlugin() {
         server.expect(requestTo(BASE+"/products")).andExpect(method(HttpMethod.OPTIONS))
                 .andRespond(withSuccess("{\"schema\":{\"properties\":{}}}",MediaType.APPLICATION_JSON));

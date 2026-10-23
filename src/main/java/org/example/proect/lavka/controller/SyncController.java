@@ -16,10 +16,12 @@ public class SyncController {
 
     private final StockSyncService sync;
     private final SyncService syncService;
+    private final org.example.proect.lavka.service.sync.FullSyncJobService jobs;
 
-    public SyncController(StockSyncService sync, SyncService syncService) {
+    public SyncController(StockSyncService sync, SyncService syncService, org.example.proect.lavka.service.sync.FullSyncJobService jobs) {
         this.sync = sync;
         this.syncService=syncService;
+        this.jobs=jobs;
     }
 
     @PostMapping(
@@ -28,14 +30,13 @@ public class SyncController {
             produces = MediaType.APPLICATION_JSON_VALUE
     )
     public SyncRunResponse runOneBatch(@RequestBody SyncRunRequest req) {
-
         // пробрасываем всё в сервис
-        return syncService.runOneBatch(
+        return jobs.legacy(() -> syncService.runOneBatch(
                 req.limit(),
                 req.pageSizeWoo(),
                 req.cursorAfter(),
                 req.dryRun()
-        );
+        ));
     }
 
     /** (Опционально) Батч-инициализация SKU из твоей БД */

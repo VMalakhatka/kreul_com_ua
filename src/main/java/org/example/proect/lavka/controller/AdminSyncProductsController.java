@@ -14,9 +14,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminSyncProductsController {
 
     private final SyncService syncService;
+    private final org.example.proect.lavka.service.sync.FullSyncJobService jobs;
 
-    public AdminSyncProductsController(SyncService syncService) {
+    public AdminSyncProductsController(SyncService syncService, org.example.proect.lavka.service.sync.FullSyncJobService jobs) {
         this.syncService = syncService;
+        this.jobs = jobs;
     }
 
     @PostMapping(
@@ -25,11 +27,11 @@ public class AdminSyncProductsController {
             produces = MediaType.APPLICATION_JSON_VALUE
     )
     public SyncRunResponse forceRefreshProducts(@RequestBody SyncRunRequest req) {
-        return syncService.forceRefreshOneBatch(
+        return jobs.legacy(() -> syncService.forceRefreshOneBatch(
                 req.limit(),
                 req.pageSizeWoo(),
                 req.cursorAfter(),
                 req.dryRun()
-        );
+        ));
     }
 }
