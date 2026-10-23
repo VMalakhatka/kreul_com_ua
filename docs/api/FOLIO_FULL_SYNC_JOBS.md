@@ -6,8 +6,15 @@ prices, supplier visibility settings and the full-card v2 hash are unchanged.
 
 ## API and Storage
 
-All routes require `X-Auth-Token` matching configured `lavka.token`; an unset token
-disables them (503). Responses are `Cache-Control: no-store`. Never log the token.
+All routes require `X-Auth-Token` matching `lavka.full-sync-token` from runtime
+`LAVKA_FULL_SYNC_TOKEN`. If this dedicated value is unset/blank, existing deployments
+fall back to `lavka.token` (`LAVKA_TOKEN`). When the dedicated value is set, only
+that value authenticates these routes: it does not alter credentials of prices,
+assembly, other Java controllers or outbound Java-to-Woo calls. Keep WordPress
+Total Sync's existing `api_token`; configure Java to match it instead of rotating
+the shared token. Both values unset disables this API (503 `JOB_API_NOT_CONFIGURED`);
+missing/wrong credentials return 401 `UNAUTHORIZED`, including with the global
+exception advice enabled. Responses are `Cache-Control: no-store`. Never log tokens.
 
 - `GET /admin/sync/jobs/capabilities`: `protocol:1`, `persistent:true`,
   `maxChunkSize:100`, `activeJobId` (empty when none).
@@ -81,6 +88,11 @@ this job; WordPress validates job identity and request fields before unlocking.
    for a compatible API without taking a protected lease.
 3. Deploy Java with V19 and verify health, authenticated capabilities and callback
    credentials. Do not repair/rewrite old Flyway checksums as part of this task.
+   If Total Sync uses a different token from the other Woo services, set only
+   `LAVKA_FULL_SYNC_TOKEN` in the private production env and its local deploy source,
+   then recreate the container. Preserve `LAVKA_TOKEN`, other env keys and all Woo
+   options. Compare credentials without printing them. On failure restore the
+   previous image/env; a restart alone does not reload Docker environment values.
 4. Start an approved bounded job. Check matching ID, chunk history, cursor,
    terminal status and released lock. A real full run requires separate approval.
 5. Keep recurring WordPress cron and recovery ticks enabled. A terminal failure

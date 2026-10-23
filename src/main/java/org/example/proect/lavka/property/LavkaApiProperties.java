@@ -10,6 +10,8 @@ public class LavkaApiProperties {
     private String user;
     private String appPass;
     private String token;
+    @lombok.ToString.Exclude
+    private String fullSyncToken;
     private int timeoutMs = 15000;
     private int skuChunkSize = 1000;
     private int mssqlMaxParams = 2100;
