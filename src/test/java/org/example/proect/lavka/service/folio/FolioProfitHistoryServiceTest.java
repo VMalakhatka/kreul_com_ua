@@ -90,6 +90,44 @@ class FolioProfitHistoryServiceTest {
         service.revisions("2025-07",20,null);
         verifyNoInteractions(calculator);
     }
+    @Test void savedRangeIgnoresWarehouseMetadataWithoutRecalculatingOrPublishing() throws Exception {
+        for(int i=0;i<3;i++) {
+            String month=YearMonth.of(2025,7).plusMonths(i).toString();
+            com.fasterxml.jackson.databind.node.ObjectNode tree=json.valueToTree(report(month,false));
+            if(i==1) {
+                var inputs=(com.fasterxml.jackson.databind.node.ObjectNode)tree.get("inputs");
+                inputs.putArray("kyivWarehouseIds").add(1).add(7);
+                inputs.putArray("kyivStockWarehouseIds").add(1);
+                inputs.putArray("odesaWarehouseIds");
+                inputs.remove("odesaStockWarehouseIds");
+            } else if(i==2) tree.remove("inputs");
+            long id=i+1L;
+            rows.put(id,new FolioProfitHistoryDao.Row(id,"Paint_Ua",month,"saved-"+id,"hash","{}","COMPLETED",
+                    json.writeValueAsString(tree),true,null,Instant.now(),Instant.now()));
+            when(dao.state("Paint_Ua",month)).thenReturn(Optional.of(new FolioProfitHistoryDao.State(id,id,"COMPLETED")));
+        }
+        var before=Map.copyOf(rows);
+        clearInvocations(dao,calculator);
+        var range=service.range("2025-07","2025-09");
+        assertThat(range.complete()).isTrue();
+        assertThat(range.missingMonths()).isEmpty();
+        assertThat(range.totals()).allSatisfy(t->assertThat(t.complete()).isTrue());
+        assertThat(range.totals().get(0).profit()).isEqualByComparingTo("240.00");
+        assertThat(range.totals().get(1).profit()).isEqualByComparingTo("120");
+        assertThat(range.months()).extracting(m->m.revisionId()).containsExactly(1L,2L,3L);
+        assertThat(range.months().get(0).inputs().kyivWarehouseIds()).containsExactly(1,7,12);
+        assertThat(range.months().get(1).inputs().kyivWarehouseIds()).containsExactly(1,7);
+        assertThat(range.months().get(2).inputs()).isNull();
+        assertThat(range.warnings()).noneMatch(w->w.contains("несопостав")||w.contains("состав складов"));
+        assertThat(json.valueToTree(range).get("totals").get(0).get("profit").isTextual()).isTrue();
+        for(var row:before.values()) {
+            verify(dao).state("Paint_Ua",row.month());
+            verify(dao).byId("Paint_Ua",row.month(),row.id());
+        }
+        verifyNoMoreInteractions(dao);
+        verifyNoInteractions(calculator);
+        assertThat(rows).isEqualTo(before);
+    }
     @Test void productionUrlPropertyReadsExistingHistoryAndReplaysSameRequestWithoutFolio() {
         when(calculator.calculate(any(),eq(true),any())).thenReturn(report("2025-07",false));
         var original=service.calculate("2025-07",request);

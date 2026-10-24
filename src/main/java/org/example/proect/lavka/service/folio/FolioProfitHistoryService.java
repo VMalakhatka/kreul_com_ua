@@ -102,7 +102,7 @@ public class FolioProfitHistoryService {
         List<Totals> totals=List.of(FolioProfitHistoryTotals.calculate("KYIV",revisions),FolioProfitHistoryTotals.calculate("ODESA",revisions));
         return new Range(true,first.toString(),last.toString(),source(),complete&&totals.stream().allMatch(Totals::complete),missing,months,totals,
                 List.of("Сохранённые ревизии: не текущие данные ФОЛИО", "Курс и налоговая доля применены отдельно для каждого месяца",
-                        "NULL означает неполный диапазон/источник либо несопоставимый состав складов; остатки не суммируются",
+                        "NULL означает отсутствующий месяц, город или значение; остатки — начало первого и конец последнего месяца, не сумма",
                         "Состав диапазона фиксирован возвращёнными revisionId; публикации могут меняться между отдельными GET"));
     }
     private Revision view(Row row,State state,boolean full) {
