@@ -61,7 +61,7 @@ class FolioProfitOctoberRulesTest {
                 row(3,"НЕРЕГДОН","",true,null),row(4,"НЕРЕГДОН","",false,1)));
         var service = new FolioProfitReportService(dao,classifier,new FolioProfitReportProperties());
         var report = service.calculate(new FolioProfitReportService.Request("2026-07",null,null,null,null,BigDecimal.ZERO,null,null),true);
-        assertThat(report.ruleVersion()).isEqualTo("2026-10-15.1");
+        assertThat(report.ruleVersion()).isEqualTo("2026-10-24.1");
         assertThat(report.cities().get(0).operatingExpenses()).isEqualByComparingTo("40");
         assertThat(report.documents()).hasSize(4); // IDs, not visible numbers, define identity.
         assertThat(report.expenseLines()).noneMatch(l -> l.lineId().equals("KYIV_HOUSEHOLD_BANK"));

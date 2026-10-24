@@ -20,7 +20,14 @@ public final class FolioProfitSavedReports {
             @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
             @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using=EmployeeCountDeserializer.class) Integer odesaEmployeeCount,
             @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
-            @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using=FolioProfitTaxSettings.VersionDeserializer.class) Long taxSettingsVersion) {
+            @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using=FolioProfitTaxSettings.VersionDeserializer.class) Long taxSettingsVersion,
+            @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+            @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using=FolioProfitScopeSettings.VersionDeserializer.class) Long expectedScopeSettingsVersion) {
+        public CalculateRequest(String id, BigDecimal share, BigDecimal rate, BigDecimal mkIncome, BigDecimal mkReturn,
+                BigDecimal odesaSalary, List<Integer> kyivStock, List<Integer> odesaStock, BigDecimal kyivSalary,
+                Integer kyivCount,Integer odesaCount,Long taxVersion) {
+            this(id,share,rate,mkIncome,mkReturn,odesaSalary,kyivStock,odesaStock,kyivSalary,kyivCount,odesaCount,taxVersion,null);
+        }
         public CalculateRequest(String id, BigDecimal share, BigDecimal rate, BigDecimal mkIncome, BigDecimal mkReturn,
                 BigDecimal odesaSalary, List<Integer> kyivStock, List<Integer> odesaStock, BigDecimal kyivSalary,
                 Integer kyivCount, Integer odesaCount) {
@@ -53,7 +60,8 @@ public final class FolioProfitSavedReports {
     public record Month(String month,Long revisionId,String status,Long latestRevisionId,String latestStatus,
             String calculatedAt,String ruleVersion,boolean auditComplete,
             FolioProfitReportResponse.Inputs inputs,List<FolioProfitReportResponse.CityResult> cities,
-            List<FolioProfitReportResponse.InventoryResult> inventory) {}
+            List<FolioProfitReportResponse.InventoryResult> inventory,
+            FolioProfitScopeSettings scopeSettings,FolioProfitScopeCatalog scopeCatalog) {}
     public record Range(boolean ok,String fromMonth,String toMonth,String sourceDatabase,boolean complete,
             List<String> missingMonths,List<Month> months,List<Totals> totals,List<String> warnings) {}
     public record Totals(String city,

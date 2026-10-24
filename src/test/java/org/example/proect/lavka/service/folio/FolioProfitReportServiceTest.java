@@ -213,14 +213,12 @@ class FolioProfitReportServiceTest {
 
     @Test
     void rejectsWarehouseAssignedToBothCities() {
-        var report = service.calculate(new FolioProfitReportService.Request(
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->service.calculate(new FolioProfitReportService.Request(
                 "2026-07", null, null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                List.of(1, 5), List.of(5)), false);
-        assertThat(report.sections().get("INVENTORY_KYIV").errorCode()).isEqualTo("STOCK_WAREHOUSES_OVERLAP");
-        assertThat(report.sections().get("INVENTORY_ODESA").errorCode()).isEqualTo("STOCK_WAREHOUSES_OVERLAP");
-        assertThat(report.inventory()).isEmpty();
-        assertThat(city(report, "KYIV").profit()).isNotNull();
-        assertThat(report.complete()).isFalse();
+                List.of(1, 5), List.of(5)), false))
+                .isInstanceOfSatisfying(FolioAccountValidationException.class,
+                        e->assertThat(e.getCode()).isEqualTo("PROFIT_SCOPE_WAREHOUSE_OVERLAP"));
+        org.mockito.Mockito.verifyNoInteractions(dao);
     }
 
     @Test void detailedLinesReconcileAndPreservePaymentIdentityAndZeroOverrides() throws Exception {

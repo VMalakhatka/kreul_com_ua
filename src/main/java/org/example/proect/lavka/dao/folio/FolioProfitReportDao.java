@@ -155,29 +155,42 @@ public class FolioProfitReportDao {
     }
 
     public List<InventoryOpeningRow> findInventoryOpenings(List<Integer> warehouseIds) {
+        return findInventoryOpenings(warehouseIds,List.of());
+    }
+    public List<InventoryOpeningRow> findInventoryOpenings(List<Integer> warehouseIds,List<List<String>> excludedPaths) {
         if (warehouseIds.isEmpty()) {
             return List.of();
         }
+        List<Object> args=new ArrayList<>(warehouseIds);
+        String exclusion=excludedPaths.isEmpty()?"":" AND NOT ("+inventoryPathPredicate("a",excludedPaths,args)+")";
         String sql = """
                 SELECT a.ID_SCLAD, a.COD_ARTIC, a.NACH_KOLCH, a.UCHET_0_C
                   FROM dbo.SCL_ARTC a WITH (NOLOCK)
-                 WHERE a.ID_SCLAD IN (%s)
-                """.formatted(placeholders(warehouseIds.size()));
+                 WHERE a.ID_SCLAD IN (%s)%s
+                """.formatted(placeholders(warehouseIds.size()),exclusion);
         return query(sql, (rs, rowNum) -> new InventoryOpeningRow(
                 rs.getInt("ID_SCLAD"),
                 trim(rs.getString("COD_ARTIC")),
                 decimal(rs, "NACH_KOLCH"),
                 decimal(rs, "UCHET_0_C")
-        ), warehouseIds.toArray());
+        ), args.toArray());
     }
 
     public List<InventoryMovementRow> findInventoryMovements(
             List<Integer> warehouseIds,
             LocalDate monthStart,
             LocalDate nextMonthStart) {
+        return findInventoryMovements(warehouseIds,monthStart,nextMonthStart,List.of());
+    }
+    public List<InventoryMovementRow> findInventoryMovements(List<Integer> warehouseIds,LocalDate monthStart,
+            LocalDate nextMonthStart,List<List<String>> excludedPaths) {
         if (warehouseIds.isEmpty()) {
             return List.of();
         }
+        List<Object> exclusionArgs=new ArrayList<>();
+        String exclusion=excludedPaths.isEmpty()?"":" AND NOT EXISTS (SELECT 1 FROM dbo.SCL_ARTC a WITH (NOLOCK)"
+                +" WHERE a.ID_SCLAD=m.ID_SCLAD AND a.COD_ARTIC=m.NAME_PREDM AND ("
+                +inventoryPathPredicate("a",excludedPaths,exclusionArgs)+"))";
         String sql = """
                 SELECT m.ID_SCLAD,
                        m.NAME_PREDM,
@@ -205,9 +218,9 @@ public class FolioProfitReportDao {
                  WHERE m.STND_UCHET = 1
                    AND m.DATE_PREDM < ?
                    AND m.TYPDOCM_PR IN (?, ?)
-                   AND m.ID_SCLAD IN (%s)
+                   AND m.ID_SCLAD IN (%s)%s
                  GROUP BY m.ID_SCLAD, m.NAME_PREDM
-                """.formatted(placeholders(warehouseIds.size()));
+                """.formatted(placeholders(warehouseIds.size()),exclusion);
         List<Object> args = new ArrayList<>();
         Timestamp start = Timestamp.valueOf(monthStart.atStartOfDay());
         Timestamp end = Timestamp.valueOf(nextMonthStart.atStartOfDay());
@@ -223,6 +236,7 @@ public class FolioProfitReportDao {
         args.add("П");
         args.add("Р");
         args.addAll(warehouseIds);
+        args.addAll(exclusionArgs);
         return query(sql, (rs, rowNum) -> new InventoryMovementRow(
                 rs.getInt("ID_SCLAD"),
                 trim(rs.getString("NAME_PREDM")),
@@ -231,6 +245,24 @@ public class FolioProfitReportDao {
                 decimal(rs, "CLOSING_QUANTITY_DELTA"),
                 decimal(rs, "CLOSING_VALUE_DELTA")
         ), args.toArray());
+    }
+
+    private static String inventoryPathPredicate(String alias,List<List<String>> paths,List<Object> args) {
+        if(paths.size()>100) throw new IllegalArgumentException("Too many inventory exclusion paths");
+        String[] columns={"NGROUP_TVR","NGROUP_TV2","NGROUP_TV3","NGROUP_TV4","NGROUP_TV5","NGROUP_TV6"};
+        List<String> branches=new ArrayList<>();
+        for(var path:paths) {
+            if(path.isEmpty()||path.size()>6) throw new IllegalArgumentException("Invalid inventory exclusion path");
+            List<String> levels=new ArrayList<>();
+            for(int i=0;i<path.size();i++) {
+                // Exact string identity even under the legacy case-insensitive collation.
+                levels.add("CONVERT(VARBINARY(255),LTRIM(RTRIM(ISNULL("+alias+"."+columns[i]+",''))))"
+                        +"=CONVERT(VARBINARY(255),CONVERT(VARCHAR(255),?))");
+                args.add(path.get(i));
+            }
+            branches.add("("+String.join(" AND ",levels)+")");
+        }
+        return String.join(" OR ",branches);
     }
 
     private static String placeholders(int count) {

@@ -31,8 +31,22 @@ public record FolioProfitReportResponse(
         TaxDetails taxDetails,
         Map<String, MasterClassSummary> masterClassesByCity,
         Map<String, List<MasterClassDocumentLine>> masterClassDocumentsByCity,
-        List<GrossProfitLine> grossProfitLines
+        List<GrossProfitLine> grossProfitLines,
+        FolioProfitScopeSettings scopeSettings,
+        FolioProfitScopeCatalog scopeCatalog
 ) {
+    public FolioProfitReportResponse(boolean ok, String month, OffsetDateTime calculatedAt, boolean complete,
+            String ruleVersion, Inputs inputs, List<CityResult> cities, List<InventoryResult> inventory,
+            List<ExpenseSummary> expenses, List<DocumentLine> documents, MasterClassSummary masterClass,
+            List<MasterClassDocumentLine> masterClassDocuments, Controls controls, List<Warning> warnings,
+            List<ExpenseLine> expenseLines, PeriodPolicy periodPolicy, List<PeriodDiagnostic> periodDiagnostics,
+            boolean periodDiagnosticsTruncated, Map<String, SectionStatus> sections, TaxDetails taxDetails,
+            Map<String,MasterClassSummary> masterClassesByCity,Map<String,List<MasterClassDocumentLine>> masterClassDocumentsByCity,
+            List<GrossProfitLine> grossProfitLines) {
+        this(ok,month,calculatedAt,complete,ruleVersion,inputs,cities,inventory,expenses,documents,masterClass,
+                masterClassDocuments,controls,warnings,expenseLines,periodPolicy,periodDiagnostics,periodDiagnosticsTruncated,
+                sections,taxDetails,masterClassesByCity,masterClassDocumentsByCity,grossProfitLines,null,null);
+    }
     public FolioProfitReportResponse(boolean ok, String month, OffsetDateTime calculatedAt, boolean complete,
             String ruleVersion, Inputs inputs, List<CityResult> cities, List<InventoryResult> inventory,
             List<ExpenseSummary> expenses, List<DocumentLine> documents, MasterClassSummary masterClass,

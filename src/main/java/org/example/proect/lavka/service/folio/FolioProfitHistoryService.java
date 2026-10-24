@@ -41,6 +41,7 @@ public class FolioProfitHistoryService {
         if(existing.isPresent()) return replay(existing.get(),month,hash);
         // Pin once, before reserving a new revision; a historical replay never reads current settings.
         var taxSettings=calculator.resolveTaxSettings(request.taxSettingsVersion());
+        var scopeSettings=calculator.resolveScopeSettings(request.expectedScopeSettingsVersion());
         Row reserved;
         try { reserved=dao.reserve(source,month,requestId,hash,raw); }
         catch(DuplicateKeyException concurrent) { return replay(dao.byRequest(source,requestId).orElseThrow(),month,hash); }
@@ -51,7 +52,7 @@ public class FolioProfitHistoryService {
             report=calculator.calculate(new FolioProfitReportService.Request(month,request.odesaTaxShare(),request.rubToUahRate(),
                     request.odesaMasterClassIncome(),request.odesaMasterClassReturn(),request.odesaAdditionalSalary(),
                     request.kyivStockWarehouseIds(),request.odesaStockWarehouseIds(),request.kyivAdditionalSalary(),
-                    request.kyivEmployeeCount(),request.odesaEmployeeCount()),true,taxSettings);
+                    request.kyivEmployeeCount(),request.odesaEmployeeCount()),true,taxSettings,scopeSettings);
             payload=write(Objects.requireNonNull(report));
         } catch(RuntimeException failed) {
             String code=failed instanceof FolioAccountValidationException validation ? validation.getCode() : "PROFIT_SAVED_CALCULATION_FAILED";
@@ -97,7 +98,7 @@ public class FolioProfitHistoryService {
         List<String> missing=revisions.stream().filter(r->r.report()==null).map(Revision::month).toList();
         List<Month> months=revisions.stream().map(r->{ var p=r.report(); return new Month(r.month(),r.revisionId(),r.status(),r.latestRevisionId(),r.latestStatus(),
                 p==null?null:p.calculatedAt().toString(),p==null?null:p.ruleVersion(),r.auditComplete(),p==null?null:p.inputs(),
-                p==null?List.of():p.cities(),p==null?List.of():p.inventory()); }).toList();
+                p==null?List.of():p.cities(),p==null?List.of():p.inventory(),p==null?null:p.scopeSettings(),p==null?null:p.scopeCatalog()); }).toList();
         boolean complete=missing.isEmpty()&&revisions.stream().allMatch(r->r.status().equals("COMPLETED"));
         List<Totals> totals=List.of(FolioProfitHistoryTotals.calculate("KYIV",revisions),FolioProfitHistoryTotals.calculate("ODESA",revisions));
         return new Range(true,first.toString(),last.toString(),source(),complete&&totals.stream().allMatch(Totals::complete),missing,months,totals,

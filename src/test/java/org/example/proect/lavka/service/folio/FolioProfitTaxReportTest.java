@@ -32,7 +32,7 @@ class FolioProfitTaxReportTest {
         setup(List.of(duplicate,duplicate,payment(2,"МАЛАФОП","14"),payment(3,"КУЗНФОП","21"),
                 payment(4,"КОНДФОП","28"),payment(5,"НЕИЗВФОП","5"),payment(6,"МИХНФОП КУЗНФОП","11")));
         var report=service.calculate(request,true);
-        assertThat(report.ruleVersion()).isEqualTo("2026-10-15.1");
+        assertThat(report.ruleVersion()).isEqualTo("2026-10-24.1");
         assertThat(report.complete()).isFalse();
         assertThat(report.controls().selectedDocumentCount()).isEqualTo(6);
         assertThat(report.taxDetails().retailAmount()).isEqualByComparingTo("21");
