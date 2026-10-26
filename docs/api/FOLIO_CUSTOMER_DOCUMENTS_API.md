@@ -299,3 +299,32 @@ registry associations. This does not change Folio documents, account state, stoc
 Woo orders or money. Folio receipt-catalogue is a separate unchanged endpoint.
 Validation: 14 focused Java tests pass (basis parsing/archive plus list filters and
 cursor SQL); live MSSQL reads and production deployment were not performed.
+
+### Private document values for the NP registry — 2026-10-26
+
+GET `/admin/folio/customer-documents/{documentType}/{documentId}/values` with exact
+`partnerShortName`; types ACCOUNT/EXPENSE/RECEIPT map to Cyrillic С/Р/П. Positive ID,
+partner length 1–8, exact SCL_NAKL.UNICUM_NUM/BRIEFORG/TYPE_DOC and non-return header
+are required. Missing or ambiguous header returns not found. This new route requires
+`X-Auth-Token` equal to LavkaApiProperties.token (blank config=503, absent/wrong=401)
+and uses no-store. It is not added to customer document DTOs or the customer proxy.
+
+Response `{ok:true, values:{documentType,documentId,partnerShortName,documentNumber,
+documentNumberSuffix,documentDate,warehouseId,documentAmount,shipmentAmount,
+accountingAmount,lineCount,missingAmountLines,missingAccountingLines,currency,source}}`.
+Base currency is UAH. documentAmount=SCL_NAKL.SUM_POR; shipmentAmount=sum of the
+exact document's SCL_MOVE.SUM_PREDM; accountingAmount=sum SCL_MOVE.SUM_UCHET.
+No ISNULL-to-zero for money: zero lines or any null amount/cost line makes the
+corresponding total null. Explicit zero is retained. BigDecimal HALF_UP to 2 decimals
+is applied after summing. Source ACTIVE_LEDGER; archive and return documents are not
+included. Accounting prices are not recalculated; these values reflect the current
+stored ledger and may change after normal Folio recalculation.
+
+SQL uses parameterized, bounded document reads and SQL Server 2000-compatible
+aggregates; no business-data writes, procedures, notifications or stock changes.
+WP 0.10.9 rechecks returned identity/header, stores a dated snapshot per confirmed
+link and permits explicit refresh of older links. It never allocates these totals
+to a shipment or sums account+expense/duplicate-TTN amounts as revenue. Incoming
+receipt supplier verification remains explicit. Local mocked tests cover complete,
+partial, empty and zero costs, reference validation and authentication. Production
+Java/SQL execution of this new route is not verified until deployment.
