@@ -252,13 +252,20 @@ Requires the same admin API authentication. No writes, stock, payment, archive
 restore or Woo operations. `documentId` is the internal expense ID, not printed number.
 
 Response: `ok`, `partnerShortName`, `expenseId`, `basis`, `status`, `account`.
-Statuses: `MATCHED`, `NO_BASIS`, `UNRECOGNIZED_BASIS`, `NOT_FOUND`, `AMBIGUOUS`.
+Statuses: `MATCHED`, `NO_BASIS`, `UNRECOGNIZED_BASIS`, `NOT_FOUND`, `AMBIGUOUS`,
+`INCOMPLETE_REFERENCE`, `UNRECOGNIZED_REFERENCE`, `CONFLICTING_REFERENCE`.
+Additional evidence: `referenceSource=HEADER_FIELDS|BASIS_TEXT`, `accountNumber`,
+`accountDate` (Java LocalDate; consumers accept ISO or date components).
 Only MATCHED supplies a header with `documentType=ACCOUNT`, `documentId`,
 `documentNumber`, `documentNumberSuffix`, `documentDate`, `warehouseId`,
 `partnerShortName`, `source=ACTIVE_LEDGER|ARCHIVE_LEDGER`.
 
-Read the expense basis from SCL_NAKL by exact UNICUM_NUM + BRIEFORG + Cyrillic Р,
-excluding returns. Fully parse `number+suffix от/о/від DD.MM.YYYY`; suffix is optional.
+Read OSNOVANIE, NUMSCHETPL and SCH_DATE from SCL_NAKL by exact UNICUM_NUM +
+BRIEFORG + Cyrillic Р, excluding returns. Prefer NUMSCHETPL (number+suffix) and
+SCH_DATE. A partial or malformed structured reference does not fall back to text.
+If a fully parsed OSNOVANIE contradicts those fields, return CONFLICTING_REFERENCE
+without a candidate. Only when both structured fields are absent, fully parse
+`number+suffix от/о/o/від DD.MM.YYYY`; suffix is optional. Latin `o` is supported.
 Dates are strict. Free text, extra suffix text after the date and invalid dates are
 not guessed. Search exact number/suffix/date/partner + Cyrillic С in SCL_NAKL and
 SCL_ARCN. Use two TOP 2 parameterized queries compatible with SQL Server 2000;
@@ -268,12 +275,21 @@ for consumers; archived headers include closed, copied or deleted history and ar
 not evidence of current accounting or payment.
 
 Owner rule: an expense suffices for NP registry shipment association. Account and
-Woo associations are desirable but optional. PHP 0.10.7 offers a unique account in
-its preview and saves both links atomically after manager confirmation. An unavailable
+Woo associations are desirable but optional. PHP 0.10.11 shows a unique account
+in a separate card (its own internal ID/printed number/date, partner/warehouse/source).
+An unchecked per-expense checkbox must be explicitly selected to include that
+account in the final atomic confirmation. Expense-only confirmation remains allowed.
+Account choices are validated against the immutable preview, not trusted client data. An unavailable
 endpoint, no match or ambiguity must not block expense-only association. A Woo suffix
 does not identify a Woo order. Existing manually selected account is manager evidence.
 
-Sources: current customer-document basis mapping and catalog SCL_ARCN mirror schema;
+Sources: current customer-document mapping, catalog SCL_ARCN mirror schema,
+column snapshot `01_live_colums_corect.rpt`, and manufacturer `Структура7.doc`
+(NUMSCHETPL/SCH_DATE sections). The manual states these values are copied when a
+bill is loaded into an expense, but remain editable and may denote a tax invoice;
+they are not an immutable parent-ID/FK. Therefore the proposed account requires
+manager confirmation. No direct parent-document ID was found in the captured
+SCL_NAKL/SCL_ADDN schema. This is not a claim about every other table or custom object;
 archive schema/production execution has not been re-verified in this task. NOLOCK
 reads can observe concurrent edits; a match is header evidence, not a database FK.
 Validation: resolver tests (archive/exact keys, ambiguity, no account, invalid/free-text

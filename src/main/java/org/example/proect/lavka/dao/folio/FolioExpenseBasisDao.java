@@ -13,9 +13,10 @@ import java.util.List;
 public class FolioExpenseBasisDao {
     private final JdbcTemplate jdbc;
     public FolioExpenseBasisDao(@Qualifier("folioJdbcTemplate") JdbcTemplate jdbc) { this.jdbc=jdbc; }
-    public List<String> expenseBasis(String partner, long id) {
-        return jdbc.query("SELECT OSNOVANIE FROM dbo.SCL_NAKL WITH (NOLOCK) WHERE UNICUM_NUM=? AND BRIEFORG=? AND TYPE_DOC=? AND ISNULL(VOZVRAT_PR,0)=0",
-                (rs,n)->rs.getString(1),id,partner,"Р");
+    public List<ExpenseReference> expenseBasis(String partner, long id) {
+        return jdbc.query("SELECT OSNOVANIE,NUMSCHETPL,SCH_DATE FROM dbo.SCL_NAKL WITH (NOLOCK) WHERE UNICUM_NUM=? AND BRIEFORG=? AND TYPE_DOC=? AND ISNULL(VOZVRAT_PR,0)=0",
+                (rs,n)->new ExpenseReference(rs.getString("OSNOVANIE"),rs.getString("NUMSCHETPL"),
+                        rs.getTimestamp("SCH_DATE")==null?null:rs.getTimestamp("SCH_DATE").toLocalDateTime().toLocalDate()),id,partner,"Р");
     }
     public List<Header> accounts(String partner, BigDecimal number, String suffix, LocalDate date, boolean archive) {
         String table=archive ? "SCL_ARCN" : "SCL_NAKL";
@@ -26,6 +27,7 @@ public class FolioExpenseBasisDao {
                         rs.getObject("ID_SCLAD")==null ? null : rs.getInt("ID_SCLAD"),rs.getString("BRIEFORG").trim(),archive ? "ARCHIVE_LEDGER" : "ACTIVE_LEDGER"),
                 "С",partner,number,suffix,Timestamp.valueOf(date.atStartOfDay()),Timestamp.valueOf(date.plusDays(1).atStartOfDay()));
     }
+    public record ExpenseReference(String basis,String accountNumber,LocalDate accountDate) {}
     public record Header(String documentType,long documentId,String documentNumber,String documentNumberSuffix,
                          LocalDate documentDate,Integer warehouseId,String partnerShortName,String source) {}
 }
