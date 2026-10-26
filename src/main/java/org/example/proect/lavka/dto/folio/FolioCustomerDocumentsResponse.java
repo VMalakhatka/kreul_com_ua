@@ -54,8 +54,16 @@ public record FolioCustomerDocumentsResponse(
             int lineCount,
             BigDecimal allocatedAmount,
             boolean canRepeatOrder,
-            String source
+            String source,
+            String sourceInfo
     ) {
+        public DocumentSummary(FolioCustomerDocumentType type,long id,String number,String suffix,LocalDateTime date,
+                BigDecimal amount,BigDecimal currencyAmount,String currency,Integer warehouse,Boolean accounted,
+                Boolean nonCash,Boolean returned,Boolean paymentDirection,String operation,String additional,
+                int lines,BigDecimal allocated,boolean repeat,String source) {
+            this(type,id,number,suffix,date,amount,currencyAmount,currency,warehouse,accounted,nonCash,returned,
+                    paymentDirection,operation,additional,lines,allocated,repeat,source,null);
+        }
     }
 
     public record Issue(String code, String message, Map<String, Object> details) {

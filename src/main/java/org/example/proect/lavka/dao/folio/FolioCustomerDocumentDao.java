@@ -50,6 +50,13 @@ public class FolioCustomerDocumentDao {
     public List<FolioCustomerDocumentsResponse.DocumentSummary> findDocuments(
             String partnerShortName, LocalDate dateFrom, LocalDate dateTo,
             List<FolioCustomerDocumentType> types, int fetchLimit, DocumentCursor cursor, boolean preordersOnly) {
+        return findDocuments(partnerShortName,dateFrom,dateTo,types,fetchLimit,cursor,preordersOnly,List.of(),null);
+    }
+
+    public List<FolioCustomerDocumentsResponse.DocumentSummary> findDocuments(
+            String partnerShortName, LocalDate dateFrom, LocalDate dateTo,
+            List<FolioCustomerDocumentType> types, int fetchLimit, DocumentCursor cursor, boolean preordersOnly,
+            List<Integer> warehouseIds, String operationKind) {
         if (preordersOnly) types = List.of(FolioCustomerDocumentType.ACCOUNT);
         StringBuilder union = new StringBuilder();
         List<Object> params = new ArrayList<>();
@@ -81,11 +88,19 @@ public class FolioCustomerDocumentDao {
                 .append(union)
                 .append(") d");
 
+        sql.append(" WHERE 1=1");
+        if (!warehouseIds.isEmpty()) {
+            sql.append(" AND d.WAREHOUSE_ID IN (").append(String.join(",",java.util.Collections.nCopies(warehouseIds.size(),"?"))).append(")");
+            params.addAll(warehouseIds);
+        }
+        if (operationKind!=null && !operationKind.isBlank()) {
+            sql.append(" AND CHARINDEX(?,d.OPERATION_KIND)>0"); params.add(operationKind);
+        }
         if (cursor != null) {
-            sql.append("""
-                    WHERE d.DOCUMENT_DATE < ?
+            sql.append(" " + """
+                    AND (d.DOCUMENT_DATE < ?
                        OR (d.DOCUMENT_DATE = ? AND d.TYPE_RANK > ?)
-                       OR (d.DOCUMENT_DATE = ? AND d.TYPE_RANK = ? AND d.DOCUMENT_ID < ?)
+                       OR (d.DOCUMENT_DATE = ? AND d.TYPE_RANK = ? AND d.DOCUMENT_ID < ?))
                     """);
             Timestamp cursorDate = Timestamp.valueOf(cursor.documentDate());
             params.add(cursorDate);
@@ -119,7 +134,8 @@ public class FolioCustomerDocumentDao {
                     rs.getInt("LINE_COUNT"),
                     moneyNullable(rs.getBigDecimal("ALLOCATED_AMOUNT")),
                     type.repeatable() && !Boolean.TRUE.equals(returnDocument) && rs.getInt("LINE_COUNT") > 0,
-                    "ACTIVE_LEDGER"
+                    "ACTIVE_LEDGER",
+                    trimToNull(rs.getString("SOURCE_INFO"))
             );
         }, params.toArray());
     }
@@ -452,7 +468,7 @@ public class FolioCustomerDocumentDao {
                        n.VOZVRAT_PR AS RETURN_DOCUMENT,
                        CAST(NULL AS bit) AS PAYMENT_DIRECTION_RAW,
                        n.VID_DOC AS OPERATION_KIND,
-                       n.L_CP2_PLAT AS ADDITIONAL_INFO,
+                       n.L_CP2_PLAT AS ADDITIONAL_INFO, n.L_CP1_PLAT AS SOURCE_INFO,
                        (SELECT COUNT(*) FROM dbo.SCL_MOVE m WITH (NOLOCK)
                          WHERE m.UNICUM_NUM = n.UNICUM_NUM) AS LINE_COUNT,
                        CAST(NULL AS float) AS ALLOCATED_AMOUNT
@@ -475,7 +491,7 @@ public class FolioCustomerDocumentDao {
                        CAST(NULL AS bit) AS RETURN_DOCUMENT,
                        p.TYPE_POR AS PAYMENT_DIRECTION_RAW,
                        p.VID_DOC AS OPERATION_KIND,
-                       p.DOCUMN_POR AS ADDITIONAL_INFO,
+                       p.DOCUMN_POR AS ADDITIONAL_INFO, p.IST_INF AS SOURCE_INFO,
                        (SELECT COUNT(*) FROM dbo.SCL_PMOV a WITH (NOLOCK)
                          WHERE a.UNICUM_PLT = p.UNICUM_PLT) AS LINE_COUNT,
                        (SELECT SUM(ISNULL(a.SUM_PREDM, 0)) FROM dbo.SCL_PMOV a WITH (NOLOCK)

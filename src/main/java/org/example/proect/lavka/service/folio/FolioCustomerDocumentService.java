@@ -62,6 +62,19 @@ public class FolioCustomerDocumentService {
     @Transactional(transactionManager = "mssqlTransactionManager", readOnly = true)
     public FolioCustomerDocumentsResponse list(String partnerShortName, LocalDate dateFrom, LocalDate dateTo,
             String types, Integer limit, String cursor, boolean preordersOnly) {
+        return list(partnerShortName,dateFrom,dateTo,types,limit,cursor,preordersOnly,null,null);
+    }
+
+    @Transactional(transactionManager = "mssqlTransactionManager", readOnly = true)
+    public FolioCustomerDocumentsResponse list(String partnerShortName, LocalDate dateFrom, LocalDate dateTo,
+            String types, Integer limit, String cursor, boolean preordersOnly, String warehouses, String operation) {
+        List<Integer> warehouseIds=new ArrayList<>();
+        if (warehouses!=null && !warehouses.isBlank()) {
+            if (!warehouses.matches("[1-9][0-9]{0,8}(,[1-9][0-9]{0,8}){0,19}")) throw validation("invalid_warehouses","Choose up to 20 warehouse IDs");
+            for (String id:warehouses.split(",")) if (!warehouseIds.contains(Integer.valueOf(id))) warehouseIds.add(Integer.valueOf(id));
+        }
+        String operationKind=operation==null ? null : operation.trim();
+        if (operationKind!=null && operationKind.length()>100) throw validation("invalid_operation","Operation filter is too long");
         String partnerId = normalizePartnerShortName(partnerShortName);
         PartnerRow partner = findPartner(partnerId);
         LocalDate today = LocalDate.now(clock);
@@ -81,16 +94,17 @@ public class FolioCustomerDocumentService {
         DocumentCursor decodedCursor = decodeCursor(cursor);
         validateCursor(decodedCursor, normalizedFrom, normalizedTo, normalizedTypes);
 
-        List<FolioCustomerDocumentsResponse.DocumentSummary> fetched = preordersOnly ? dao.findDocuments(
-                partnerId, normalizedFrom, normalizedTo, normalizedTypes, normalizedLimit + 1, decodedCursor, true
-        ) : dao.findDocuments(
-                partnerId,
-                normalizedFrom,
-                normalizedTo,
-                normalizedTypes,
-                normalizedLimit + 1,
-                decodedCursor
-        );
+        List<FolioCustomerDocumentsResponse.DocumentSummary> fetched;
+        if (!warehouseIds.isEmpty() || (operationKind != null && !operationKind.isBlank())) {
+            fetched = dao.findDocuments(partnerId, normalizedFrom, normalizedTo, normalizedTypes,
+                    normalizedLimit + 1, decodedCursor, preordersOnly, warehouseIds, operationKind);
+        } else if (preordersOnly) {
+            fetched = dao.findDocuments(partnerId, normalizedFrom, normalizedTo, normalizedTypes,
+                    normalizedLimit + 1, decodedCursor, true);
+        } else {
+            fetched = dao.findDocuments(partnerId, normalizedFrom, normalizedTo, normalizedTypes,
+                    normalizedLimit + 1, decodedCursor);
+        }
         boolean hasMore = fetched.size() > normalizedLimit;
         List<FolioCustomerDocumentsResponse.DocumentSummary> page = hasMore
                 ? List.copyOf(fetched.subList(0, normalizedLimit))

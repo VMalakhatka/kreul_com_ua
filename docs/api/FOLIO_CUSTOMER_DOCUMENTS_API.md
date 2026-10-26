@@ -242,3 +242,60 @@ Java не создаёт корзину и черновик: это состоя
 | 503 | ошибка чтения ФОЛИО |
 
 Фронт должен показывать клиенту нейтральный текст и логировать `reqId` из ответа для поиска серверной ошибки.
+
+
+## Expense basis account — 2026-10-26
+
+`GET /admin/folio/customer-documents/EXPENSE/{documentId}/basis-account?partnerShortName=...`
+is a separate manager read, not a change to the active-only list/detail contract.
+Requires the same admin API authentication. No writes, stock, payment, archive
+restore or Woo operations. `documentId` is the internal expense ID, not printed number.
+
+Response: `ok`, `partnerShortName`, `expenseId`, `basis`, `status`, `account`.
+Statuses: `MATCHED`, `NO_BASIS`, `UNRECOGNIZED_BASIS`, `NOT_FOUND`, `AMBIGUOUS`.
+Only MATCHED supplies a header with `documentType=ACCOUNT`, `documentId`,
+`documentNumber`, `documentNumberSuffix`, `documentDate`, `warehouseId`,
+`partnerShortName`, `source=ACTIVE_LEDGER|ARCHIVE_LEDGER`.
+
+Read the expense basis from SCL_NAKL by exact UNICUM_NUM + BRIEFORG + Cyrillic Р,
+excluding returns. Fully parse `number+suffix от/о/від DD.MM.YYYY`; suffix is optional.
+Dates are strict. Free text, extra suffix text after the date and invalid dates are
+not guessed. Search exact number/suffix/date/partner + Cyrillic С in SCL_NAKL and
+SCL_ARCN. Use two TOP 2 parameterized queries compatible with SQL Server 2000;
+more than one candidate across both sources means AMBIGUOUS, even for repeated IDs.
+No first-row preference for active or archive. A source-qualified identity is required
+for consumers; archived headers include closed, copied or deleted history and are
+not evidence of current accounting or payment.
+
+Owner rule: an expense suffices for NP registry shipment association. Account and
+Woo associations are desirable but optional. PHP 0.10.7 offers a unique account in
+its preview and saves both links atomically after manager confirmation. An unavailable
+endpoint, no match or ambiguity must not block expense-only association. A Woo suffix
+does not identify a Woo order. Existing manually selected account is manager evidence.
+
+Sources: current customer-document basis mapping and catalog SCL_ARCN mirror schema;
+archive schema/production execution has not been re-verified in this task. NOLOCK
+reads can observe concurrent edits; a match is header evidence, not a database FK.
+Validation: resolver tests (archive/exact keys, ambiguity, no account, invalid/free-text
+basis, missing expense, input validation), bounded parameterized DAO SQL test and
+existing customer-document service tests. No live MSSQL writes or test shipments.
+
+### Multi-warehouse/operation selection — 2026-10-26
+
+The existing list GET accepts optional `warehouses` (CSV of up to 20 positive
+warehouse IDs, deduplicated) and `operation` (trimmed substring, max 100 chars).
+Both predicates apply before TOP and keyset pagination, retaining the grouped
+cursor condition. They combine with the existing partner, date and type filters.
+Change filters by starting a new cursor sequence. Operation uses parameterized
+CHARINDEX (SQL Server 2000 compatible, literal substring, no wildcard expansion).
+The existing response shape remains compatible; each DocumentSummary adds
+`sourceInfo`: SCL_NAKL.L_CP1_PLAT for stock documents, payment header IST_INF for payments.
+`additionalInfo` and operationKind retain their existing mappings. Warehouse names
+come from /ref/warehouses. Missing strings stay null; this is not a financial rule.
+
+NP plugin 0.10.8 uses EXPENSE/other for internal transfers and allows a manager to
+select up to 20 document headers across warehouses, preview, then atomically save
+registry associations. This does not change Folio documents, account state, stock,
+Woo orders or money. Folio receipt-catalogue is a separate unchanged endpoint.
+Validation: 14 focused Java tests pass (basis parsing/archive plus list filters and
+cursor SQL); live MSSQL reads and production deployment were not performed.

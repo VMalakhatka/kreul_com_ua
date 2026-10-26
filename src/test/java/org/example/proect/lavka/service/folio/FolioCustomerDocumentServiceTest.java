@@ -33,6 +33,19 @@ class FolioCustomerDocumentServiceTest {
             Instant.parse("2026-08-14T10:00:00Z"), ZoneOffset.UTC
     );
 
+    @Test void multiWarehouseFiltersAreValidatedAndPassedBeforePaging() {
+        FolioCustomerDocumentDao dao = mock(FolioCustomerDocumentDao.class);
+        when(dao.findPartner("A")).thenReturn(Optional.of(new PartnerRow("A", "Client")));
+        when(dao.findDocuments("A", LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30),
+                List.of(FolioCustomerDocumentType.EXPENSE), 51, null, false, List.of(1,7), "ПЕРЕМЕЩЕНИЕ")).thenReturn(List.of());
+        var service = new FolioCustomerDocumentService(dao, CLOCK);
+        var result = service.list("A", LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30), "EXPENSE", 50, null, false, "1,7,1", " ПЕРЕМЕЩЕНИЕ ");
+        assertThat(result.documents()).isEmpty();
+        verify(dao).findDocuments("A", LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30), List.of(FolioCustomerDocumentType.EXPENSE), 51, null, false, List.of(1,7), "ПЕРЕМЕЩЕНИЕ");
+        assertThatThrownBy(() -> service.list("A", null,null,"EXPENSE",50,null,false,"1,0",null)).isInstanceOf(FolioAccountValidationException.class);
+        assertThatThrownBy(() -> service.list("A", null,null,"EXPENSE",50,null,false,"1","x".repeat(101))).isInstanceOf(FolioAccountValidationException.class);
+    }
+
     @Test
     void preorderFilterUsesSixCalendarMonthsAndAppliesBeforePagination() {
         FolioCustomerDocumentDao dao = mock(FolioCustomerDocumentDao.class);

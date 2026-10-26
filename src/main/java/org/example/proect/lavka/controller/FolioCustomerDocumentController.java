@@ -22,6 +22,7 @@ import java.time.LocalDate;
 public class FolioCustomerDocumentController {
 
     private final FolioCustomerDocumentService service;
+    private final org.example.proect.lavka.service.folio.FolioExpenseBasisService expenseBasis;
 
     @GetMapping
     @Operation(
@@ -43,10 +44,19 @@ public class FolioCustomerDocumentController {
             @RequestParam(required = false) Integer limit,
             @Parameter(description = "Непрозрачный nextCursor из предыдущего ответа")
             @RequestParam(required = false) String cursor,
-            @RequestParam(defaultValue = "false") boolean preordersOnly) {
+            @RequestParam(defaultValue = "false") boolean preordersOnly,
+            @RequestParam(required = false) String warehouses,
+            @RequestParam(required = false) String operation) {
         return ResponseEntity.ok(service.list(
-                partnerShortName, dateFrom, dateTo, types, limit, cursor, preordersOnly
+                partnerShortName, dateFrom, dateTo, types, limit, cursor, preordersOnly, warehouses, operation
         ));
+    }
+
+    @GetMapping("/EXPENSE/{documentId}/basis-account")
+    @Operation(summary = "Read exact expense basis account from active and archive headers")
+    public ResponseEntity<org.example.proect.lavka.service.folio.FolioExpenseBasisService.Result> basisAccount(
+            @PathVariable long documentId, @RequestParam String partnerShortName) {
+        return ResponseEntity.ok(expenseBasis.resolve(partnerShortName, documentId));
     }
 
     @GetMapping("/{documentType}/{documentId}")
