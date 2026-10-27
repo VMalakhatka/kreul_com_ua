@@ -40,6 +40,18 @@ public class FolioAccountService {
 
     @Transactional(transactionManager = "mssqlTransactionManager", isolation = Isolation.SERIALIZABLE)
     public FolioAccountResponse create(CreateFolioAccountRequest request) {
+        return createAccount(request, null);
+    }
+
+    /** Only called by the authenticated manager order route; never by ordinary checkout. */
+    @Transactional(transactionManager = "mssqlTransactionManager", isolation = Isolation.SERIALIZABLE)
+    public FolioAccountResponse createUsingPool(CreateFolioAccountRequest request, ManagerStockPool pool) {
+        if (!Boolean.TRUE.equals(request.accountingEnabled()) || request.warehouseId() != pool.targetWarehouseId())
+            throw new FolioAccountValidationException("invalid_manager_pool", "Pool target must match the accounting account");
+        return createAccount(request, pool);
+    }
+
+    private FolioAccountResponse createAccount(CreateFolioAccountRequest request, ManagerStockPool pool) {
         validateOperationType(request.operationType());
         validateCreateItems(request.items());
 
@@ -60,7 +72,8 @@ public class FolioAccountService {
 
         if (accountingEnabled) {
             for (var item : request.items()) {
-                assertStockAvailable(item.sku().trim(), request.warehouseId(), item.quantity(), false);
+                if (pool == null) assertStockAvailable(item.sku().trim(), request.warehouseId(), item.quantity(), false);
+                else pool.requireAvailable(dao, item.sku().trim(), item.quantity());
             }
         }
 
@@ -127,7 +140,8 @@ public class FolioAccountService {
         for (var item : request.items()) {
             String sku = item.sku().trim();
             FolioAccountDao.StockRow product = accountingEnabled
-                    ? lockStockOrThrow(sku, request.warehouseId(), item.quantity())
+                    ? (pool == null ? lockStockOrThrow(sku, request.warehouseId(), item.quantity())
+                        : dao.lockStock(sku, request.warehouseId()).orElseThrow(() -> new FolioAccountConflictException("stock_not_found", "Pool target stock row missing")))
                     : dao.findStock(sku, request.warehouseId())
                             .orElseThrow(() -> new FolioAccountConflictException("stock_not_found",
                                     "Stock row not found: " + sku + " warehouse=" + request.warehouseId()));
@@ -135,7 +149,7 @@ public class FolioAccountService {
             BigDecimal lineRetailAmount = item.retailAmount() == null ? lineAmount : item.retailAmount();
             BigDecimal lineCurrencyAmount = item.currencyAmount() == null ? BigDecimal.ZERO : item.currencyAmount();
             BigDecimal lineCurrencyPrice = item.currencyPrice() == null ? BigDecimal.ZERO : item.currencyPrice();
-            if (accountingEnabled) {
+            if (accountingEnabled && pool == null) {
                 assertStockAvailable(product, item.quantity());
             }
             dao.insertLine(new FolioAccountDao.LineWrite(
@@ -169,7 +183,8 @@ public class FolioAccountService {
                     product.ball5()
             ));
             if (accountingEnabled) {
-                reserveOrThrow(sku, request.warehouseId(), item.quantity());
+                if (pool == null) reserveOrThrow(sku, request.warehouseId(), item.quantity());
+                else pool.reserve(dao, sku, item.quantity());
             }
         }
 

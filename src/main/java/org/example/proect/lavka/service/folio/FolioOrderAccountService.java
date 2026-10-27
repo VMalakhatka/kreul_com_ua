@@ -37,6 +37,24 @@ public class FolioOrderAccountService {
 
     @Transactional(transactionManager = "mssqlTransactionManager", isolation = Isolation.SERIALIZABLE)
     public FolioOrderAccountResponse createFromWooOrder(FolioOrderAccountRequest request) {
+        return createOrder(request, null);
+    }
+
+    @Transactional(transactionManager = "mssqlTransactionManager", isolation = Isolation.SERIALIZABLE)
+    public FolioOrderAccountResponse createManagerOrder(FolioOrderAccountRequest request, ManagerStockPool pool) {
+        validateRequest(request);
+        pool.validate(request);
+        if (Boolean.TRUE.equals(request.previewOnly())) return createOrder(request, pool);
+        // Lock the operation before allocation: changed stock must never turn a replay into new documents.
+        String key=request.folioAccountHeader().externalRequestId().trim();
+        if (accountDao.findDocumentIdByExternalRequestId(key).isPresent())
+            throw new FolioAccountConflictException("manager_operation_exists", "Manager operation already exists; inspect the saved documents");
+        FolioOrderAccountResponse result=createOrder(request, pool);
+        accountDao.rememberExternalRequest(key,result.documents().get(0).documentId());
+        return result;
+    }
+
+    private FolioOrderAccountResponse createOrder(FolioOrderAccountRequest request, ManagerStockPool pool) {
         boolean previewOnly = Boolean.TRUE.equals(request.previewOnly());
         validateRequest(request);
 
@@ -44,7 +62,7 @@ public class FolioOrderAccountService {
         OrderMode orderMode = orderMode(request);
         boolean accountingEnabled = orderMode.accountingEnabled();
         AllocationResult allocation = accountingEnabled
-                ? allocateAccounting(request, !previewOnly)
+                ? allocateAccounting(request, !previewOnly, pool)
                 : allocateSingleNonAccounting(request, "non_accounting");
 
         List<FolioOrderAccountResponse.Document> documents = new ArrayList<>();
@@ -55,7 +73,7 @@ public class FolioOrderAccountService {
             documents.add(previewOnly
                     ? previewDocument(group, header.documentDate(), accountingEnabled, orderMode.documentType(),
                     previewNumbers.next(counterCode(accountingEnabled)))
-                    : createDocument(request, group, accountingEnabled, orderMode.documentType()));
+                    : createDocument(request, group, accountingEnabled, orderMode.documentType(), pool));
         }
 
         if (!allocation.missingItems().isEmpty()) {
@@ -71,7 +89,7 @@ public class FolioOrderAccountService {
             documents.add(previewOnly
                     ? previewDocument(missingGroup, header.documentDate(), false, "missing_stock_account",
                     previewNumbers.next(counterCode(false)))
-                    : createDocument(request, missingGroup, false, "missing_stock_account"));
+                    : createDocument(request, missingGroup, false, "missing_stock_account", null));
         }
 
         return new FolioOrderAccountResponse(
@@ -84,7 +102,7 @@ public class FolioOrderAccountService {
         );
     }
 
-    private AllocationResult allocateAccounting(FolioOrderAccountRequest request, boolean lockStockRows) {
+    private AllocationResult allocateAccounting(FolioOrderAccountRequest request, boolean lockStockRows, ManagerStockPool pool) {
         Map<Integer, DocumentGroup> groups = new LinkedHashMap<>();
         List<AllocatedItem> missing = new ArrayList<>();
         List<FolioOrderAccountResponse.ApiMessage> warnings = new ArrayList<>();
@@ -103,9 +121,10 @@ public class FolioOrderAccountService {
                     int warehouseId = parseWarehouseId(candidate.id(), sku);
                     String stockKey = sku + "\u0000" + warehouseId;
                     BigDecimal available = availableCache.computeIfAbsent(stockKey,
-                            k -> readStock(sku, warehouseId, lockStockRows)
-                                    .map(FolioAccountDao.StockRow::freeQuantity)
-                                    .orElse(BigDecimal.ZERO));
+                            k -> pool != null && warehouseId == pool.targetWarehouseId()
+                                    ? pool.available(accountDao, sku, lockStockRows)
+                                    : readStock(sku, warehouseId, lockStockRows)
+                                        .map(FolioAccountDao.StockRow::freeQuantity).orElse(BigDecimal.ZERO));
                     if (available.compareTo(BigDecimal.ZERO) <= 0) {
                         continue;
                     }
@@ -163,7 +182,7 @@ public class FolioOrderAccountService {
     private FolioOrderAccountResponse.Document createDocument(FolioOrderAccountRequest source,
                                                              DocumentGroup group,
                                                              boolean accountingEnabled,
-                                                             String documentType) {
+                                                             String documentType, ManagerStockPool pool) {
         FolioOrderAccountRequest.Header base = source.folioAccountHeader();
         List<AllocatedItem> mergedItems = mergeItems(group.items());
         CreateFolioAccountRequest request = new CreateFolioAccountRequest(
@@ -209,7 +228,8 @@ public class FolioOrderAccountService {
                         .toList()
         );
 
-        FolioAccountResponse account = accountService.create(request);
+        FolioAccountResponse account = pool != null && accountingEnabled && group.warehouseId() == pool.targetWarehouseId()
+                ? accountService.createUsingPool(request, pool) : accountService.create(request);
         return new FolioOrderAccountResponse.Document(
                 account.documentId(),
                 account.documentNumber(),

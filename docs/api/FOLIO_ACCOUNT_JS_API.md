@@ -682,3 +682,62 @@ Java добавляет «Нет на складе» только докумен
 в корзину WordPress сам передаёт пометку для проверенного остатка недостачи.
 Preview/apply, контроль владельца и идемпотентность остаются обязательными.
 Сначала обновить Java, затем WordPress; старые документы не переклассифицируются.
+
+## Manager pooled availability (2026-10-27)
+
+Owner: `FolioManagerOrderController`, `ManagerStockPool`, `FolioOrderAccountService`.
+`POST /admin/folio/manager-order-accounts` is a separate server-to-server route;
+requires configured `LavkaApiProperties.token` in `X-Auth-Token` (missing server
+configuration: 503; missing/wrong supplied token: 401). WordPress additionally
+requires `manage_woocommerce` and its manager nonce. Never expose the token or
+this operation to customer forms. The ordinary `/order-accounts` route is unchanged.
+
+Request wrapper:
+
+```json
+{
+  "order": { "preview_only": true, "...": "existing folio-order-preview/v1 request" },
+  "stockPool": { "targetWarehouseId": 7, "auxiliaryWarehouseIds": [9] }
+}
+```
+
+Numbers are illustrative; use the live warehouse directory. Target must appear
+in allocation candidates. 1–20 unique positive auxiliary IDs, excluding target;
+auxiliaries must not also appear as independent allocation destinations. The
+order must be accounting-enabled and processing/on-hold. PHP maps the actual
+returned Folio warehouse to the Woo location for stock reduction, and preserves
+the configured non-accounting warehouse in the header for shortages.
+
+For each SKU, availability is `max(0, target REZ_KOLCH + sum(auxiliary REZ_KOLCH))`.
+Do not clamp each warehouse separately: negative target free stock carries earlier
+pooled commitments. The target SKU stock row must exist. Preview reads stock and
+number counters without update locks or writes. Apply locks pool rows in warehouse
+ID order inside the existing SERIALIZABLE MSSQL transaction, verifies availability
+again, creates the ordinary accounted SCL_NAKL/MOVE/ADDN records, and conditionally
+subtracts reserved quantity **only from target REZ_KOLCH**. KON_KOLCH and auxiliary
+REZ_KOLCH do not change. No stock transfer document is generated. A target free
+quantity below zero is intentional; physical transfer must precede picking.
+
+This is not an exclusive reservation on auxiliary warehouses. Native Folio writes,
+other targets or other flows can still consume their free stock. Use coordinated
+receipt/transfer operations; do not describe this mode as preventing every possible
+cross-warehouse oversell. It avoids counting earlier target debt twice within the
+same pool and excludes an auxiliary as a second destination within a request.
+
+For apply, the base externalRequestId is locked and recorded in the existing
+LAVKA_FOLIO_ACCOUNT_REQUESTS table, in addition to per-document keys. A repeat is
+409 `manager_operation_exists`, before reallocation; it cannot create a different
+shortage after stock changes. No automatic write retries. Preview may be repeated.
+Responses retain the existing order response schema (preview 200, created 201).
+Missing stock remains a separate non-accounting document on header.warehouseId.
+
+Deployment: Java first, then PHP; if the route is unavailable, PHP stops and records
+review status without falling back to the ordinary route. Inspect any persisted
+operation before retrying via another draft. Rollback removes access to new jobs
+and reconciles in-flight jobs first; preserve request journal and created documents.
+Existing PRD source reconciliation, optional email and background queue are owned
+by WordPress PCOE, not by this endpoint.
+
+Validation: `ManagerStockPoolTest` covers signed stock, no-lock preview, target-only
+conditional reserve, ordinary checkout isolation, overlap rejection, operation
+replay and authentication with mocked DAO/service. No production writes were used.

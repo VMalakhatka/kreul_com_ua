@@ -349,6 +349,14 @@ public class FolioAccountDao {
                 """, quantity, sku, warehouseId, quantity);
     }
 
+    /** Caller holds all pool rows with UPDLOCK/HOLDLOCK. Physical stock is unchanged. */
+    public int reserveUsingPool(String sku, int target, BigDecimal quantity, BigDecimal otherFree) {
+        return jdbc.update("""
+                UPDATE dbo.SCL_ARTC SET REZ_KOLCH = REZ_KOLCH - ?
+                WHERE COD_ARTIC = ? AND ID_SCLAD = ? AND REZ_KOLCH + ? >= ?
+                """, quantity, sku, target, otherFree, quantity);
+    }
+
     public void release(String sku, int warehouseId, BigDecimal quantity) {
         jdbc.update("""
                 UPDATE dbo.SCL_ARTC
