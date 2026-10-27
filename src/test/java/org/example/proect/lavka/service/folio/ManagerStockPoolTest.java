@@ -93,4 +93,47 @@ class ManagerStockPoolTest {
         var response=service.createManagerOrder(request(true),pool);when(svc.createManagerOrder(any(),any())).thenReturn(response);
         assertThat(controller.create(cmd,"test-only").getStatusCode().value()).isEqualTo(200);
     }
+
+    @Test void readyAndWaitingAreSeparateAccountsOnSameWarehouse() throws Exception {
+        stock(7,"3");stock(9,"5");
+        var result=service.createManagerOrder(request(true),pool);
+        assertThat(result.documents()).extracting(FolioOrderAccountResponse.Document::documentType)
+                .containsExactly("account","waiting_transfer_account");
+        assertThat(result.documents()).allMatch(d -> d.accountingEnabled() && d.folioWarehouseId()==7);
+        assertThat(result.documents().get(0).items().get(0).quantity()).isEqualByComparingTo("3");
+        assertThat(result.documents().get(1).items().get(0).quantity()).isEqualByComparingTo("5");
+        assertThat(result.documents().get(1).items().get(0).allocationStatus()).isEqualTo("awaiting_transfer");
+        assertThat(result.documents().get(0).sourceExternalRequestId()).isNotEqualTo(result.documents().get(1).sourceExternalRequestId());
+        verifyNoInteractions(accounts);
+    }
+    @Test void readyWaitingOtherWarehouseAndShortageConserveQuantity() throws Exception {
+        stock(7,"1");stock(9,"2");stock(8,"3");
+        var tree=(com.fasterxml.jackson.databind.node.ObjectNode)json.valueToTree(request(true));
+        ((com.fasterxml.jackson.databind.node.ArrayNode)tree.at("/items/0/allocations/0/folio_warehouses"))
+                .addObject().put("id","8").put("priority",1);
+        var result=service.createManagerOrder(json.treeToValue(tree,FolioOrderAccountRequest.class),pool);
+        assertThat(result.documents()).extracting(FolioOrderAccountResponse.Document::documentType)
+                .containsExactly("account","account","waiting_transfer_account","missing_stock_account");
+        assertThat(result.documents().stream().flatMap(d->d.items().stream()).map(FolioOrderAccountResponse.Item::quantity)
+                .reduce(BigDecimal.ZERO,BigDecimal::add)).isEqualByComparingTo("8");
+        assertThat(result.documents().get(3).items().get(0).quantity()).isEqualByComparingTo("2");
+    }
+    @Test void duplicateSkuCannotReuseAuxiliaryStock() throws Exception {
+        stock(7,"3");stock(9,"5");
+        var tree=(com.fasterxml.jackson.databind.node.ObjectNode)json.valueToTree(request(true));
+        var items=(com.fasterxml.jackson.databind.node.ArrayNode)tree.get("items"); items.add(items.get(0).deepCopy());
+        var result=service.createManagerOrder(json.treeToValue(tree,FolioOrderAccountRequest.class),pool);
+        assertThat(result.documents()).hasSize(3);
+        assertThat(result.documents().get(2).items().get(0).quantity()).isEqualByComparingTo("8");
+    }
+    @Test void applyReservesReadyNormallyThenWaitingWithExplicitMarker() throws Exception {
+        stock(7,"3");stock(9,"5");
+        var response=json.readValue("{\"documentId\":1001,\"documentNumber\":\"500\",\"warehouseId\":7,\"accountingEnabled\":true}",FolioAccountResponse.class);
+        when(accounts.create(any())).thenReturn(response);when(accounts.createUsingPool(any(),eq(pool))).thenReturn(response);
+        service.createManagerOrder(request(false),pool);
+        var ordered=inOrder(accounts);
+        ordered.verify(accounts).create(argThat(r->r.items().get(0).quantity().compareTo(n("3"))==0));
+        ordered.verify(accounts).createUsingPool(argThat(r->r.items().get(0).quantity().compareTo(n("5"))==0
+                && r.sourceInfo().equals("Ожидает перемещения") && r.additionalInfo().startsWith("ОЖП")),eq(pool));
+    }
 }

@@ -686,7 +686,7 @@ Preview/apply, контроль владельца и идемпотентнос
 ## Manager pooled availability (2026-10-27)
 
 Owner: `FolioManagerOrderController`, `ManagerStockPool`, `FolioOrderAccountService`.
-`POST /admin/folio/manager-order-accounts` is a separate server-to-server route;
+`POST /admin/folio/manager-order-accounts/v2` is a separate server-to-server route;
 requires configured `LavkaApiProperties.token` in `X-Auth-Token` (missing server
 configuration: 503; missing/wrong supplied token: 401). WordPress additionally
 requires `manage_woocommerce` and its manager nonce. Never expose the token or
@@ -701,8 +701,7 @@ Request wrapper:
 }
 ```
 
-Numbers are illustrative; use the live warehouse directory. Target must appear
-in allocation candidates. 1–20 unique positive auxiliary IDs, excluding target;
+Numbers are illustrative; use the live warehouse directory. Target must be the first candidate in every allocation, ordered by priority then ID. 1–20 unique positive auxiliary IDs, excluding target;
 auxiliaries must not also appear as independent allocation destinations. The
 order must be accounting-enabled and processing/on-hold. PHP maps the actual
 returned Folio warehouse to the Woo location for stock reduction, and preserves
@@ -718,6 +717,24 @@ subtracts reserved quantity **only from target REZ_KOLCH**. KON_KOLCH and auxili
 REZ_KOLCH do not change. No stock transfer document is generated. A target free
 quantity below zero is intentional; physical transfer must precede picking.
 
+For each SKU, `ready = min(max(0, target free), total availability)` and
+`waiting = total availability - ready`. Ready stock is allocated first, then
+waiting stock, then later independent warehouses. Ready and waiting quantities
+use separate document groups, including for the same warehouse/SKU. All ordinary
+accounts are written before waiting accounts; only waiting uses the pooled
+reserve writer. Per-SKU caches prevent duplicate order lines reusing stock.
+
+Waiting response: `document_type=waiting_transfer_account`,
+`accounting_enabled=true`, `status=awaiting_transfer`, item
+`allocation_status=awaiting_transfer`, external key `:wh:{id}:waiting`.
+Folio sourceInfo is «Ожидает перемещения»; additionalInfo starts with `ОЖП `
+and retains the source reference within the existing 30-character limit.
+Operation kind is unchanged; this is not PRD or a non-accounting document.
+WordPress creates a separate on-hold order and explicitly explains the wait in
+the order, approval and email. Transfer/readiness is manual; the API does not
+move goods or clear the waiting marker automatically. Example: requested 10,
+target free 3, auxiliary free 5, no other stock → ready 3 / waiting 5 / missing 2.
+
 This is not an exclusive reservation on auxiliary warehouses. Native Folio writes,
 other targets or other flows can still consume their free stock. Use coordinated
 receipt/transfer operations; do not describe this mode as preventing every possible
@@ -731,7 +748,9 @@ shortage after stock changes. No automatic write retries. Preview may be repeate
 Responses retain the existing order response schema (preview 200, created 201).
 Missing stock remains a separate non-accounting document on header.warehouseId.
 
-Deployment: Java first, then PHP; if the route is unavailable, PHP stops and records
+Deployment: Java first, then PHP. The old unversioned manager pool route is
+removed so old PHP cannot mistake the new waiting account for a ready order.
+New PHP requires v2. If the route is unavailable, PHP stops and records
 review status without falling back to the ordinary route. Inspect any persisted
 operation before retrying via another draft. Rollback removes access to new jobs
 and reconciles in-flight jobs first; preserve request journal and created documents.
@@ -740,4 +759,7 @@ by WordPress PCOE, not by this endpoint.
 
 Validation: `ManagerStockPoolTest` covers signed stock, no-lock preview, target-only
 conditional reserve, ordinary checkout isolation, overlap rejection, operation
-replay and authentication with mocked DAO/service. No production writes were used.
+replay, separate same-warehouse accounts, normal-before-pooled writes,
+conservation across ready/waiting/other/shortage, duplicate SKU lines, and
+authentication with mocked DAO/service. Targeted run (2026-10-27): 14 tests
+including FolioOrderDocumentPurposeTest. No production writes were used.

@@ -17,6 +17,13 @@ public record ManagerStockPool(int targetWarehouseId, List<Integer> auxiliaryWar
     public void validate(FolioOrderAccountRequest request) {
         if (!List.of("processing", "on-hold").contains(request.wooOrder().status()) || !Boolean.TRUE.equals(request.folioAccountHeader().accountingEnabled()))
             throw new FolioAccountValidationException("invalid_manager_pool", "Manager pool requires an accounting order");
+        for (var line : request.items()) for (var allocation : line.allocations()) {
+            var first = allocation.folioWarehouses().stream().min(Comparator
+                    .comparing((FolioOrderAccountRequest.WarehouseCandidate w) -> w.priority() == null ? Integer.MAX_VALUE : w.priority())
+                    .thenComparing(FolioOrderAccountRequest.WarehouseCandidate::id)).orElseThrow();
+            if (!String.valueOf(targetWarehouseId).equals(first.id()))
+                throw new FolioAccountValidationException("invalid_manager_pool", "Pool target must be the first allocation warehouse");
+        }
         boolean target = false;
         for (var line : request.items()) for (var allocation : line.allocations()) for (var candidate : allocation.folioWarehouses()) {
             int id;
@@ -33,11 +40,20 @@ public record ManagerStockPool(int targetWarehouseId, List<Integer> auxiliaryWar
         // A target card must already exist, even when all physical units are on receipt.
         return rows;
     }
-    public BigDecimal available(FolioAccountDao dao, String sku, boolean lock) {
+    public record Availability(BigDecimal ready, BigDecimal waiting) {
+        public BigDecimal total() { return ready.add(waiting); }
+    }
+    public Availability quantities(FolioAccountDao dao, String sku, boolean lock) {
         var rows = rows(dao, sku, lock);
-        if (!rows.containsKey(targetWarehouseId)) return BigDecimal.ZERO;
-        // Do not clamp the target: its negative free quantity records earlier pooled commitments.
-        return rows.values().stream().map(FolioAccountDao.StockRow::freeQuantity).reduce(BigDecimal.ZERO, BigDecimal::add).max(BigDecimal.ZERO);
+        if (!rows.containsKey(targetWarehouseId)) return new Availability(BigDecimal.ZERO, BigDecimal.ZERO);
+        // Negative target free stock already represents earlier pooled commitments.
+        BigDecimal total = rows.values().stream().map(FolioAccountDao.StockRow::freeQuantity)
+                .reduce(BigDecimal.ZERO, BigDecimal::add).max(BigDecimal.ZERO);
+        BigDecimal ready = rows.get(targetWarehouseId).freeQuantity().max(BigDecimal.ZERO).min(total);
+        return new Availability(ready, total.subtract(ready));
+    }
+    public BigDecimal available(FolioAccountDao dao, String sku, boolean lock) {
+        return quantities(dao, sku, lock).total();
     }
     public void requireAvailable(FolioAccountDao dao, String sku, BigDecimal quantity) {
         if (available(dao, sku, true).compareTo(quantity) < 0)

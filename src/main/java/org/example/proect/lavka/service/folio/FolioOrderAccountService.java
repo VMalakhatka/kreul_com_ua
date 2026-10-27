@@ -69,11 +69,13 @@ public class FolioOrderAccountService {
         List<FolioOrderAccountResponse.ApiMessage> warnings = new ArrayList<>(allocation.warnings());
         PreviewNumberAllocator previewNumbers = previewOnly ? previewNumberAllocator(header) : null;
 
-        for (var group : allocation.accountingGroups().values()) {
+        for (var group : allocation.accountingGroups().values().stream()
+                .sorted(Comparator.comparing(g -> "awaiting_transfer".equals(g.status()))).toList()) {
+            String type = "awaiting_transfer".equals(group.status()) ? "waiting_transfer_account" : orderMode.documentType();
             documents.add(previewOnly
-                    ? previewDocument(group, header.documentDate(), accountingEnabled, orderMode.documentType(),
+                    ? previewDocument(group, header.documentDate(), accountingEnabled, type,
                     previewNumbers.next(counterCode(accountingEnabled)))
-                    : createDocument(request, group, accountingEnabled, orderMode.documentType(), pool));
+                    : createDocument(request, group, accountingEnabled, type, "waiting_transfer_account".equals(type) ? pool : null));
         }
 
         if (!allocation.missingItems().isEmpty()) {
@@ -103,7 +105,7 @@ public class FolioOrderAccountService {
     }
 
     private AllocationResult allocateAccounting(FolioOrderAccountRequest request, boolean lockStockRows, ManagerStockPool pool) {
-        Map<Integer, DocumentGroup> groups = new LinkedHashMap<>();
+        Map<String, DocumentGroup> groups = new LinkedHashMap<>();
         List<AllocatedItem> missing = new ArrayList<>();
         List<FolioOrderAccountResponse.ApiMessage> warnings = new ArrayList<>();
         Map<String, BigDecimal> availableCache = new LinkedHashMap<>();
@@ -120,23 +122,35 @@ public class FolioOrderAccountService {
                     }
                     int warehouseId = parseWarehouseId(candidate.id(), sku);
                     String stockKey = sku + "\u0000" + warehouseId;
-                    BigDecimal available = availableCache.computeIfAbsent(stockKey,
-                            k -> pool != null && warehouseId == pool.targetWarehouseId()
-                                    ? pool.available(accountDao, sku, lockStockRows)
-                                    : readStock(sku, warehouseId, lockStockRows)
-                                        .map(FolioAccountDao.StockRow::freeQuantity).orElse(BigDecimal.ZERO));
-                    if (available.compareTo(BigDecimal.ZERO) <= 0) {
+                    if (pool != null && warehouseId == pool.targetWarehouseId()) {
+                        String waitingKey = stockKey + ":waiting";
+                        if (!availableCache.containsKey(stockKey)) {
+                            var amounts = pool.quantities(accountDao, sku, lockStockRows);
+                            availableCache.put(stockKey, amounts.ready());
+                            availableCache.put(waitingKey, amounts.waiting());
+                        }
+                        BigDecimal ready = availableCache.get(stockKey).min(remaining);
+                        if (ready.signum() > 0) {
+                            availableCache.put(stockKey, availableCache.get(stockKey).subtract(ready));
+                            addAllocated(groups, request, item, warehouseId, ready, false);
+                            remaining = remaining.subtract(ready);
+                        }
+                        BigDecimal waiting = availableCache.get(waitingKey).min(remaining);
+                        if (waiting.signum() > 0) {
+                            availableCache.put(waitingKey, availableCache.get(waitingKey).subtract(waiting));
+                            addAllocated(groups, request, item, warehouseId, waiting, true);
+                            remaining = remaining.subtract(waiting);
+                        }
                         continue;
                     }
-
+                    BigDecimal available = availableCache.computeIfAbsent(stockKey,
+                            k -> readStock(sku, warehouseId, lockStockRows)
+                                    .map(FolioAccountDao.StockRow::freeQuantity).orElse(BigDecimal.ZERO).max(BigDecimal.ZERO));
                     BigDecimal quantity = available.min(remaining);
+                    if (quantity.signum() <= 0) continue;
                     availableCache.put(stockKey, available.subtract(quantity));
                     remaining = remaining.subtract(quantity);
-
-                    String externalId = request.folioAccountHeader().externalRequestId() + ":wh:" + warehouseId;
-                    groups.computeIfAbsent(warehouseId, id -> new DocumentGroup(id, externalId, "created", new ArrayList<>()))
-                            .items()
-                            .add(new AllocatedItem(item.orderItemId(), sku, quantity, item.unitPrice(), warehouseId, "allocated"));
+                    addAllocated(groups, request, item, warehouseId, quantity, false);
                 }
 
                 if (remaining.compareTo(BigDecimal.ZERO) > 0) {
@@ -158,6 +172,17 @@ public class FolioOrderAccountService {
         return new AllocationResult(groups, mergeItems(missing), warnings);
     }
 
+    private void addAllocated(Map<String, DocumentGroup> groups, FolioOrderAccountRequest request,
+                              FolioOrderAccountRequest.Item item, int warehouse, BigDecimal quantity, boolean waiting) {
+        String suffix = waiting ? ":waiting" : "";
+        String key = warehouse + suffix;
+        String external = request.folioAccountHeader().externalRequestId() + ":wh:" + warehouse + suffix;
+        groups.computeIfAbsent(key, id -> new DocumentGroup(warehouse, external,
+                waiting ? "awaiting_transfer" : "created", new ArrayList<>()))
+                .items().add(new AllocatedItem(item.orderItemId(), item.sku().trim(), quantity,
+                        item.unitPrice(), warehouse, waiting ? "awaiting_transfer" : "allocated"));
+    }
+
     private AllocationResult allocateSingleNonAccounting(FolioOrderAccountRequest request, String status) {
         int warehouseId = request.folioAccountHeader().warehouseId() == null
                 ? selectMissingWarehouse(request).orElseThrow(() -> new FolioAccountValidationException(
@@ -169,8 +194,8 @@ public class FolioOrderAccountService {
         for (var item : request.items()) {
             items.add(new AllocatedItem(item.orderItemId(), item.sku().trim(), item.quantity(), item.unitPrice(), warehouseId, status));
         }
-        Map<Integer, DocumentGroup> groups = new LinkedHashMap<>();
-        groups.put(warehouseId, new DocumentGroup(
+        Map<String, DocumentGroup> groups = new LinkedHashMap<>();
+        groups.put(String.valueOf(warehouseId), new DocumentGroup(
                 warehouseId,
                 request.folioAccountHeader().externalRequestId() + ":wh:" + warehouseId + ":nonaccounting",
                 status,
@@ -392,6 +417,9 @@ public class FolioOrderAccountService {
     }
 
     private String missingAdditionalInfo(String value, String documentType) {
+        if ("waiting_transfer_account".equals(documentType)) {
+            return truncate("ОЖП " + (value == null ? "" : value.trim()), 30);
+        }
         if (!"missing_stock_account".equals(documentType)) {
             return value;
         }
@@ -404,6 +432,7 @@ public class FolioOrderAccountService {
     }
 
     private String sourceInfoForDocument(String value, String documentType) {
+        if ("waiting_transfer_account".equals(documentType)) return "Ожидает перемещения";
         if ("missing_stock_account".equals(documentType)) {
             return "нет на складе";
         }
@@ -461,7 +490,7 @@ public class FolioOrderAccountService {
         }
     }
 
-    private record AllocationResult(Map<Integer, DocumentGroup> accountingGroups,
+    private record AllocationResult(Map<String, DocumentGroup> accountingGroups,
                                     List<AllocatedItem> missingItems,
                                     List<FolioOrderAccountResponse.ApiMessage> warnings) {
     }

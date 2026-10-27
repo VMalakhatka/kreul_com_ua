@@ -13,7 +13,7 @@ import java.security.MessageDigest;
 
 /** Credentials are server-to-server only; WordPress separately requires manager capability/nonce. */
 @RestController
-@RequestMapping("/admin/folio/manager-order-accounts")
+@RequestMapping("/admin/folio/manager-order-accounts/v2")
 public class FolioManagerOrderController {
     private final FolioOrderAccountService service;
     private final LavkaApiProperties properties;
