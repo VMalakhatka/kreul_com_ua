@@ -1,5 +1,70 @@
 # Постоянная история «Прибыли Лавки»
 
+## Дополнение 2026-10-31: последний сохранённый результат по умолчанию
+
+По решению владельца `GET /{month}` без `revisionId` и saved range выбирают
+**последний сохранённый результат**, а не `publishedRevisionId`. Результат —
+ревизия `COMPLETED` или `PROVISIONAL` с непустым `report_json`; выбирается
+максимальный ID для данного `sourceDatabase × month`. Это порядок запросов,
+не время завершения: позднее завершение старого запроса не вытесняет новый результат.
+
+Правила выбора:
+
+| История месяца | Ответ по умолчанию |
+| --- | --- |
+| Опубликован COMPLETED №1, затем PROVISIONAL №2 | №2, `status=PROVISIONAL`, `publishedRevisionId=1`, `published=false` |
+| После №2 появилась FAILED/RUNNING попытка №3 | По-прежнему №2; `latestRevisionId=3`, `latestStatus=FAILED/RUNNING` |
+| Есть только FAILED/RUNNING попытки, сохранённого результата нет | `ok=false`, `status=FAILED/RUNNING`, `revisionId=null`, `report=null`; ID попытки в `latestRevisionId` |
+| Нет истории | `status=MISSING`, `revisionId=null`, `report=null` |
+| Есть COMPLETED/PROVISIONAL, но нет непустого payload | `status=MISSING`, `errorCode=PROFIT_SAVED_REPORT_PAYLOAD_MISSING`, latest-метаданные сохранены |
+
+SQL NULL, пустая строка и JSON `null` не являются результатом. Непустой повреждённый
+JSON — видимая ошибка чтения, не повод незаметно выбрать старую версию или вызвать
+перерасчёт. Выбор ограничен `latestRevisionId`, прочитанным для месяца: параллельно
+созданная новая ревизия будет видна при следующем GET. Разные месяцы диапазона
+читаются последовательно, не как единый транзакционный снимок appDB.
+
+`?revisionId=...` остаётся явным выбором исторической версии, даже если она
+PROVISIONAL/FAILED/RUNNING. FAILED может содержать диагностический report; его
+нельзя подмешивать в default month или totals диапазона. Без готового результата
+null не заменяется нулём. Для просмотра ошибки без результата использовать
+`latestRevisionId`, для экспорта результата — возвращённый `revisionId`.
+
+`publishedRevisionId` и `published` — отдельные метаданные публикации; они
+**не обозначают выбранный текущий результат**. В `months[]` range эти два поля
+добавлены без удаления прежних полей. `latestRevisionId/latestStatus` относятся
+к последней попытке, а `revisionId/status` — к выбранному результату. Последний
+FAILED не делает ранее сохранённый COMPLETED предварительным: предупреждение
+о неудачной попытке показывается отдельно от полноты выбранного отчёта.
+
+Нужен новый Java deploy; SQL-миграция, повторный расчёт и изменение указателей
+публикации не нужны. GET только читает application DB; финансовые формулы,
+неизменяемые payload, warnings, audit flags, настройка публикации и ФОЛИО не меняются.
+Frontend должен сохранять пометку PROVISIONAL и использовать `totals` и
+`months[].revisionId` одного ответа range, не подменяя их `latestRevisionId` или
+`publishedRevisionId`. Новые результаты между запросами не меняют уже выбранные
+версии экспорта/сравнения: запрашивать их только с явным `revisionId`.
+
+Синтетический HTTP-пример (не данные production):
+
+```json
+{
+  "revisionId": 2,
+  "status": "PROVISIONAL",
+  "publishedRevisionId": 1,
+  "published": false,
+  "latestRevisionId": 3,
+  "latestStatus": "FAILED"
+}
+```
+
+Это выдержка полей wrapper, не полный report. Полные сериализованные month/range
+для frontend-проверки создаёт `FolioProfitLatestResultTest` в build-каталоге
+`target/profit-latest-result-fixtures/month.json` и `range.json`: published №1,
+выбранный provisional №2 (прибыль Киева 120), неудачная попытка №3. Проверяется
+совпадение выбранного ID/сумм, сохранность warnings, `complete=false` и явный
+исторический GET после появления следующего результата. Тест не читает ФОЛИО.
+
 ## Дополнение 2026-10-24.1: снимок настроек отбора
 
 [Scope-settings контракт](FOLIO_PROFIT_SCOPE_SETTINGS_API.md) добавляет
@@ -57,7 +122,8 @@ V17 хранит только настройки; V15 остаётся хран�
 
 - `GET ?fromMonth=2025-07&toMonth=2025-11` — включительный диапазон до24месяцев.
   Только сохранённые данные; отсутствующие месяцы не рассчитываются.
-- `GET /{month}` — опубликованная ревизия. `?revisionId=...` выбирает конкретную
+- `GET /{month}` — последний COMPLETED/PROVISIONAL с сохранённым отчётом.
+  `?revisionId=...` выбирает конкретную
   ревизию этого месяца, включая предварительную/ошибочную/незавершённую.
 - `GET /{month}/revisions?limit=20&beforeRevisionId=...` — metadata по убыванию ID,
   limit1..100, для следующей страницы передавать последний ID.
@@ -104,11 +170,13 @@ Wrapper: `ok`, `status`, `sourceDatabase`, `month`, `revisionId`, `requestId`,
 Статусы: `RUNNING`, `FAILED`, `COMPLETED`, `PROVISIONAL`, `MISSING`.
 ok=true означает сохранённый результат, но не его полную финансовую проверку.
 
-Первый результат, включая предварительный, доступен как опубликованный.
+Неизменённые правила записи **публикации** (не выбора default GET):
+первый результат, включая предварительный, доступен как опубликованный.
 PROVISIONAL не заменяет ранее опубликованный отчёт. COMPLETED заменяет pointer
 только при более новом revisionId. Ошибки остаются в истории и не удаляют
-прежний отчёт. `latestRevisionId/latestStatus` показывают новый результат даже
-когда опубликованная ревизия осталась прежней. Можно открыть его по revisionId.
+прежний отчёт. `latestRevisionId/latestStatus` показывают последнюю попытку,
+включая FAILED/RUNNING. По умолчанию читается последний доступный результат,
+даже когда опубликованная ревизия осталась прежней.
 Кнопка ручного продвижения предварительного результата в v1 отсутствует.
 
 COMPLETED требует report.complete=true и полного сохранённого аудита по
@@ -134,10 +202,13 @@ application DB. Если DB недоступна, нельзя объявлят�
 
 Ответ: `ok`, `fromMonth`, `toMonth`, `sourceDatabase`, `complete`, `missingMonths`,
 `months[]`, `totals[]`, `warnings[]`.
-months — краткие wrappers опубликованных ревизий: month/revisionId/status,
+months — краткие wrappers выбранных последних сохранённых результатов: month/revisionId/status,
 latestRevisionId/latestStatus, calculatedAt, ruleVersion, auditComplete,
-inputs/cities/inventory (без полного audit массива). Несохранённые месяцы имеют
-statusMISSING и перечислены в missingMonths.
+inputs/cities/inventory, scopeSettings/scopeCatalog, publishedRevisionId/published
+(без полного audit массива). Месяцы без готового результата имеют `revisionId=null`,
+статус MISSING/FAILED/RUNNING и перечислены в `missingMonths`; их суммы не обнуляются.
+Выбор и totals используют один и тот же набор сохранённых report. Полный аудит
+и warnings месяца читаются через `GET /{month}?revisionId=<months[].revisionId>`.
 
 totals по KYIV/ODESA: `city`, `baseGrossProfit`, `manualGrossAdjustments`,
 `grossProfit`, `operatingExpenses`, `profit`, `openingAccountingValue`,
@@ -170,7 +241,8 @@ null только при отсутствии нужной границы, а н
 становятся null и `complete=false`.
 Курс и налоговая доля не усредняются: каждый месяц сохраняет свои inputs.
 
-Форма GET-запроса и JSON-полей не меняется. Frontend показывает `totals` Java,
+Форма GET-запроса не меняется; два поля публикации в `months[]` добавлены 31.10.2026.
+Frontend показывает `totals` Java,
 не складывает неполные данные самостоятельно и не проверяет равенство складов.
 Для нового поведения нужен деплой Java; пересчитывать/публиковать месяцы заново,
 менять `publishedRevisionId` или обращаться к живой ФОЛИО не требуется.

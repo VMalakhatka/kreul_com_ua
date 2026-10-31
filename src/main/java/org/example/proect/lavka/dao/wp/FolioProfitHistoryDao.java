@@ -59,6 +59,16 @@ public class FolioProfitHistoryDao {
     public Optional<Row> byId(String source,String month,long id) {
         return jdbc.query("SELECT * FROM folio_profit_report_revision WHERE source_database=? AND report_month=? AND id=?",MAPPER,source,month,id).stream().findFirst();
     }
+    /** Latest saved result, not latest attempt or publication. Bound to the state already read. */
+    public Optional<Row> latestResult(String source,String month,long latestRevisionId) {
+        return jdbc.query("""
+                SELECT * FROM folio_profit_report_revision
+                WHERE source_database=? AND report_month=? AND id<=?
+                  AND status IN ('COMPLETED','PROVISIONAL')
+                  AND report_json IS NOT NULL AND TRIM(report_json) NOT IN ('','null')
+                ORDER BY id DESC LIMIT 1
+                """,MAPPER,source,month,latestRevisionId).stream().findFirst();
+    }
     public Optional<State> state(String source,String month) {
         return jdbc.query("""
                 SELECT s.published_revision_id,s.latest_revision_id,r.status AS latest_status

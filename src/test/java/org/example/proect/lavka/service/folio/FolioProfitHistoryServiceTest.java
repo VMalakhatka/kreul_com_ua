@@ -32,6 +32,11 @@ class FolioProfitHistoryServiceTest {
                 FolioProfitScopeSettingsService.defaults(new org.example.proect.lavka.property.FolioProfitReportProperties()),null));
         when(dao.byRequest(anyString(),anyString())).thenAnswer(a->rows.values().stream().filter(r->r.requestId().equals(a.getArgument(1))).findFirst());
         when(dao.byId(anyString(),anyString(),anyLong())).thenAnswer(a->Optional.ofNullable(rows.get(a.getArgument(2))));
+        when(dao.latestResult(anyString(),anyString(),anyLong())).thenAnswer(a->rows.values().stream()
+                .filter(r->r.source().equals(a.getArgument(0)) && r.month().equals(a.getArgument(1)) && r.id()<=(long)a.getArgument(2))
+                .filter(r->List.of("COMPLETED","PROVISIONAL").contains(r.status()) && r.reportJson()!=null
+                        && !List.of("","null").contains(r.reportJson().trim()))
+                .max(Comparator.comparingLong(FolioProfitHistoryDao.Row::id)));
         when(dao.state(anyString(),anyString())).thenAnswer(a->rows.isEmpty()?Optional.empty():Optional.of(
                 new FolioProfitHistoryDao.State(published,rows.size(),rows.get((long)rows.size()).status())));
         when(dao.reserve(anyString(),anyString(),anyString(),anyString(),anyString())).thenAnswer(a->{
@@ -65,7 +70,7 @@ class FolioProfitHistoryServiceTest {
         String fixture=System.getProperty("folio.profit.saved.fixture.output");
         if(fixture!=null) java.nio.file.Files.writeString(java.nio.file.Path.of(fixture),json.writeValueAsString(saved));
     }
-    @Test void partialAndFailedRevisionsNeverReplacePublishedReport() {
+    @Test void latestProvisionalIsDefaultWithoutChangingPublicationAndSurvivesFailedAttempt() {
         when(calculator.calculate(any(),eq(true),any(),any())).thenReturn(report("2025-07",false));
         service.calculate("2025-07",request);
         when(calculator.calculate(any(),eq(true),any(),any())).thenReturn(report("2025-07",true));
@@ -73,14 +78,18 @@ class FolioProfitHistoryServiceTest {
         assertThat(partial.status()).isEqualTo("PROVISIONAL");
         assertThat(partial.auditComplete()).isFalse();
         assertThat(partial.published()).isFalse();
-        assertThat(service.get("2025-07",null).revisionId()).isEqualTo(1);
+        assertThat(service.get("2025-07",null).revisionId()).isEqualTo(2);
+        assertThat(service.get("2025-07",null).publishedRevisionId()).isEqualTo(1);
+        assertThat(service.get("2025-07",null).report()).isEqualTo(partial.report());
         assertThat(service.get("2025-07",null).latestRevisionId()).isEqualTo(2);
         when(calculator.calculate(any(),eq(true),any(),any())).thenThrow(new IllegalStateException("private connection details"));
         var failed=service.calculate("2025-07",withId(UUID.randomUUID().toString()));
         assertThat(failed.status()).isEqualTo("FAILED");
         assertThat(failed.report()).isNull();
         assertThat(failed.errorCode()).isEqualTo("PROFIT_SAVED_CALCULATION_FAILED");
-        assertThat(service.get("2025-07",null).revisionId()).isEqualTo(1);
+        assertThat(service.get("2025-07",null).revisionId()).isEqualTo(2);
+        assertThat(service.get("2025-07",null).latestRevisionId()).isEqualTo(3);
+        assertThat(service.get("2025-07",null).latestStatus()).isEqualTo("FAILED");
     }
     @Test void historyAndMissingRangeNeverReadFolio() {
         var range=service.range("2025-07","2025-11");
@@ -124,7 +133,7 @@ class FolioProfitHistoryServiceTest {
         assertThat(json.valueToTree(range).get("totals").get(0).get("profit").isTextual()).isTrue();
         for(var row:before.values()) {
             verify(dao).state("Paint_Ua",row.month());
-            verify(dao).byId("Paint_Ua",row.month(),row.id());
+            verify(dao).latestResult("Paint_Ua",row.month(),row.id());
         }
         verifyNoMoreInteractions(dao);
         verifyNoInteractions(calculator);

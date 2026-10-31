@@ -7,6 +7,17 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class FolioProfitHistoryDaoTest {
+    @Test void latestResultIsSourceAndMonthScopedBoundedReadWithNoPublicationPreference() {
+        var jdbc=mock(JdbcTemplate.class);var dao=new FolioProfitHistoryDao(jdbc);
+        assertThat(dao.latestResult("Paint_Ua","2026-09",99)).isEmpty();
+        var sql=org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc).query(sql.capture(),any(org.springframework.jdbc.core.RowMapper.class),eq("Paint_Ua"),eq("2026-09"),eq(99L));
+        assertThat(sql.getValue()).contains("source_database=? AND report_month=? AND id<=?",
+                "status IN ('COMPLETED','PROVISIONAL')", "report_json IS NOT NULL",
+                "TRIM(report_json) NOT IN ('','null')", "ORDER BY id DESC LIMIT 1")
+                .doesNotContain("published_revision_id","UPDATE","INSERT","DELETE");
+        verifyNoMoreInteractions(jdbc);
+    }
     @Test void finalizationIsGuardedAndPublicationMonotonicInOneApplicationTransaction() throws Exception {
         var jdbc=mock(JdbcTemplate.class); var dao=new FolioProfitHistoryDao(jdbc);
         when(jdbc.update(anyString(),any(Object[].class))).thenReturn(1);

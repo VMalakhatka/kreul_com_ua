@@ -74,12 +74,26 @@ public class FolioProfitHistoryService {
     public Revision get(String month,Long revisionId) {
         month=month(month).toString(); String source=source();
         State state=dao.state(source,month).orElse(null);
-        Long selected=revisionId!=null?revisionId:state==null?null:state.publishedRevisionId();
-        if(selected==null) return new Revision(false,"MISSING",source,month,null,null,null,
-                state==null?null:state.latestRevisionId(),state==null?null:state.latestStatus(),false,false,null,null,null,null,null);
-        String key=month;
-        Row row=dao.byId(source,key,selected).orElseThrow(()->new FolioAccountNotFoundException("Сохранённая ревизия этого месяца не найдена"));
-        return view(row,state,true);
+        if(revisionId!=null) {
+            Row row=dao.byId(source,month,revisionId).orElseThrow(()->new FolioAccountNotFoundException("Сохранённая ревизия этого месяца не найдена"));
+            return view(row,state,true);
+        }
+        if(state==null) return missing(source,month,null,null);
+        var selected=dao.latestResult(source,month,state.latestRevisionId());
+        if(selected.isPresent()) return view(selected.get(),state,true);
+        var latest=dao.byId(source,month,state.latestRevisionId());
+        if(latest.isPresent() && List.of("FAILED","RUNNING").contains(latest.get().status())) {
+            // No selected result ID. Failed payloads may contain diagnostics, never range totals.
+            Row attempt=latest.get();
+            return new Revision(false,attempt.status(),source,month,null,attempt.requestId(),state.publishedRevisionId(),
+                    state.latestRevisionId(),state.latestStatus(),false,false,attempt.createdAt(),attempt.completedAt(),
+                    read(attempt.requestJson(),CalculateRequest.class),null,attempt.errorCode());
+        }
+        return missing(source,month,state,"PROFIT_SAVED_REPORT_PAYLOAD_MISSING");
+    }
+    private Revision missing(String source,String month,State state,String errorCode) {
+        return new Revision(false,"MISSING",source,month,null,null,state==null?null:state.publishedRevisionId(),
+                state==null?null:state.latestRevisionId(),state==null?null:state.latestStatus(),false,false,null,null,null,null,errorCode);
     }
     public History revisions(String month,int limit,Long beforeRevisionId) {
         month=month(month).toString();
@@ -98,13 +112,15 @@ public class FolioProfitHistoryService {
         List<String> missing=revisions.stream().filter(r->r.report()==null).map(Revision::month).toList();
         List<Month> months=revisions.stream().map(r->{ var p=r.report(); return new Month(r.month(),r.revisionId(),r.status(),r.latestRevisionId(),r.latestStatus(),
                 p==null?null:p.calculatedAt().toString(),p==null?null:p.ruleVersion(),r.auditComplete(),p==null?null:p.inputs(),
-                p==null?List.of():p.cities(),p==null?List.of():p.inventory(),p==null?null:p.scopeSettings(),p==null?null:p.scopeCatalog()); }).toList();
+                p==null?List.of():p.cities(),p==null?List.of():p.inventory(),p==null?null:p.scopeSettings(),p==null?null:p.scopeCatalog(),
+                r.publishedRevisionId(),r.published()); }).toList();
         boolean complete=missing.isEmpty()&&revisions.stream().allMatch(r->r.status().equals("COMPLETED"));
         List<Totals> totals=List.of(FolioProfitHistoryTotals.calculate("KYIV",revisions),FolioProfitHistoryTotals.calculate("ODESA",revisions));
         return new Range(true,first.toString(),last.toString(),source(),complete&&totals.stream().allMatch(Totals::complete),missing,months,totals,
                 List.of("Сохранённые ревизии: не текущие данные ФОЛИО", "Курс и налоговая доля применены отдельно для каждого месяца",
                         "NULL означает отсутствующий месяц, город или значение; остатки — начало первого и конец последнего месяца, не сумма",
-                        "Состав диапазона фиксирован возвращёнными revisionId; публикации могут меняться между отдельными GET"));
+                        "Выбраны последние сохранённые результаты COMPLETED/PROVISIONAL; latestRevisionId/latestStatus описывают последнюю попытку",
+                        "Состав диапазона фиксирован возвращёнными revisionId; новые результаты могут появляться между отдельными GET"));
     }
     private Revision view(Row row,State state,boolean full) {
         return new Revision(List.of("COMPLETED","PROVISIONAL").contains(row.status()),row.status(),row.source(),row.month(),row.id(),row.requestId(),

@@ -69,6 +69,10 @@ class FolioProfitHistoryMariaDbTest {
         dao.finish("Synthetic","2025-07",failed.id(),"FAILED",null,false,"SYNTHETIC_FAILURE");
         assertThat(dao.state("Synthetic","2025-07").orElseThrow().publishedRevisionId()).isEqualTo(first.id());
         assertThat(dao.state("Synthetic","2025-07").orElseThrow().latestRevisionId()).isEqualTo(failed.id());
+        assertThat(dao.latestResult("Synthetic","2025-07",failed.id()).orElseThrow().id()).isEqualTo(second.id());
+        assertThat(dao.latestResult("Synthetic","2025-07",first.id()).orElseThrow().id()).isEqualTo(first.id());
+        assertThat(dao.latestResult("Other","2025-07",failed.id())).isEmpty();
+        assertThat(dao.latestResult("Synthetic","2025-08",failed.id())).isEmpty();
         assertThat(dao.byId("Synthetic","2025-07",first.id()).orElseThrow().reportJson()).isEqualTo(payload);
         assertThat(dao.revisions("Synthetic","2025-07",10,Long.MAX_VALUE)).hasSize(3).allMatch(r->r.reportJson()==null);
         assertThatThrownBy(()->dao.finish("Synthetic","2025-07",first.id(),"FAILED",null,false,"ERROR"))

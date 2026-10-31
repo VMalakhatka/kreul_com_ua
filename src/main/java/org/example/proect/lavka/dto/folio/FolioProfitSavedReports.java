@@ -61,7 +61,8 @@ public final class FolioProfitSavedReports {
             String calculatedAt,String ruleVersion,boolean auditComplete,
             FolioProfitReportResponse.Inputs inputs,List<FolioProfitReportResponse.CityResult> cities,
             List<FolioProfitReportResponse.InventoryResult> inventory,
-            FolioProfitScopeSettings scopeSettings,FolioProfitScopeCatalog scopeCatalog) {}
+            FolioProfitScopeSettings scopeSettings,FolioProfitScopeCatalog scopeCatalog,
+            Long publishedRevisionId,boolean published) {}
     public record Range(boolean ok,String fromMonth,String toMonth,String sourceDatabase,boolean complete,
             List<String> missingMonths,List<Month> months,List<Totals> totals,List<String> warnings) {}
     public record Totals(String city,
