@@ -28,7 +28,8 @@ class FolioInternalReservationMariaDbTest {
                     "V9__folio_product_movement_snapshot.sql", "V10__folio_product_snapshot_bounded_staging.sql",
                     "V11__folio_product_analytics_schema_v3.sql", "V12__folio_product_analytics_schema_v4.sql",
                     "V13__folio_product_availability_history.sql", "V14__folio_accounting_price_diagnostic.sql"))
-                ScriptUtils.executeSqlScript(connection, new ClassPathResource("db/wp/migration/" + name));
+                ScriptUtils.executeSqlScript(connection, new ClassPathResource(
+                        (name.startsWith("V12__") ? "db/wp/vendor/mariadb/" : "db/wp/migration/") + name));
             // MariaDB DDL may survive an interrupted migration. Reproduce live-only columns.
             jdbc.execute("ALTER TABLE folio_product_movement_fact ADD COLUMN source_info VARCHAR(255) NULL, "
                     + "ADD COLUMN internal_transfer_reservation TINYINT(1) NOT NULL DEFAULT 0");

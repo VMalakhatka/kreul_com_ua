@@ -90,6 +90,9 @@ network restrictions, request IDs and safe errors.
 - WordPress MariaDB stores site data, idempotency records and read projections.
 - Flyway migrations are in `src/main/resources/db/wp/migration/` and apply to the
   WordPress-side MariaDB data source.
+- V12 is selected by the actual database engine: unchanged MariaDB SQL resides in
+  `db/wp/vendor/mariadb`; MySQL uses the explicit Java V12. See
+  [`api/WP_FLYWAY_V12_LOCAL_RECOVERY.md`](api/WP_FLYWAY_V12_LOCAL_RECOVERY.md).
 - The product snapshot key is `source_database + warehouse_id + sku`; joining only
   by SKU is incorrect.
 - A snapshot/projection is not a replacement for the source Folio record.

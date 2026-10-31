@@ -31,6 +31,13 @@ class SyncDurableChunkTest {
         verify(wp).collectSeenWindow(51,"!"); verify(woo).upsertProductsBatchOnce(any());
         verify(woo,never()).upsertProductsBatch(any()); assertThat(result.exhausted()).isFalse();
     }
+    @Test void ambiguousNormalizedLookaheadFailsBeforeFolioReadOrWooWrite() {
+        when(wp.collectSeenWindow(anyInt(),any())).thenReturn(List.of(
+                new SeenItem("P-1","old",100L),new SeenItem(" P-1\u00a0","old",101L)));
+        assertThatThrownBy(() -> sync.runDurableChunk(1,"!",false,false))
+                .hasMessageContaining("WOO_PRODUCT_MATCH_AMBIGUOUS");
+        verifyNoInteractions(cards,woo,locations);
+    }
     @Test void emptyWooStillReadsAndCreatesFolioTail() {
         when(wp.collectSeenWindow(anyInt(),any())).thenReturn(List.of());
         when(cards.diffPage(any(),anyInt(),anyList(),anyBoolean())).thenReturn(new CardTovExportService.DiffResult(

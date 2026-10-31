@@ -41,6 +41,7 @@ public class SyncServiceImpl implements SyncService {
             int size, String after, boolean dry, boolean force) {
         if (size < 1 || size > 100) throw new IllegalArgumentException("INVALID_CHUNK_SIZE");
         List<SeenItem> raw = wpProductDao.collectSeenWindow(size + 1, after);
+        Map<String, Long> updateIdsBySku = indexWooUpdateIds(raw);
         List<SeenItem> seen = raw.stream().limit(size).toList();
         wooApiClient.requireFullSyncSupplierSupport();
         long unitId = wooApiClient.requireUnitAttributeId();
@@ -63,7 +64,7 @@ public class SyncServiceImpl implements SyncService {
             if (id == null) throw new IllegalStateException("WOO_PRODUCT_MATCH_MISSING");
             ids.put(update.sku(), id);
         }
-        Map<String, Object> payload = buildWooBatchPayload(updates, creates, deletes, ids, attributes, unitId);
+        Map<String, Object> payload = buildWooBatchPayload(updates, creates, deletes, ids, updateIdsBySku, attributes, unitId);
         if (!force) {
             var unitUpdates = unitOnlyUpdates(seen, updates, deletes, attributes, unitId);
             if (!unitUpdates.isEmpty()) {
@@ -187,6 +188,8 @@ public class SyncServiceImpl implements SyncService {
                 if (windowRaw.isEmpty()) {
                     break;
                 }
+                // Match the diff's SKU normalization without choosing between two Woo IDs.
+                Map<String, Long> updateIdsBySku = indexWooUpdateIds(windowRaw);
                 if (unitAttributeId == null) {
                     wooApiClient.requireFullSyncSupplierSupport();
                     unitAttributeId = wooApiClient.requireUnitAttributeId();
@@ -259,7 +262,8 @@ public class SyncServiceImpl implements SyncService {
                         }
 
                         Map<String, Object> batchPayload = buildWooBatchPayload(
-                                toUpdateFull, toCreateFull, toDelete, existingIdsBySku, attributeSnapshot, unitAttributeId
+                                toUpdateFull, toCreateFull, toDelete, existingIdsBySku, updateIdsBySku,
+                                attributeSnapshot, unitAttributeId
                         );
                         if (!unitOnly.isEmpty()) {
                             @SuppressWarnings("unchecked")
@@ -419,6 +423,7 @@ public class SyncServiceImpl implements SyncService {
             List<CardTovExportOutDto> toAdd,
             List<String> toDelete,
             Map<String, Long> existingIdsBySku,
+            Map<String, Long> updateIdsBySku,
             Map<Long, List<Map<String, Object>>> attributeSnapshot,
             long unitAttributeId
     ) {
@@ -451,7 +456,7 @@ public class SyncServiceImpl implements SyncService {
 
             Long knownId = null;
             if (dto.sku() != null) {
-                knownId = existingIdsBySku.get(dto.sku());
+                knownId = updateIdsBySku.get(unitSkuKey(dto.sku()));
             }
 
             java.util.Map<String,Object> prod =
@@ -517,6 +522,20 @@ public class SyncServiceImpl implements SyncService {
     }
 
     private static String unitSkuKey(String sku) { return sku == null ? "" : sku.replace('\u00a0', ' ').trim(); }
+
+    static Map<String, Long> indexWooUpdateIds(List<SeenItem> window) {
+        Map<String, Long> ids = new LinkedHashMap<>();
+        for (var item : window) {
+            if (item.sku() == null || item.postId() == null) continue;
+            String key = unitSkuKey(item.sku());
+            Long previous = ids.putIfAbsent(key, item.postId());
+            if (previous != null && !previous.equals(item.postId())) {
+                throw new IllegalStateException("WOO_PRODUCT_MATCH_AMBIGUOUS: sku=" + key
+                        + "; productIds=" + previous + "," + item.postId());
+            }
+        }
+        return ids;
+    }
     private static void addUnitAttribute(Map<String, Object> product, String unit,
             List<Map<String, Object>> attributes, long attributeId) {
         if (unit != null && !unit.isBlank())

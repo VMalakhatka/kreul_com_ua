@@ -182,3 +182,68 @@ mock. Не направлять на application/production БД. Наличие
 Синтетический JSON для frontend можно получить из `FolioProfitScopeReportTest`
 через `-Dfolio.profit.scope.fixture.output=/tmp/folio-profit-scope-response.json`.
 Это сериализация настоящего Java DTO с тестовыми источниками, не live-расчёт.
+
+## Восстановление состава Java-релиза: 2026-10-31
+
+Read-only проверка обнаружила регрессию сборки, а не потерю настроек БД:
+контейнер от 27 октября не содержал `FolioProfitScopeSettingsController` и SQL
+V19/V20; GET scope-settings/scope-catalog возвращал `404 ROUTE_NOT_FOUND`, тогда
+как tax-settings и saved history работали. В production MariaDB 10.6.19 уже есть
+успешные SQL V12/V19/V20 с checksum соответственно `-1886659825`, `-1642929544`,
+`497939418` и все три соответствующие таблицы. Источник DB-проверки — отдельный
+read-only запрос через фактический production WordPress. Настройки/суммы не читались.
+
+Актуальный `origin/main` на момент проверки — `2fabbe3`: он уже включает scopes
+и все восемь patch-equivalent изменений локальной расходящейся `main` (`323e51a`).
+В локальной main отсутствовали scopes, durable full sync и ещё несколько прежних
+изменений. Её dirty/untracked файлы не надо сбрасывать или коммитить целиком.
+Нельзя разворачивать старый `93136a6` поверх последующих улучшений.
+
+Кандидат строится от `2fabbe3` и сохраняет два обнаруженных в production, но ранее
+не закоммиченных исправления: vendor-aware V12 и нормализацию SKU при обновлении
+атрибутов. Оба класса V12 после компиляции побайтно совпали с production; прежние
+SQL-ресурсы также совпали. V12 SQL переносится без изменения bytes/checksum;
+новой версии миграции нет. См. [совместимость V12](WP_FLYWAY_V12_LOCAL_RECOVERY.md)
+и [единицы измерения](FOLIO_FULL_SYNC_UNIT_ATTRIBUTE.md).
+
+У production image нет revision label/build-info, поэтому точный Git SHA сборки
+из JAR установить нельзя. Доказаны состав JAR и соответствие найденных изменений,
+а не воспроизводимость всей старой сборки из одного чистого commit.
+
+### Проверки кандидата и операторский запуск
+
+1. Использовать отдельный **чистый** checkout подготовленного release commit,
+   включающий актуальный main; не выполнять deploy из расходящейся dirty main.
+   Зафиксировать `git rev-parse HEAD`, проверить `git status --porcelain` и
+   `git merge-base --is-ancestor 2fabbe3 HEAD`. Убедиться, что после проверки
+   не появились новые изменения. Не копировать в checkout весь старый каталог.
+2. Выполнить scoped unit/MockMvc и package под JDK 17, затем
+   `python3 scripts/verify-profit-release.py target/Proect_Lavka-0.0.1-SNAPSHOT.jar`.
+   Скрипт только читает JAR: проверяет наличие scope/full-sync/V12 классов,
+   mappings и неизменность V12/V19/V20. Он не доказывает доступность HTTP/БД.
+3. Перед отдельным разрешённым deploy проверить отсутствие активных sync/apply,
+   сохранить текущий image/env и иметь актуальную резервную копию application DB.
+   Повторно сверить Flyway history (включая отсутствие failed entries) и таблицы.
+   Для подтверждённой здесь production БД ожидается **ноль новых миграций**.
+   Несовпадение checksum, неизвестный engine или неполная history — остановка,
+   не `repair`, не ручной CREATE и не отключение validation.
+4. Использовать штатный `deploy.sh` **из каталога проверенного release** с
+   `ENV_LOCAL_FILE`, указывающим на отдельно проверенный production env. Env не
+   входит в Git/архив исходников. Сам факт подготовки этого кандидата не разрешает
+   запуск deploy, restart или migrate. Runtime-процедура и backup/rollback описаны
+   в WordPress `docs/JAVA_DOCKER_RUNTIME.md`.
+5. После отдельного разрешённого запуска проверить internal/external health,
+   затем через реальную авторизацию WordPress оба GET scope-settings/scope-catalog,
+   tax-settings и saved history. Scope GET должны вернуть 200 и соответствующие
+   DTO; health 200 сам по себе недостаточен. Не проверять PUT, calculate, refresh
+   или apply без отдельного задания. Старые сохранённые месяцы не пересчитывать.
+
+При неуспехе: остановить приём новых background jobs, сохранить безопасную
+диагностику и выполнить отдельно согласованный откат к зафиксированным image/env.
+Схему и историю V19/V20 не удалять. Откат контейнера не откатывает БД; старый image
+вернёт прежние 404 scope endpoints, но не является исправлением отчёта. Не повторять
+deploy циклически — штатный скрипт может перезаписать предыдущий rollback tag/env.
+
+В рамках этой подготовки production deploy/restart/validate/migrate не выполнялись.
+Изолированные DB-тесты остаются отдельным gate: они требуют работающий локальный
+Docker/MariaDB и не должны подключаться к production или LocalWP.

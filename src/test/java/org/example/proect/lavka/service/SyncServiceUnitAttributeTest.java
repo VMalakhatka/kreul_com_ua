@@ -144,6 +144,107 @@ class SyncServiceUnitAttributeTest {
         assertThat(real.findUnitsForSync(List.of("KR-79406","KR-49602"))).containsExactlyEntriesOf(Map.of("KR-79406","2  x  125мл"));
         verifyNoInteractions(categories);
     }
+
+    @ParameterizedTest
+    @ValueSource(strings={"KR-79406 "," KR-79406 ","\u00a0KR-79406\u00a0"})
+    void sourceWhitespaceKeepsLegacyMatchAndUsesExistingWooAttributes(String rawSourceSku) {
+        var source = dto(rawSourceSku,"250мл");
+        diff(List.of(source),List.of());
+        service.runOneBatch(10,200,null,false);
+        var product=posted("update");
+        assertThat(product).containsEntry("id",100L).doesNotContainKey("sku");
+        assertThat(attrs(product).subList(0,2)).isEqualTo(other);
+        assertThat(attrs(product).get(2)).containsEntry("options",List.of("250мл"));
+        assertThat(source.sku()).isEqualTo(rawSourceSku);
+        verify(cards,never()).findUnitsForSync(any()); // already-read edinIzmer, no extra Folio read
+        verify(cards).diffPage(isNull(),eq(10),eq(List.of(
+                new CardTovExportService.ItemHash("KR-79406","same-hash"))),eq(false));
+    }
+
+    @Test void targetWhitespaceIsMatchedWithoutRewritingItsSku() {
+        when(wp.collectSeenWindow(anyInt(),any())).thenReturn(List.of(new SeenItem("\u00a0KR-79406 ","same-hash",100L)));
+        diff(List.of(dto("KR-79406","250мл")),List.of());
+        service.forceRefreshOneBatch(10,200,null,false);
+        assertThat(posted("update")).containsEntry("id",100L).doesNotContainKey("sku");
+        verify(cards).diffPage(isNull(),eq(10),eq(List.of(
+                new CardTovExportService.ItemHash("\u00a0KR-79406 ","same-hash"))),eq(true));
+    }
+
+    @Test @SuppressWarnings("unchecked")
+    void whitespaceVariantProducesExactlySameCompletePayloadAsUnpaddedSource() {
+        diff(List.of(dto("KR-79406","250мл")),List.of());
+        service.runOneBatch(10,200,null,false);
+        diff(List.of(dto(" KR-79406\u00a0","250мл")),List.of());
+        service.runOneBatch(10,200,null,false);
+        var capture=org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(woo,times(2)).upsertProductsBatch(capture.capture());
+        assertThat(capture.getAllValues().get(1)).isEqualTo(capture.getAllValues().get(0));
+        verify(cards,never()).findUnitsForSync(any());
+    }
+
+    @ParameterizedTest @ValueSource(strings={"KR-79406"," KR-79406 ","KR-79406\u00a0"})
+    void genuinelyAmbiguousWooIdsIncludingLookaheadFailBeforeDiffOrWrite(String secondSku) {
+        when(wp.collectSeenWindow(anyInt(),any())).thenReturn(List.of(
+                new SeenItem("KR-79406","",100L),new SeenItem(secondSku,"",101L)));
+        assertThatThrownBy(()->service.runOneBatch(10,1,null,true))
+                .hasMessageContaining("WOO_PRODUCT_MATCH_AMBIGUOUS").hasMessageContaining("100,101");
+        verifyNoInteractions(cards,woo,locations);
+    }
+
+    @Test void identityIndexAllowsSameIdButDoesNotInventCaseOrInternalWhitespaceMatching() {
+        var ids=SyncServiceImpl.indexWooUpdateIds(List.of(new SeenItem(" A ","",100L),
+                new SeenItem("\u00a0A","",100L),new SeenItem("a","",101L),new SeenItem("A  B","",102L)));
+        assertThat(ids).containsOnlyKeys("A","a","A  B")
+                .containsEntry("A",100L).containsEntry("a",101L).containsEntry("A  B",102L);
+        assertThat(ids).doesNotContainKey("A B");
+    }
+
+    @Test void missingAttributesStillFailClosedInsteadOfClearingOtherAttributes() {
+        diff(List.of(dto(" KR-79406 ","250мл")),List.of());
+        when(woo.readProductAttributes(any())).thenReturn(Map.of());
+        assertThatThrownBy(()->service.runOneBatch(10,200,null,false))
+                .hasMessage("WOO_PRODUCT_ATTRIBUTES_UNAVAILABLE_FOR_UPDATE");
+        verify(woo,never()).upsertProductsBatch(any());
+    }
+
+    @Test void previewPassesSeveralWhitespaceSkusAndContinuesIntoNextWindow() {
+        var first=new SeenItem("ЕВ-СТ-ПАЗ","old",100L);
+        var second=new SeenItem("РСУ-5PA-60","old",101L);
+        var third=new SeenItem("РСУ-9074766","old",102L);
+        when(wp.collectSeenWindow(3,null)).thenReturn(List.of(first,second,third));
+        when(wp.collectSeenWindow(3,"РСУ-5PA-60")).thenReturn(List.of(third));
+        when(woo.readProductAttributes(List.of(100L,101L))).thenReturn(Map.of(100L,other,101L,other));
+        when(woo.readProductAttributes(List.of(102L))).thenReturn(Map.of(102L,other));
+        when(cards.diffPage(isNull(),eq(10),anyList(),eq(false))).thenReturn(
+                new CardTovExportService.DiffResult("РСУ-5PA-60",true,
+                        List.of(dto("ЕВ-СТ-ПАЗ ","250мл"),dto(" РСУ-5PA-60 ","125мл")),List.of(),List.of()));
+        when(cards.diffPage(eq("РСУ-5PA-60"),eq(10),anyList(),eq(false))).thenReturn(
+                new CardTovExportService.DiffResult("РСУ-9074766",true,
+                        List.of(dto("РСУ-9074766\u00a0","125мл")),List.of(),List.of()));
+        var result=service.runOneBatch(10,2,null,true);
+        assertThat(result.ok()).isTrue();
+        assertThat(result.processed()).isEqualTo(3);
+        assertThat(result.updated()).isEqualTo(3);
+        assertThat(result.errors()).isEmpty();
+        assertThat(result.nextAfter()).isEqualTo("РСУ-9074766");
+        verify(woo,never()).upsertProductsBatch(any());
+        verify(cards,never()).findUnitsForSync(any());
+        verifyNoInteractions(locations);
+    }
+
+    @Test void realDiffKeepsOriginalFolioDtoAndLegacyNormalizedMatch() {
+        var dao=mock(CardTovExportDao.class); var categories=mock(WooCategoryService.class);
+        var real=new CardTovExportService(dao,categories,wp);
+        var source=new CardTovExportDto(); source.setSku(" РСУ-50051225\u00a0"); source.setEDIN_IZMER("125мл");
+        when(dao.findBySkus(List.of("РСУ-50051225"))).thenReturn(List.of(source));
+        var result=real.diffPage(null,10,List.of(new CardTovExportService.ItemHash("РСУ-50051225","old")));
+        assertThat(result.toDelete()).isEmpty();
+        assertThat(result.toCreateFull()).isEmpty();
+        assertThat(result.toUpdateFull()).hasSize(1);
+        assertThat(result.toUpdateFull().get(0).sku()).isEqualTo(" РСУ-50051225\u00a0");
+        assertThat(result.toUpdateFull().get(0).edinIzmer()).isEqualTo("125мл");
+        verify(dao).findBySkus(List.of("РСУ-50051225"));
+    }
     static Map<String,Object> attr(long id,String name,List<String> options,int position,boolean visible,boolean variation) {
         return Map.of("id",id,"name",name,"options",options,"position",position,"visible",visible,"variation",variation);
     }
