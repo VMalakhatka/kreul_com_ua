@@ -344,3 +344,7 @@ to a shipment or sums account+expense/duplicate-TTN amounts as revenue. Incoming
 receipt supplier verification remains explicit. Local mocked tests cover complete,
 partial, empty and zero costs, reference validation and authentication. Production
 Java/SQL execution of this new route is not verified until deployment.
+
+### Document dates and server clocks (2026-11-09)
+
+The read-only document list accepts explicit future dates, including dates already stored in Folio ahead of the Java/WordPress clock. It does not clamp the requested end date. The default remains the current Java business date; the ordered range and inclusive 366-day limit remain enforced. Preorder listing still uses six calendar months ending at the selected date. This does not change balance as-of validation or document creation dates. Deploy together with the WordPress document-filter update.

@@ -84,9 +84,9 @@ public class FolioCustomerDocumentService {
                 : dateFrom;
         if (preordersOnly) {
             normalizedFrom = normalizedTo.minusMonths(6);
-            validatePeriod(normalizedTo, normalizedTo, today);
+            validatePeriod(normalizedTo, normalizedTo);
         } else {
-            validatePeriod(normalizedFrom, normalizedTo, today);
+            validatePeriod(normalizedFrom, normalizedTo);
         }
         List<FolioCustomerDocumentType> normalizedTypes = preordersOnly
                 ? List.of(FolioCustomerDocumentType.ACCOUNT) : normalizeTypes(types);
@@ -170,13 +170,12 @@ public class FolioCustomerDocumentService {
         return value;
     }
 
-    private static void validatePeriod(LocalDate dateFrom, LocalDate dateTo, LocalDate today) {
+    private static void validatePeriod(LocalDate dateFrom, LocalDate dateTo) {
         if (dateFrom.isAfter(dateTo)) {
             throw validation("invalid_date_range", "dateFrom must be before or equal to dateTo");
         }
-        if (dateTo.isAfter(today)) {
-            throw validation("future_date_to", "dateTo must not be after the current business date");
-        }
+        // Document dates may be ahead of this server clock. This is a read-only
+        // listing, not an as-of balance calculation; preserve the requested period.
         long inclusiveDays = ChronoUnit.DAYS.between(dateFrom, dateTo) + 1;
         if (inclusiveDays > MAX_PERIOD_DAYS_INCLUSIVE) {
             throw validation("date_range_too_long", "The document period must not exceed 366 days");

@@ -33,6 +33,31 @@ class FolioCustomerDocumentServiceTest {
             Instant.parse("2026-08-14T10:00:00Z"), ZoneOffset.UTC
     );
 
+    @Test void listsExistingDocumentsDatedAfterServerTodayWithoutClamping() {
+        FolioCustomerDocumentDao dao = mock(FolioCustomerDocumentDao.class);
+        when(dao.findPartner("A")).thenReturn(Optional.of(new PartnerRow("A", "Client")));
+        LocalDate tomorrow = LocalDate.now(CLOCK).plusDays(1);
+        var document = summary(FolioCustomerDocumentType.ACCOUNT, 42, tomorrow.atStartOfDay());
+        when(dao.findDocuments("A", tomorrow, tomorrow, List.of(FolioCustomerDocumentType.ACCOUNT),
+                51, null)).thenReturn(List.of(document));
+        var result = new FolioCustomerDocumentService(dao, CLOCK)
+                .list("A", tomorrow, tomorrow, "ACCOUNT", 50, null);
+        assertThat(result.filters().dateTo()).isEqualTo(tomorrow);
+        assertThat(result.documents()).containsExactly(document);
+    }
+
+    @Test void futurePeriodsStillRejectReversedAndOverlongRanges() {
+        FolioCustomerDocumentDao dao = mock(FolioCustomerDocumentDao.class);
+        when(dao.findPartner("A")).thenReturn(Optional.of(new PartnerRow("A", "Client")));
+        var service = new FolioCustomerDocumentService(dao, CLOCK);
+        LocalDate tomorrow = LocalDate.now(CLOCK).plusDays(1);
+        assertThatThrownBy(() -> service.list("A", tomorrow.plusDays(1), tomorrow, "ACCOUNT", 50, null))
+                .isInstanceOf(FolioAccountValidationException.class);
+        assertThatThrownBy(() -> service.list("A", tomorrow, tomorrow.plusDays(366), "ACCOUNT", 50, null))
+                .isInstanceOf(FolioAccountValidationException.class);
+        verify(dao, never()).findDocuments(any(), any(), any(), any(), any(Integer.class), any());
+    }
+
     @Test void multiWarehouseFiltersAreValidatedAndPassedBeforePaging() {
         FolioCustomerDocumentDao dao = mock(FolioCustomerDocumentDao.class);
         when(dao.findPartner("A")).thenReturn(Optional.of(new PartnerRow("A", "Client")));
