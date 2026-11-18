@@ -39,14 +39,15 @@ public class PriceDaoImpl implements PriceDao {
     @RetryLabel("PriceDaoImpl.findLatestPrices")
     @Override
     public List<PriceRow> findLatestPrices(int stockId, List<String> skus, List<String> namePrices) {
+        if (skus.isEmpty() || namePrices.isEmpty()) return List.of();
         final String sql = """
-        SELECT p.COD_ARTIC  AS sku,
+        SELECT LTRIM(RTRIM(p.COD_ARTIC)) AS sku,
                p.NAME_PRICE AS name_price,
                p.RUB_PRICE  AS rub_price,
                p.VALT_PRICE AS valt_price
         FROM dbo.SCL_PRIC p
         WHERE p.ID_SCLAD   = :stockId
-          AND p.COD_ARTIC  IN (:skus)
+          AND LTRIM(RTRIM(p.COD_ARTIC)) IN (:skus)
           AND p.NAME_PRICE IN (:names)
     """;
 
@@ -73,7 +74,10 @@ public class PriceDaoImpl implements PriceDao {
         return out;
     }
 
-    // PriceDaoImpl.java (добавьте метод)
+    private static String retailKey(String sku) {
+        return sku.trim().replace('\u2013', '-');
+    }
+
     @RetryLabel("PriceDaoImpl.findRetailPrices")
     @Override
     public Map<String, Double> findRetailPrices(int stockId, List<String> skus) {
@@ -81,8 +85,8 @@ public class PriceDaoImpl implements PriceDao {
 
         List<String> normSkus = skus.stream()
                 .filter(Objects::nonNull)
-                .map(String::trim)
-                .map(s -> s.replace('\u2013', '-'))
+                .map(PriceDaoImpl::retailKey)
+                .distinct()
                 .toList();
 
         final String sql = """
@@ -100,8 +104,7 @@ public class PriceDaoImpl implements PriceDao {
         final int allowedSkus = Math.max(1, maxParams - fixedParams - margin);
         final int chunkSize   = Math.min(props.getSkuChunkSize(), allowedSkus);
 
-        Map<String, Double> out = new LinkedHashMap<>();
-        for (String s : skus) out.put(s, null);
+        Map<String, Double> byKey = new HashMap<>();
 
         for (List<String> chunk : com.google.common.collect.Lists.partition(normSkus, chunkSize)) {
             var params = new MapSqlParameterSource()
@@ -111,8 +114,12 @@ public class PriceDaoImpl implements PriceDao {
             namedJdbc.query(sql, params, rs -> {
                 String sku = rs.getString("sku");
                 Double price = (rs.getObject("retail_price") == null ? null : rs.getDouble("retail_price"));
-                out.put(sku, price);
+                byKey.put(sku, price);
             });
+        }
+        Map<String, Double> out = new LinkedHashMap<>();
+        for (String sku : skus) {
+            if (sku != null) out.put(sku, byKey.get(retailKey(sku)));
         }
         return out;
     }

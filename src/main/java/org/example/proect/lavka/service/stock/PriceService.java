@@ -37,20 +37,22 @@ public class PriceService {
         if (nameToWooId.isEmpty()) return new PriceQueryResponse(List.of());
 
         int stockId = props.getPriceStockId(); // используем значение из конфигов
+        List<String> lookupSkus = req.skus().stream().filter(Objects::nonNull)
+                .map(String::trim).filter(s -> !s.isEmpty()).distinct().toList();
 
         // 1) розничные цены (SCL_ARTC.CENA_ARTIC)
-        Map<String, Double> retailBySku = priceDao.findRetailPrices(stockId, req.skus());
+        Map<String, Double> retailBySku = priceDao.findRetailPrices(stockId, lookupSkus);
 
         // 2) доп.цены (SCL_PRIC) по последней дате
         List<PriceRow> rows = priceDao.findLatestPrices(
                 stockId,
-                req.skus(),
+                lookupSkus,
                 new ArrayList<>(nameToWooId.keySet()) // список NAME_PRICE
         );
 
         // 3) подготовим карту "sku -> (wooId -> цена)" заполнив null-ами для всех запрошенных wooId
         Map<String, Map<String, Double>> extrasBySku = new LinkedHashMap<>();
-        for (String sku : req.skus()) {
+        for (String sku : lookupSkus) {
             Map<String, Double> blank = new LinkedHashMap<>();
             for (String wooId : req.priceMap().keySet()) {
                 blank.put(wooId, null);
@@ -73,8 +75,9 @@ public class PriceService {
         // 5) собираем ответ: price = розничная, prices = карта доп.цен
         List<PriceItem> items = new ArrayList<>(req.skus().size());
         for (String sku : req.skus()) {
-            Double retail = retailBySku.get(sku); // может быть null — ок
-            Map<String, Double> extras = extrasBySku.getOrDefault(sku, Map.of());
+            String key = sku == null ? "" : sku.trim();
+            Double retail = retailBySku.get(key);
+            Map<String, Double> extras = extrasBySku.getOrDefault(key, Map.of());
             items.add(new PriceItem(sku, retail, extras));
         }
 
