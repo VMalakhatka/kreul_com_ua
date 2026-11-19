@@ -12,6 +12,7 @@ Verified against the current repository structure: 2026-09-06.
 | Need | Source |
 |---|---|
 | Understand or change an HTTP contract | The matching file in [`api/`](api/) and the current controller/DTO/service |
+| Read sale prices for Woo roles | [Stock price lookup](api/STOCK_PRICE_LOOKUP.md) |
 | Include child shortages in a single-supplier purchase preview | [`api/FOLIO_ASSEMBLY_GRAPH_API.md`](api/FOLIO_ASSEMBLY_GRAPH_API.md); read-only Folio recipes and BALL4, supplier-independent descendant closure |
 | Understand Folio account behavior | [`business/01_ACCOUNT.md`](business/01_ACCOUNT.md), [`api/FOLIO_ACCOUNT_JS_API.md`](api/FOLIO_ACCOUNT_JS_API.md), [`api/ACCOUNT_WRITE_MAPPING.md`](api/ACCOUNT_WRITE_MAPPING.md) |
 | Inspect Folio tables and evidence | [`00_DATABASE_CATALOG.md`](00_DATABASE_CATALOG.md) and `.agents/skills/work-with-folio-mssql/references/` |
